@@ -1,0 +1,16 @@
+{
+  "name": "concurrentlyocaml",
+  "version": "1.0.0",
+  "description": "",
+  "bin": {
+    "ocaml_tool": "ocaml.sh"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "compile": "ocamlfind ocamlopt -o concurrently-ml -package unix -linkpkg bin/main.ml"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {}
+}
