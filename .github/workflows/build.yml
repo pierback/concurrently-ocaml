@@ -19,63 +19,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-          settings:
-            - host: macos-latest
-              target: x86_64-apple-darwin
-              build: |
-                mkdir exe
-                opam exec -- ocamlfind ocamlopt -o exe/${{ matrix.settings.target }}concurrently-ml -package unix -linkpkg bin/main.ml
-            - host: windows-latest
-              build: |
-                mkdir exe
-                opam exec -- ocamlfind ocamlopt -o exe/${{ matrix.settings.target }}concurrently-ml -package unix -linkpkg bin/main.ml
-              target: x86_64-pc-windows-msvc
-            - host: windows-latest
-              build: |
-                mkdir exe
-                opam exec -- ocamlfind ocamlopt -o exe/${{ matrix.settings.target }}concurrently-ml -package unix -linkpkg bin/main.ml
-              target: i686-pc-windows-msvc
-            - host: ubuntu-latest
-              target: x86_64-unknown-linux-gnu
-              build: |
-                mkdir exe
-                opam exec -- ocamlfind ocamlopt -o exe/${{ matrix.settings.target }}concurrently-ml -package unix -linkpkg bin/main.ml
-            # - host: ubuntu-latest
-            #   target: x86_64-unknown-linux-musl
-            #   build: |
-            #     mkdir exe
-            #     opam exec -- ocamlfind ocamlopt -o exe/${{ matrix.settings.target }}concurrently-ml -package unix -linkpkg bin/main.ml
-            - host: macos-latest
-              target: aarch64-apple-darwin
-              build: |
-                mkdir exe
-                opam exec -- ocamlfind ocamlopt -o exe/${{ matrix.settings.target }}concurrently-ml -package unix -linkpkg bin/main.ml
-            - host: ubuntu-latest
-              target: aarch64-unknown-linux-gnu
-              build: |
-                mkdir exe
-                opam exec -- ocamlfind ocamlopt -o exe/${{ matrix.settings.target }}concurrently-ml -package unix -linkpkg bin/main.ml
-            - host: ubuntu-18.04
-              target: armv7-unknown-linux-gnueabihf
-              build: |
-                mkdir exe
-                opam exec -- ocamlfind ocamlopt -o exe/${{ matrix.settings.target }}concurrently-ml -package unix -linkpkg bin/main.ml
-            - host: ubuntu-latest
-              target: aarch64-unknown-linux-musl
-              downloadTarget: aarch64-unknown-linux-musl
-              build: |
-                mkdir exe
-                opam exec -- ocamlfind ocamlopt -o exe/${{ matrix.settings.target }}concurrently-ml -package unix -linkpkg bin/main.ml
-            - host: windows-latest
-              target: aarch64-pc-windows-msvc
-              # Disable `LTO` and increase `codegen-units` to avoid llvm `OOM` on GitHub Actions.
-              build: |
-                mkdir exe
-                opam exec -- ocamlfind ocamlopt -o exe/${{ matrix.settings.target }}concurrently-ml -package unix -linkpkg bin/main.ml
-          ocaml-compiler:
-            - 5.1.x
+        os:
+          - macos-latest
+          - ubuntu-latest
+          - windows-latest
+        ocaml-compiler:
+          - 5.1.x
 
-    runs-on: ${{ matrix.settings.host }}
+    runs-on: ${{ matrix.os }}
 
     steps:
       - name: Checkout tree
@@ -90,7 +41,9 @@ jobs:
       
       - run: opam install ocamlfind
       
-      - run: ${{ matrix.settings.build }}
+      - run: mkdir build
       
-      - run: ls exe
+      - run: opam exec -- ocamlfind ocamlopt -o build/${{matrix.os}}concurrently-ml -package unix -linkpkg bin/main.ml
+      
+      - run: ls .
       # - run: opam exec -- dune build
