@@ -25,6 +25,8 @@ jobs:
           # - windows-latest
         ocaml-compiler:
           - "5.1"
+        dune-cache: 
+          - true
 
     runs-on: ${{ matrix.os }}
 
