@@ -3,6 +3,8 @@ open Unix
 let word_list = ref []
 let commands = ref []
 
+
+
 let speclist = [
   ("-n", Arg.String (fun s -> word_list := String.split_on_char ',' s), "List of words separated by commas");
 ]
