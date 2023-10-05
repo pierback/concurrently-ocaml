@@ -1,0 +1,3 @@
+(library
+ (name concurrentlyocaml)
+ (libraries Unix))
