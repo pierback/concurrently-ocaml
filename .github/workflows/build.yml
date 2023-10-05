@@ -44,5 +44,5 @@ jobs:
       
       - run: opam exec -- dune clean
 
-      - run: opam exec -- ocamlfind ocamlopt -o concurrently-ml -package unix -linkpkg bin/main.ml
+      - run: opam exec -- ocamlopt -o concurrently-ml -linkpkg bin/main.ml
       # - run: opam exec -- dune build
