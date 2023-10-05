@@ -24,9 +24,9 @@ jobs:
           - ubuntu-latest
           # - windows-latest
         ocaml-compiler:
-          # - 5.1.x
+          - 5.1.x
           # - 5.0.x
-          - 4.14.x
+          # - 4.14.x
           # - 4.06.x
 
     runs-on: ${{ matrix.os }}
@@ -42,7 +42,7 @@ jobs:
 
       - run: opam install . --deps-only
       
-      - run: opam exec -- dune clean
+      - run: opam install ocamlfind
 
-      - run: opam exec -- ocamlopt -o concurrently-ml -linkpkg bin/main.ml
+      - run: opam exec -- ocamlfind ocamlopt -o concurrently-ml -package unix -linkpkg bin/main.ml
       # - run: opam exec -- dune build
