@@ -22,7 +22,7 @@ jobs:
         os:
           - macos-latest
           - ubuntu-latest
-          - windows-latest
+          # - windows-latest
         ocaml-compiler:
           - "5.1"
 
@@ -45,5 +45,5 @@ jobs:
       
       - run: opam exec -- ocamlfind ocamlopt -o build/${{matrix.os}}concurrently-ml -package unix -linkpkg bin/main.ml
       
-      - run: ls .
+      - run: ls build
       # - run: opam exec -- dune build
