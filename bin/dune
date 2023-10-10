@@ -1,4 +1,4 @@
 (executable
  (public_name concurrentlyocaml)
  (name main)
- (libraries concurrentlyocaml))
+ (libraries unix eio_main eio))
