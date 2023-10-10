@@ -1,4 +1,4 @@
-(lang dune 3.7)
+(lang dune 2.6)
 
 (name concurrentlyocaml)
 
