@@ -11,21 +11,60 @@ let usage_msg = "Usage: " ^ Sys.argv.(0) ^ " -n <word_list> <command1> <command2
 let split_string_by_space str =
   String.split_on_char ' ' str
 
+let pretty_print input_tag error_message =
+  let lines = String.split_on_char '\n' error_message in
+  let formatted_lines = List.map (fun line ->
+    let prefix = String.make (String.length input_tag + 4) ' ' in
+    Printf.sprintf "%s%s" prefix line
+  ) lines in
+  String.concat "\n" formatted_lines
+
 let execute_command tag cmd =
+  
   Eio_main.run @@ fun env ->
+    
     try
       let proc_mgr = Eio.Stdenv.process_mgr env in
-      let output = Eio.Process.parse_out proc_mgr Eio.Buf_read.line cmd in
 
-      Printf.printf "[%s]: %s\n" tag output;
-      exit 0 
+      let output = Eio.Switch.run @@ fun sw ->
+        let r, w = Eio.Process.pipe proc_mgr ~sw in
+        try
+          let child = Eio.Process.spawn ~sw proc_mgr ~stderr:w cmd
+          in
+          (* let child = Eio.Process.spawn ~sw cmd ~stdout:w ~stderr:w in *)
+          Eio.Flow.close w;
+          let output = Eio.Buf_read.parse_exn Eio.Buf_read.take_all r ~max_size:max_int in
+          Eio.Flow.close r;
+          Eio.Process.await_exn child;
+          
+          pretty_print tag output
+        with Eio.Exn.Io _ as ex ->
+          let error_message = (Printexc.to_string ex) in
+          pretty_print tag error_message
+        in
+
+      (* let output = Eio.Process.parse_out proc_mgr Eio.Buf_read.take_all cmd in *)
+
+        (* 
+        | `Exited code when is_success code -> ()
+        | status ->
+          let exn = Eio.Process.err (Eio.Process.Child_error status) in
+          Printf.printf "[%s]: \n%s\n" tag (Printexc.to_string exn);
+          exit 0 
+        *)
+        Printf.printf "suc[%s]: %s\n" tag output;
+
+        exit 0
     with
       | exn ->
-        Printf.printf "[%s]: \n%s\n" tag (Printexc.to_string exn);
+        Printf.printf "bad \n";
+        let asdf = (Printexc.to_string exn) in
+        let output = pretty_print tag asdf in
+        Printf.printf "[%s]: %s\n" tag output;
         exit 0
 
 
-let execute_command1 tag cmd =
+(* let execute_command1 tag cmd =
   let (in_channel, out_channel, err_channel) = Unix.open_process_full cmd (Unix.environment ()) in
   let rec read_lines channel lines =
     try
@@ -43,7 +82,7 @@ let execute_command1 tag cmd =
   let exit_code = Unix.close_process_full (in_channel, out_channel, err_channel) in
   match exit_code with
   | WEXITED code -> exit code
-  | _ -> exit 1 (* Exit with a non-zero code if there's an error *)
+  | _ -> exit 1 Exit with a non-zero code if there's an error *)
 
 let () =
   Arg.parse speclist (fun arg -> commands := !commands @ [arg]) usage_msg;
@@ -65,11 +104,11 @@ let () =
       (* Wait for the child process to finish *)
       let (_, status) = Unix.waitpid [] pid in
       match status with
-      | WEXITED exit_code -> ()
+      | WEXITED _ -> ()
         (* Printf.printf "Child process for '%s' exited with code %d\n" word exit_code *)
-      | WSIGNALED signal -> ()
+      | WSIGNALED _ -> ()
         (* Printf.printf "Child process for '%s' was killed by signal %d\n" word signal *)
-      | WSTOPPED signal -> ()
+      | WSTOPPED _ -> ()
         (* Printf.printf "Child process for '%s' was stopped by signal %d\n" word signal *)
   in
   
