@@ -1,0 +1,9 @@
+_build/
+bin/
+lib/
+test/
+.vscode/
+.github/
+.dockerignore
+.gitignore
+Dockerfile

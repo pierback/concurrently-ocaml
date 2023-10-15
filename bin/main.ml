@@ -29,7 +29,7 @@ let print_out format_out error_out tag =
   else
     Printf.printf "[%s]: %s\n" tag error_out 
 
-let execute_command1 tag cmd =
+let execute_command tag cmd =
   let (in_channel, out_channel, err_channel) = Unix.open_process_full cmd (Unix.environment ()) in
   let rec read_lines channel lines =
     try
@@ -64,13 +64,11 @@ let () =
       let pid = Unix.fork () in
       if pid = 0 then (* Child process *)
         (* let cmd_list = split_string_by_space cmd in *)
-        let exit_code = execute_command1 word cmd in
+        let exit_code = execute_command word cmd in
         exit exit_code
       else (* Parent process *)
         process_words_and_commands rest_words rest_cmds;
-  
-      (* Wait for the child process to finish *)
-      let (_, status) = Unix.waitpid [] pid in
+        let (_, status) = Unix.waitpid [] pid in
       match status with
       | WEXITED _ -> ()
         (* Printf.printf "Child process for '%s' exited with code %d\n" word exit_code *)
@@ -78,7 +76,7 @@ let () =
         (* Printf.printf "Child process for '%s' was killed by signal %d\n" word signal *)
       | WSTOPPED _ -> ()
         (* Printf.printf "Child process for '%s' was stopped by signal %d\n" word signal *)
+      (* Wait for the child process to finish *)
   in
-  
   
   process_words_and_commands !word_list !commands
