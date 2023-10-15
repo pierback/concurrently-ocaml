@@ -1,13 +1,13 @@
 {
-  "name": "concurrentlyocaml",
-  "version": "1.0.0",
-  "description": "",
+  "name": "@pierback/concurrentlyocaml",
+  "version": "0.0.1",
+  "description": "ocaml concurrently alternative",
   "bin": {
-    "conc_oc": "ocaml.sh"
+    "conc_ml": "$(./build-name.sh) '$@'"
   },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "compile": "ocamlfind ocamlopt -linkpkg -thread -package eio_main,unix,eio  bin/main.ml -o concurrently-ml-eio"
+    "compile": "ocamlfind ocamlopt -linkpkg -thread -package unix bin/main.ml -o $(./build-name.sh)"
   },
   "keywords": [],
   "author": "",
