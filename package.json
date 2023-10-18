@@ -1,9 +1,9 @@
 {
-  "name": "@pierback/concurrentlyocaml",
-  "version": "0.0.1",
+  "name": "@pierback/concurrently-ml",
+  "version": "0.0.3",
   "description": "ocaml concurrently alternative",
   "bin": {
-    "conc_ml": "$(./build-name.sh) '$@'"
+    "conc": "./conc_ml.sh"
   },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
@@ -11,6 +11,6 @@
   },
   "keywords": [],
   "author": "",
-  "license": "ISC",
+  "license": "MIT",
   "dependencies": {}
 }
