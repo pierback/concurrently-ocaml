@@ -7,7 +7,7 @@
   },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "compile": "ocamlfind ocamlopt -linkpkg -thread -package unix bin/main.ml -o $(./build-name.sh)"
+    "compile": "ocamlfind ocamlopt -linkpkg -thread -package unix,ansiterminal bin/main.ml -o $(./build-name.sh)"
   },
   "keywords": [],
   "author": "",
