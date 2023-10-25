@@ -4,11 +4,21 @@ FROM ocaml/opam2:latest
 # Set environment variables
 ENV DUNE_CACHE="disabled"
 
-# Create a working directory
+ENV NODE_VERSION=16.13.0
+
 WORKDIR /app
 
 # Install system dependencies
 RUN sudo apt install m4 -y
+# RUN wget -qO- https://get.pnpm.io/install.sh | ENV="$HOME/.bashrc" SHELL="$(which bash)" bash - && pnpm --version
+# RUN wget -qO- https://get.pnpm.io/install.sh | ENV="$HOME/.shrc" SHELL="$(which sh)" sh - && pnpm --version
+
+# RUN pnpm --version
+# RUN ls /app/home
+# RUN ls /app/home/opam/
+# RUN source /app/home/opam/.bashrc
+
+# RUN sudo apt-get install -y nodejs
 
 # Copy the source code to the container
 COPY . /app
@@ -30,19 +40,20 @@ RUN opam update
 RUN opam install dune
 RUN opam install --deps-only .
 RUN opam install ocamlfind
+RUN opam install ANSITerminal
+RUN opam install ansiterminal
 
 # Build the binary
-RUN sudo mkdir -p build && sudo chmod 755 build
+RUN sudo mkdir -p exec && sudo chmod 755 exec
 RUN ls bin
 RUN opam exec -- dune --version
-RUN opam exec -- ocamlfind ocamlopt -o build/linux-concurrently-ml -package unix -linkpkg bin/main.ml
-# RUN opam exec -- ocamlfind  -c bin/main.mli ocamlopt -o linux-concurrently-ml -package unix -linkpkg bin/main.ml
+# RUN pnpm run compile
+RUN opam exec -- ocamlfind ocamlopt -linkpkg -thread -package unix,ANSITerminal bin/main.ml -o $(./build-name.sh)
 
 # Copy the binary to the /app directory
 # RUN cp _build/default/bin/main.exe build/main
 
 # Clean up
 RUN opam clean -a -c
-RUN ls build
 
 # Set the entry point to the built binary
