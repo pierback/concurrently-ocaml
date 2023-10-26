@@ -1,6 +1,6 @@
 {
   "name": "@pierback/concurrently-ml",
-  "version": "0.0.3",
+  "version": "0.0.6",
   "description": "ocaml concurrently alternative",
   "bin": {
     "conc": "./conc_ml.sh"
