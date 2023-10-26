@@ -52,9 +52,6 @@ let generate_bench_tag elapsed_time =
   let time_str = format_time elapsed_time in
   format_to_grey time_str
 
-let trim_whitespace_and_newlines string_list =
-  List.filter (fun str -> String.trim str <> "") string_list
-  
 let pretty_format ?(format_out=[]) ?(error_out=[]) ?(tag="") ~elapsed_time color =
   let prefix_char = colorize "| " color in
 
@@ -66,30 +63,23 @@ let pretty_format ?(format_out=[]) ?(error_out=[]) ?(tag="") ~elapsed_time color
     let first_formatted_line =
       if !benchmark_mode  then
         let bench_tag = generate_bench_tag elapsed_time in
-        Printf.sprintf "\n%s[%s] %s:" prefix_char tag bench_tag
+        Printf.sprintf "\n%s[%s] %s:\n%s%s" prefix_char tag bench_tag prefix_char first_line
       else if !spacious_mode then
-        Printf.sprintf "\n%s[%s]:" prefix_char tag
+        Printf.sprintf "\n%s[%s]:\n%s%s" prefix_char tag prefix_char first_line
       else if List.length rest_lines > 0 then
-        Printf.sprintf "\n%s[%s]:" prefix_char tag
+        Printf.sprintf "\n%s[%s]:\n%s%s" prefix_char tag prefix_char first_line
       else
         Printf.sprintf "%s[%s]: %s" prefix_char tag first_line
     in
 
-    
     let formatted_lines =
       if !spacious_mode || !benchmark_mode || List.length rest_lines > 0 then
-        if List.length rest_lines > 0 then
-          let temp = trim_whitespace_and_newlines rest_lines in
-          let lines = List.map (fun line -> Printf.sprintf "%s%s" prefix_char line) temp in
-          "" :: lines
-        else
-          [Printf.sprintf "\n%s%s" prefix_char first_line]
+        List.map (fun line -> Printf.sprintf "%s%s" prefix_char line) rest_lines
       else
-        let lines = List.map (fun line -> line) rest_lines in
-        if List.length lines > 0 then lines else [first_line]
+        List.map (fun line -> line) rest_lines
       in
 
-    first_formatted_line ^ (String.concat "\n" formatted_lines)
+    first_formatted_line ^ "\n" ^ (String.concat "\n" formatted_lines)
     
 let get_color error_lines =
   let has_error = not (List.length error_lines = 0) in
@@ -109,8 +99,8 @@ let execute_command tag cmd =
     | End_of_file -> lines
   in
 
-  let output_lines = read_lines in_channel [] in
-  let error_lines = read_lines err_channel [] in
+  let output_lines = List.rev (read_lines in_channel []) in
+  let error_lines = List.rev (read_lines err_channel []) in
 
   let end_time = Unix.gettimeofday () in
   let elapsed_time = end_time -. start_time in
@@ -119,7 +109,7 @@ let execute_command tag cmd =
 
   let formatted_output = pretty_format ~format_out:output_lines ~tag:tag ~elapsed_time:elapsed_time ~error_out:error_lines color in
 
-  Printf.printf "%s\n" formatted_output;
+  Printf.printf "%s" formatted_output;
 
   let exit_code = Unix.close_process_full (in_channel, out_channel, err_channel) in
   match exit_code with
@@ -147,10 +137,6 @@ let generate_word_list count =
   in
   generate_words count []
   
-  (* Example usage *)
-  let generated_words = generate_word_list 5
-  
-
 let create_child_process word cmd =
   let pid = Unix.fork () in
   if pid = 0 then (* Child process *)
