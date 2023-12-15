@@ -79,14 +79,8 @@ let pretty_format ?(format_out=[]) ?(error_out=[]) ?(tag="") ~elapsed_time color
         List.map (fun line -> line) rest_lines
       in
 
-    first_formatted_line ^ "\n" ^ (String.concat "\n" formatted_lines)
-    
-let get_color error_lines =
-  let has_error = not (List.length error_lines = 0) in
-  if has_error then
-    ANSITerminal.Red
-  else
-    ANSITerminal.Green
+    let newline_needed = if (List.length formatted_lines) > 0 then "\n" else "" in
+    first_formatted_line ^ newline_needed ^ (String.concat "\n" formatted_lines)
     
 let execute_command tag cmd =
   let start_time = Unix.gettimeofday () in
@@ -105,16 +99,15 @@ let execute_command tag cmd =
   let end_time = Unix.gettimeofday () in
   let elapsed_time = end_time -. start_time in
 
-  let color = get_color error_lines in
+  let exit_code = Unix.close_process_full (in_channel, out_channel, err_channel) in
+  let (color, code) = match exit_code with
+    | WEXITED 0 -> ANSITerminal.Green, 0
+    | WEXITED 1 | _ -> ANSITerminal.Red, 1 in
 
   let formatted_output = pretty_format ~format_out:output_lines ~tag:tag ~elapsed_time:elapsed_time ~error_out:error_lines color in
+  Printf.printf "%s\n" formatted_output;
 
-  Printf.printf "%s" formatted_output;
-
-  let exit_code = Unix.close_process_full (in_channel, out_channel, err_channel) in
-  match exit_code with
-  | WEXITED code -> exit code
-  | _ -> exit 1
+  exit code
 
 let select_random_emoji used_emojis =
   let rec generate_unique_emoji () =
