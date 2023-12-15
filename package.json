@@ -1,12 +1,14 @@
 {
   "name": "@pierback/concurrently-ml",
-  "version": "0.0.6",
+  "version": "0.0.13",
   "description": "ocaml concurrently alternative",
   "bin": {
-    "conc": "./conc_ml.sh"
+    "conc": "concurrently-ml",
+    "concml": "concurrently-ml"
   },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
+    "install": "./conc_ml.sh",
     "compile": "ocamlfind ocamlopt -linkpkg -thread -package unix,ansiterminal bin/main.ml -o $(./build-name.sh)"
   },
   "keywords": [],
