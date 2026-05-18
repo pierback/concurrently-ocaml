@@ -18,6 +18,13 @@ distribution packaging.
   policy.
 - CLI config: validated immutable command-line input converted into commands,
   display config, and run policy before any command execution begins.
+- Run API: validated programmatic input for OCaml callers. It accepts
+  structured commands and run/display/input options, then produces the same
+  command model, run spec, input router, and formatter options as the CLI path.
+- Node package API: the importable JavaScript package surface. It should track
+  npm `concurrently`'s top-level `concurrently()` contract while delegating
+  process execution to the native binary until a deeper native observable API
+  exists.
 - Runner: the module that owns command lifecycle: spawn, stream, restart, kill,
   wait, and close-event collection.
 - Runner backend: the platform-specific adapter that owns process spawning,
