@@ -1,2 +1,3 @@
 (test
- (name concurrentlyocaml))
+ (name domain_tests)
+ (libraries unix eio_main eio concurrentlyocaml))

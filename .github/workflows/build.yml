@@ -4,15 +4,13 @@ on:
   push:
     branches:
       - master
+    tags:
+      - "v*"
+  pull_request:
+  workflow_dispatch:
 
-# on:
-#   pull_request:
-#   push:
-#   schedule:
-#     # Prime the caches every Monday
-#     - cron: 0 1 * * MON
-
-permissions: read-all
+permissions:
+  contents: read
 
 jobs:
   build:
@@ -22,9 +20,7 @@ jobs:
         os:
           - ubuntu-latest
         ocaml-compiler:
-          - "5.1"
-        dune-cache: 
-          - true
+          - "5.4.1"
 
     runs-on: ${{ matrix.os }}
 
@@ -33,21 +29,119 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set-up OCaml ${{ matrix.ocaml-compiler }}
-        uses: ocaml/setup-ocaml@v2
+        uses: ocaml/setup-ocaml@v3
         with:
           ocaml-compiler: ${{ matrix.ocaml-compiler }}
 
-      - run: opam install . --deps-only
-      
-      - run: opam install ocamlfind
-      
-      - run: mkdir build
-      
-      - run: opam exec -- ocamlfind ocamlopt -o build/${{matrix.os}}concurrently-ml -package unix -linkpkg bin/main.ml
-      
-      - name: Download all artifacts
-        uses: actions/download-artifact@v3
-        with:
-          path: artifacts
+      - run: opam install . --deps-only --with-test
 
-      # - run: opam exec -- dune build
+      - run: opam exec -- dune build @install @runtest
+
+  native-packages:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x64
+            npm_os: linux
+            npm_cpu: x64
+            binary: _build/default/bin/main.exe
+          - os: ubuntu-24.04-arm
+            target: linux-arm64
+            npm_os: linux
+            npm_cpu: arm64
+            binary: _build/default/bin/main.exe
+          - os: macos-13
+            target: darwin-x64
+            npm_os: darwin
+            npm_cpu: x64
+            binary: _build/default/bin/main.exe
+            macosx_deployment_target: "13.0"
+          - os: macos-26
+            target: darwin-arm64
+            npm_os: darwin
+            npm_cpu: arm64
+            binary: _build/default/bin/main.exe
+            macosx_deployment_target: "14.0"
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout tree
+        uses: actions/checkout@v4
+
+      - name: Set up OCaml 5.4.1
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: "5.4.1"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Set macOS deployment target
+        if: matrix.npm_os == 'darwin'
+        run: echo "MACOSX_DEPLOYMENT_TARGET=${{ matrix.macosx_deployment_target }}" >> "$GITHUB_ENV"
+
+      - run: opam install . --deps-only --with-test
+
+      - run: opam exec -- dune build @install @runtest
+
+      - name: Create npm platform package
+        run: >-
+          npm run package:platform --
+          --target ${{ matrix.target }}
+          --platform ${{ matrix.npm_os }}
+          --arch ${{ matrix.npm_cpu }}
+          --binary ${{ matrix.binary }}
+
+      - name: Upload npm package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-${{ matrix.target }}
+          path: dist/npm/
+
+  publish-npm:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs:
+      - build
+      - native-packages
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout tree
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          registry-url: https://registry.npmjs.org
+
+      - name: Download npm package artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: npm-*
+          path: dist/npm
+          merge-multiple: true
+
+      - name: Restore platform binary modes
+        run: find dist/npm -path "*/bin/concurrently-ml*" -type f -exec chmod 755 {} +
+
+      - name: Publish platform packages
+        run: |
+          find dist/npm -mindepth 1 -maxdepth 1 -type d -print0 \
+            | sort -z \
+            | xargs -0 -I {} npm publish "{}" --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish root package
+        run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

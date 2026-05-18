@@ -1,18 +1,31 @@
 {
   "name": "@pierback/concurrently-ml",
   "version": "0.0.13",
-  "description": "ocaml concurrently alternative",
+  "description": "OCaml 5 command runner targeting feature parity with npm concurrently",
   "bin": {
-    "conc": "concurrently-ml",
-    "concml": "concurrently-ml"
+    "conc": "npm/bin/concurrently-ml.js",
+    "concml": "npm/bin/concurrently-ml.js"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "install": "./conc_ml.sh",
-    "compile": "ocamlfind ocamlopt -linkpkg -thread -package unix,ansiterminal bin/main.ml -o $(./build-name.sh)"
+    "build": "dune build @install",
+    "test": "dune runtest",
+    "compile": "dune build bin/main.exe",
+    "package:platform": "node scripts/ci/package-platform.js"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": [
+    "concurrently",
+    "ocaml",
+    "cli",
+    "process",
+    "eio"
+  ],
+  "author": "Franz Pieringer",
   "license": "MIT",
-  "dependencies": {}
+  "dependencies": {},
+  "optionalDependencies": {
+    "@pierback/concurrently-ml-darwin-arm64": "0.0.13",
+    "@pierback/concurrently-ml-darwin-x64": "0.0.13",
+    "@pierback/concurrently-ml-linux-arm64": "0.0.13",
+    "@pierback/concurrently-ml-linux-x64": "0.0.13"
+  }
 }

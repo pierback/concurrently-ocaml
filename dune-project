@@ -1,26 +1,38 @@
-(lang dune 2.6)
+(lang dune 3.23)
 
 (name concurrentlyocaml)
 
 (generate_opam_files true)
 
 (source
- (github username/reponame))
+ (github pierback/concurrently-ocaml))
 
-(authors "Author Name")
+(authors "Franz Pieringer")
 
-(maintainers "Maintainer Name")
+(maintainers "Franz Pieringer")
 
-(license LICENSE)
+(license MIT)
 
-(documentation https://url/to/documentation)
+(documentation https://github.com/pierback/concurrently-ocaml)
 
 (package
  (name concurrentlyocaml)
- (synopsis "A short synopsis")
- (description "A longer description")
- (depends ocaml dune)
+ (synopsis "OCaml command runner compatible with npm concurrently")
+ (description
+  "A hard-cutover OCaml 5 command runner targeting feature parity with npm concurrently.")
+ (depends
+  (ocaml
+   (>= 5.4.1))
+  (dune
+   (>= 3.23))
+  (eio
+   (>= 1.3))
+  (eio_posix
+   (>= 1.3))
+  (eio_main
+   (>= 1.3))
+  (cmdliner
+   (>= 2.0.0))
+  ANSITerminal)
  (tags
-  (topics "to describe" your project)))
-
-; See the complete stanza docs at https://dune.readthedocs.io/en/stable/dune-files.html#dune-project
+  ("cli" "process" "concurrency" "ocaml" "eio")))

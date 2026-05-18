@@ -1,0 +1,2427 @@
+module Command = Concurrentlyocaml.Command
+module Close_event = Concurrentlyocaml.Close_event
+module Cli_config = Concurrentlyocaml.Cli_config
+module Input_router = Concurrentlyocaml.Input_router
+module Output_event = Concurrentlyocaml.Output_event
+module Output_formatter = Concurrentlyocaml.Output_formatter
+module Posix_runner_backend = Concurrentlyocaml.Posix_runner_backend
+module Run_policy = Concurrentlyocaml.Run_policy
+module Run_result = Concurrentlyocaml.Run_result
+module Runner_backend = Concurrentlyocaml.Runner_backend
+module Runner = Concurrentlyocaml.Runner
+module Run_spec = Concurrentlyocaml.Run_spec
+
+let ok = function
+  | Ok value -> value
+  | Error _ -> assert false
+
+let expect_error expected = function
+  | Ok _ -> assert false
+  | Error actual -> assert (actual = expected)
+
+let command index text = ok (Command.create ~index text)
+
+let close_event ?(attempt = 0) ?(killed = false)
+    ?(status = Close_event.Exited 0) ?(started_at = 10.0) ?(ended_at = 12.5)
+    command =
+  ok
+    (Close_event.create
+       ~command
+       ~attempt
+       ~killed
+       ~status
+       ~started_at
+       ~ended_at)
+
+let test_command_validation () =
+  let command =
+    ok
+      (Command.create
+         ~index:0
+         ~name:"web"
+         ~cwd:"/tmp"
+         ~env:[ "PORT", "3000" ]
+         ~prefix_color:"blue"
+         ~raw:true
+         ~hidden:true
+         ~ipc:true
+         "npm run dev")
+  in
+  assert (Command.index command = 0);
+  assert (Command.text command = "npm run dev");
+  assert (Command.name command = Some "web");
+  assert (Command.cwd command = Some "/tmp");
+  assert (Command.env command = [ "PORT", "3000" ]);
+  assert (Command.prefix_color command = Some "blue");
+  assert (Command.raw command);
+  assert (Command.hidden command);
+  assert (Command.ipc command);
+  expect_error `Empty_command (Command.create ~index:0 " ");
+  expect_error `Negative_index (Command.create ~index:(-1) "echo no")
+
+let test_run_policy_validation () =
+  expect_error
+    `Duplicate_kill_condition
+    (Run_policy.create
+       ~kill_others_on:[ Run_policy.Success; Run_policy.Success ]
+       ());
+  expect_error
+    `Max_processes_less_than_one
+    (Run_policy.create ~max_processes:0 ());
+  expect_error
+    `Negative_restart_tries
+    (Run_policy.create ~restart_tries:(-1) ());
+  expect_error
+    `Negative_kill_timeout_ms
+    (Run_policy.create ~kill_timeout_ms:(-1) ());
+  expect_error
+    `Negative_restart_delay_ms
+    (Run_policy.create ~restart_delay:(Run_policy.Fixed_delay_ms (-1)) ());
+  expect_error
+    `Exponential_restart_delay_overflow
+    (Run_policy.create
+       ~restart_tries:max_int
+       ~restart_delay:Run_policy.Exponential_backoff
+       ());
+  expect_error
+    `Empty_signal
+    (Run_policy.create ~kill_signal:(Run_policy.Named_signal " ") ());
+  expect_error
+    `Negative_success_command_index
+    (Run_policy.create ~success_condition:(Run_policy.Commands [ -1 ]) ())
+
+let test_run_policy_decisions () =
+  let first_command = command 0 "echo ok" in
+  let success = close_event first_command in
+  let failure = close_event ~status:(Close_event.Exited 1) first_command in
+  let policy =
+    ok
+      (Run_policy.create
+         ~kill_others_on:[ Run_policy.Failure ]
+         ~success_condition:Run_policy.Last
+         ())
+  in
+  let retried_success = close_event ~attempt:1 first_command in
+  assert (not (Run_policy.should_kill_after_close policy success));
+  assert (Run_policy.should_kill_after_close policy failure);
+  assert (Run_policy.run_succeeded policy [ failure; success ]);
+  assert (not (Run_policy.run_succeeded policy [ success; failure ]));
+  let retrying_kill_policy =
+    ok
+      (Run_policy.create
+         ~kill_others_on:[ Run_policy.Failure ]
+         ~restart_tries:1
+         ())
+  in
+  let retryable_failure =
+    close_event ~attempt:0 ~status:(Close_event.Exited 1) first_command
+  in
+  let exhausted_failure =
+    close_event ~attempt:1 ~status:(Close_event.Exited 1) first_command
+  in
+  assert (
+    not
+      (Run_policy.should_kill_after_close
+         retrying_kill_policy
+         retryable_failure));
+  assert (
+    Run_policy.should_kill_after_close
+      retrying_kill_policy
+      exhausted_failure);
+  let cancelled_failure =
+    close_event
+      ~attempt:1
+      ~killed:true
+      ~status:(Close_event.Signaled "15")
+      first_command
+  in
+  assert (
+    not
+      (Run_policy.should_kill_after_close
+         retrying_kill_policy
+         cancelled_failure));
+  assert (Run_policy.run_succeeded Run_policy.default [ retried_success; failure ]);
+  assert (Run_policy.run_succeeded Run_policy.default [ failure; success ]);
+  let first_policy =
+    ok (Run_policy.create ~success_condition:Run_policy.First ())
+  in
+  let last_policy =
+    ok (Run_policy.create ~success_condition:Run_policy.Last ())
+  in
+  let slow_success =
+    close_event ~started_at:10.0 ~ended_at:30.0 first_command
+  in
+  let second_command = command 1 "echo later" in
+  let fast_failure =
+    close_event
+      ~status:(Close_event.Exited 1)
+      ~started_at:10.0
+      ~ended_at:20.0
+      second_command
+  in
+  assert (not (Run_policy.run_succeeded first_policy [ slow_success; fast_failure ]));
+  assert (Run_policy.run_succeeded last_policy [ slow_success; fast_failure ]);
+  let first_command_policy =
+    ok (Run_policy.create ~success_condition:(Run_policy.Commands [ 0 ]) ())
+  in
+  let second_command_policy =
+    ok (Run_policy.create ~success_condition:(Run_policy.Commands [ 1 ]) ())
+  in
+  assert (
+    Run_policy.run_succeeded
+      first_command_policy
+      [ slow_success; fast_failure ]);
+  assert (
+    not
+      (Run_policy.run_succeeded
+         second_command_policy
+         [ slow_success; fast_failure ]));
+  let missing_command_policy =
+    ok (Run_policy.create ~success_condition:(Run_policy.Commands [ 9 ]) ())
+  in
+  assert (
+    not
+      (Run_policy.run_succeeded
+         missing_command_policy
+         [ slow_success; fast_failure ]));
+  let all_but_second_policy =
+    ok (Run_policy.create ~success_condition:(Run_policy.Commands [ 0 ]) ())
+  in
+  assert (Run_policy.run_succeeded all_but_second_policy [ slow_success; fast_failure ]);
+  let no_commands_policy =
+    ok (Run_policy.create ~success_condition:Run_policy.NoCommands ())
+  in
+  let ignored_failure =
+    close_event
+      ~status:(Close_event.Exited 1)
+      ~started_at:10.0
+      ~ended_at:20.0
+      first_command
+  in
+  assert (Run_policy.run_succeeded no_commands_policy [ ignored_failure ]);
+  let delayed_policy =
+    ok
+      (Run_policy.create
+         ~restart_tries:3
+         ~restart_delay:Run_policy.Exponential_backoff
+         ())
+  in
+  assert (Run_policy.restart_delay_ms delayed_policy ~next_attempt:1 = 1000);
+  assert (Run_policy.restart_delay_ms delayed_policy ~next_attempt:2 = 2000);
+  assert (Run_policy.restart_delay_ms delayed_policy ~next_attempt:3 = 4000)
+
+let test_run_spec_validation () =
+  expect_error
+    `Empty_command_list
+    (Run_spec.create ~commands:[] ~policy:Run_policy.default);
+  expect_error
+    (`Command_index_mismatch (1, 2))
+    (Run_spec.create
+       ~commands:[ command 0 "echo a"; command 2 "echo b" ]
+       ~policy:Run_policy.default);
+  let overflowing_policy =
+    ok (Run_policy.create ~restart_tries:max_int ())
+  in
+  expect_error
+    `Close_event_capacity_overflow
+    (Run_spec.create ~commands:[ command 0 "echo a" ] ~policy:overflowing_policy);
+  let policy = ok (Run_policy.create ~restart_tries:2 ()) in
+  let spec =
+    ok
+      (Run_spec.create
+         ~commands:[ command 0 "echo a"; command 1 "echo b" ]
+         ~policy)
+  in
+  assert (Run_spec.command_count spec = 2);
+  assert (Run_spec.close_event_capacity spec = 6)
+
+let test_input_router_routes_default_and_prefixed_input () =
+  let commands =
+    [ ok (Command.create ~index:0 ~name:"api" "npm run api")
+    ; ok (Command.create ~index:1 ~name:"worker" "npm run worker")
+    ]
+  in
+  let router =
+    ok (Input_router.create ~commands ~default_input_target:"worker")
+  in
+  assert (
+    Input_router.route router "rs\n"
+    = { Input_router.target_index = 1; payload = "rs\n" });
+  assert (
+    Input_router.route router "0:reload\n"
+    = { Input_router.target_index = 0; payload = "reload\n" });
+  assert (
+    Input_router.route router "api:reload\n"
+    = { Input_router.target_index = 0; payload = "reload\n" });
+  assert (
+    Input_router.route router "missing:reload\n"
+    = { Input_router.target_index = 1; payload = "missing:reload\n" });
+  expect_error
+    (`Unknown_default_input_target "missing")
+    (Input_router.create ~commands ~default_input_target:"missing")
+
+let test_output_event_validation () =
+  let command = command 0 "echo ok" in
+  let event =
+    ok
+      (Output_event.output_chunk
+         ~command
+         ~attempt:0
+         ~process_id:None
+         ~stream:Output_event.Stdout
+         ~chunk:"ready")
+  in
+  assert (Output_event.command event = command);
+  assert (Output_event.attempt event = 0);
+  assert (
+    Output_event.payload event
+    = Output_event.Output_chunk_payload
+        { process_id = None; stream = Output_event.Stdout; chunk = "ready" });
+  let pid_event =
+    ok
+      (Output_event.output_chunk
+         ~command
+         ~attempt:0
+         ~process_id:(Some "12345")
+         ~stream:Output_event.Stdout
+         ~chunk:"ready")
+  in
+  assert (Output_event.process_id pid_event = Some "12345");
+  let blank_event =
+    ok
+      (Output_event.output_chunk
+         ~command
+         ~attempt:0
+         ~process_id:None
+         ~stream:Output_event.Stderr
+         ~chunk:"")
+  in
+  assert (
+    Output_event.payload blank_event
+    = Output_event.Output_chunk_payload
+        { process_id = None; stream = Output_event.Stderr; chunk = "" });
+  expect_error
+    `Negative_delay_ms
+    (Output_event.lifecycle
+       ~command
+       ~attempt:0
+       ~lifecycle:
+         (Output_event.Restarting { next_attempt = 1; delay_ms = Some (-1) }));
+  expect_error
+    (`Invalid_next_attempt (0, 0))
+    (Output_event.lifecycle
+       ~command
+       ~attempt:0
+       ~lifecycle:
+         (Output_event.Restarting { next_attempt = 0; delay_ms = None }));
+  expect_error
+    (`Invalid_next_attempt (0, 2))
+    (Output_event.lifecycle
+       ~command
+       ~attempt:0
+       ~lifecycle:
+         (Output_event.Restarting { next_attempt = 2; delay_ms = None }))
+
+let formatter_options ?labels ?prefix ?(prefix_length = 10)
+    ?(pad_prefix = false)
+    ?(timestamp_format = "yyyy-MM-dd HH:mm:ss.SSS")
+    ?(spacious = false) ?(timings = false)
+    ?(color_mode = Output_formatter.Never) () =
+  { Output_formatter.labels
+  ; prefix
+  ; prefix_length
+  ; pad_prefix
+  ; timestamp_format
+  ; spacious
+  ; timings
+  ; color_mode
+  }
+
+let create_formatter ?(now = fun () -> 0.0) ?wall_now ?labels ?prefix
+    ?prefix_length ?pad_prefix ?timestamp_format ?spacious ?timings
+    ?color_mode commands =
+  let wall_now =
+    match wall_now with
+    | Some wall_now -> wall_now
+    | None -> now
+  in
+  Output_formatter.create
+    ~now
+    ~wall_now
+    ~commands
+    (formatter_options
+       ?labels
+       ?prefix
+       ?prefix_length
+       ?pad_prefix
+       ?timestamp_format
+       ?spacious
+       ?timings
+       ?color_mode
+       ())
+
+let output_texts outputs =
+  List.map (fun output -> output.Output_formatter.text) outputs
+
+let output_streams outputs =
+  List.map (fun output -> output.Output_formatter.stream) outputs
+
+let output_event ?process_id command stream chunk =
+  ok
+    (Output_event.output_chunk
+       ~command
+       ~attempt:0
+       ~process_id
+       ~stream
+       ~chunk)
+
+let lifecycle_event command lifecycle =
+  ok (Output_event.lifecycle ~command ~attempt:0 ~lifecycle)
+
+let test_output_formatter_validation () =
+  assert (Output_formatter.default_labels 3 = Ok [ "0"; "1"; "2" ]);
+  expect_error
+    `Non_positive_command_count
+    (Output_formatter.default_labels 0);
+  expect_error
+    `Non_positive_command_count
+    (create_formatter []);
+  expect_error
+    `Negative_prefix_length
+    (create_formatter ~prefix_length:(-1) [ command 0 "echo api" ]);
+  expect_error
+    (`Label_count_mismatch (1, 2))
+    (create_formatter
+       ~labels:[ "api" ]
+       [ command 0 "echo api"; command 1 "echo worker" ]);
+  expect_error
+    (`Unsupported_prefix_color (0, "bogus"))
+    (create_formatter
+       [ ok (Command.create ~index:0 ~prefix_color:"bogus" "echo api") ])
+
+let test_output_formatter_streams_unbuffered_output () =
+  let command = command 0 "echo ready" in
+  let formatter = ok (create_formatter [ command ]) in
+  assert (
+    Output_formatter.handle_event
+      formatter
+      (output_event command Output_event.Stdout "ready")
+    |> output_texts
+    = [ "[0] ready" ]);
+  let stderr_outputs =
+    Output_formatter.handle_event
+      formatter
+      (output_event command Output_event.Stderr "failed")
+  in
+  assert (output_texts stderr_outputs = [ "[0] failed" ]);
+  assert (output_streams stderr_outputs = [ Output_event.Stderr ])
+
+let test_output_formatter_prefix_modes () =
+  let api = ok (Command.create ~index:0 ~name:"api" "npm run api") in
+  let worker = ok (Command.create ~index:1 ~name:"worker" "npm run worker") in
+  let commands = [ api; worker ] in
+  let output command formatter =
+    Output_formatter.handle_event
+      formatter
+      (output_event command Output_event.Stdout "ready")
+    |> output_texts
+  in
+  assert (
+    output api (ok (create_formatter ~labels:[ "api"; "worker" ] commands))
+    = [ "[api] ready" ]);
+  assert (
+    output api (ok (create_formatter ~prefix:"index" commands)) = [ "[0] ready" ]);
+  assert (
+    Output_formatter.handle_event
+      (ok (create_formatter ~prefix:"pid" commands))
+      (output_event ~process_id:"12345" api Output_event.Stdout "ready")
+    |> output_texts
+    = [ "[12345] ready" ]);
+  assert (
+    output api (ok (create_formatter ~prefix:"command" ~prefix_length:4 commands))
+    = [ "[n..i] ready" ]);
+  assert (
+    output api (ok (create_formatter ~prefix:"none" commands)) = [ "ready" ]);
+  assert (
+    output
+      api
+      (ok (create_formatter ~prefix:"{index}:{pid}:{command}:{name}" commands))
+    = [ "[0::npm run api:api] ready" ]);
+  assert (
+    Output_formatter.handle_event
+      (ok (create_formatter ~prefix:"{index}:{pid}:{name}" commands))
+      (output_event ~process_id:"12345" api Output_event.Stdout "ready")
+    |> output_texts
+    = [ "[0:12345:api] ready" ]);
+  let upper_api = ok (Command.create ~index:0 ~name:"API" "npm run api") in
+  assert (
+    output
+      upper_api
+      (ok (create_formatter ~prefix:"Service-{name}" [ upper_api ]))
+    = [ "[Service-API] ready" ]);
+  let command_with_placeholder = command 0 "printf '{time}'" in
+  assert (
+    output
+      command_with_placeholder
+      (ok
+         (create_formatter
+            ~prefix:"{command}"
+            [ command_with_placeholder ]))
+    = [ "[printf '{time}'] ready" ]);
+  assert (
+    output
+      api
+      (ok
+         (create_formatter
+            ~prefix:"time"
+            ~timestamp_format:"SSS"
+            ~wall_now:(fun () -> 0.123)
+            commands))
+    = [ "[123] ready" ]);
+  assert (
+    output
+      api
+      (ok
+         (create_formatter
+            ~prefix:"time"
+            ~timestamp_format:"SSS"
+            ~now:(fun () -> 9000.0)
+            ~wall_now:(fun () -> 0.123)
+            commands))
+    = [ "[123] ready" ]);
+  assert (
+    output
+      api
+      (ok
+         (create_formatter
+            ~prefix:"command"
+            ~prefix_length:0
+            ~pad_prefix:true
+            commands))
+    = [ "[npm run api   ] ready" ]);
+  assert (
+    output
+      worker
+      (ok
+         (create_formatter
+            ~prefix:"command"
+            ~prefix_length:0
+            ~pad_prefix:true
+            commands))
+    = [ "[npm run worker] ready" ])
+
+let test_output_formatter_prefix_colors () =
+  let api = ok (Command.create ~index:0 ~prefix_color:"red.bold" "echo api") in
+  let worker =
+    ok (Command.create ~index:1 ~prefix_color:"#336699" "echo worker")
+  in
+  let reset = ok (Command.create ~index:2 ~prefix_color:"reset" "echo reset") in
+  let output command formatter =
+    Output_formatter.handle_event
+      formatter
+      (output_event command Output_event.Stdout "ready")
+    |> output_texts
+  in
+  assert (
+    output
+      api
+      (ok
+         (create_formatter
+            ~color_mode:Output_formatter.Always
+            [ api; worker; reset ]))
+    = [ "\027[31;1m[0]\027[0m ready" ]);
+  assert (
+    output
+      worker
+      (ok
+         (create_formatter
+            ~color_mode:Output_formatter.Always
+            [ api; worker; reset ]))
+    = [ "\027[38;2;51;102;153m[1]\027[0m ready" ]);
+  assert (
+    output
+      reset
+      (ok
+         (create_formatter
+            ~color_mode:Output_formatter.Always
+            [ api; worker; reset ]))
+    = [ "[2] ready" ]);
+  assert (
+    output
+      api
+      (ok
+         (create_formatter
+            ~color_mode:Output_formatter.Never
+            [ api; worker; reset ]))
+    = [ "[0] ready" ])
+
+let test_output_formatter_buffers_command_level_blocks () =
+  let command = command 0 "echo ready" in
+  let now_value = ref 10.0 in
+  let formatter =
+    ok
+      (create_formatter
+         ~now:(fun () -> !now_value)
+         ~labels:[ "api" ]
+         ~timings:true
+         [ command ])
+  in
+  assert (
+    Output_formatter.handle_event
+      formatter
+      (lifecycle_event command Output_event.Started)
+    = []);
+  now_value := 10.25;
+  assert (
+    Output_formatter.handle_event
+      formatter
+      (output_event command Output_event.Stdout "start")
+    = []);
+  assert (
+    Output_formatter.handle_event
+      formatter
+      (output_event command Output_event.Stdout "end")
+    = []);
+  assert (
+    Output_formatter.handle_event
+      formatter
+      (lifecycle_event command Output_event.Stopped)
+    |> output_texts
+    = [ "\n[api] 250,00 ms:\n[api] start\n[api] end" ])
+
+let test_output_formatter_preserves_blank_buffered_lines () =
+  let command = command 0 "printf" in
+  let formatter =
+    ok
+      (create_formatter ~labels:[ "app" ] ~spacious:true [ command ])
+  in
+  ignore
+    (Output_formatter.handle_event
+       formatter
+       (output_event command Output_event.Stdout "a"));
+  ignore
+    (Output_formatter.handle_event
+       formatter
+       (output_event command Output_event.Stdout ""));
+  ignore
+    (Output_formatter.handle_event
+       formatter
+       (output_event command Output_event.Stdout "b"));
+  assert (
+    Output_formatter.handle_event
+      formatter
+      (lifecycle_event command Output_event.Stopped)
+    |> output_texts
+    = [ "\n[app]:\n[app] a\n[app] \n[app] b" ])
+
+let test_output_formatter_raw_and_hidden_commands () =
+  let raw_command = ok (Command.create ~index:0 ~raw:true "printf raw") in
+  let hidden_command =
+    ok (Command.create ~index:1 ~hidden:true "printf hidden")
+  in
+  let formatter =
+    ok
+      (create_formatter [ raw_command; hidden_command ])
+  in
+  let raw_outputs =
+    Output_formatter.handle_event
+      formatter
+      (output_event raw_command Output_event.Stderr "raw")
+  in
+  assert (output_texts raw_outputs = [ "raw" ]);
+  assert (output_streams raw_outputs = [ Output_event.Stderr ]);
+  assert (
+    List.for_all
+      (fun output -> not output.Output_formatter.trailing_newline)
+      raw_outputs);
+  assert (
+    Output_formatter.handle_event
+      formatter
+      (output_event hidden_command Output_event.Stdout "hidden")
+    = [])
+
+let test_run_result_validation () =
+  let first_command = command 0 "echo ok" in
+  let policy = Run_policy.default in
+  let spec = ok (Run_spec.create ~commands:[ first_command ] ~policy) in
+  let successful_close_event = close_event first_command in
+  let result =
+    ok
+      (Run_result.create
+         ~spec
+         ~close_events:[ successful_close_event ]
+         ~output_event_count:1
+         ~interrupted:false)
+  in
+  assert (Run_result.exit_code result = 0);
+  expect_error
+    `Missing_close_events
+    (Run_result.create
+       ~spec
+       ~close_events:[]
+       ~output_event_count:0
+       ~interrupted:false);
+  expect_error
+    `Negative_output_event_count
+    (Run_result.create
+       ~spec
+       ~close_events:[ successful_close_event ]
+       ~output_event_count:(-1)
+       ~interrupted:false);
+  expect_error
+    `Too_many_close_events
+    (Run_result.create
+       ~spec
+       ~close_events:[ successful_close_event; successful_close_event ]
+       ~output_event_count:0
+       ~interrupted:false);
+  let unknown_close_event = close_event (command 1 "echo unknown") in
+  expect_error
+    (`Unknown_command_index 1)
+    (Run_result.create
+       ~spec
+       ~close_events:[ unknown_close_event ]
+       ~output_event_count:0
+       ~interrupted:false);
+  let unexpected_close_event = close_event (command 0 "echo foreign") in
+  expect_error
+    (`Unexpected_command 0)
+    (Run_result.create
+       ~spec
+       ~close_events:[ unexpected_close_event ]
+       ~output_event_count:0
+       ~interrupted:false);
+  let second_command = command 1 "echo second" in
+  let two_command_spec =
+    ok (Run_spec.create ~commands:[ first_command; second_command ] ~policy)
+  in
+  let first_retry = close_event ~attempt:1 first_command in
+  expect_error
+    `Missing_close_events
+    (Run_result.create
+       ~spec:two_command_spec
+       ~close_events:[ successful_close_event ]
+       ~output_event_count:0
+       ~interrupted:false);
+  expect_error
+    (`Attempt_exceeds_restart_tries (0, 1))
+    (Run_result.create
+       ~spec:two_command_spec
+       ~close_events:[ first_retry; close_event second_command ]
+       ~output_event_count:0
+       ~interrupted:false);
+  let retry_policy = ok (Run_policy.create ~restart_tries:1 ()) in
+  let retry_spec =
+    ok (Run_spec.create ~commands:[ first_command ] ~policy:retry_policy)
+  in
+  let failed_first_attempt =
+    close_event ~status:(Close_event.Exited 1) first_command
+  in
+  expect_error
+    (`Incomplete_restart_attempt (0, 0))
+    (Run_result.create
+       ~spec:retry_spec
+       ~close_events:[ failed_first_attempt ]
+       ~output_event_count:0
+       ~interrupted:false);
+  let successful_retry = close_event ~attempt:1 first_command in
+  expect_error
+    (`Missing_close_event_attempt (0, 0))
+    (Run_result.create
+       ~spec:retry_spec
+       ~close_events:[ successful_retry ]
+       ~output_event_count:0
+       ~interrupted:false);
+  let large_retry_policy = ok (Run_policy.create ~restart_tries:1_000_000 ()) in
+  let large_retry_spec =
+    ok (Run_spec.create ~commands:[ first_command ] ~policy:large_retry_policy)
+  in
+  expect_error
+    (`Missing_close_event_attempt (0, 0))
+    (Run_result.create
+       ~spec:large_retry_spec
+       ~close_events:[ successful_retry ]
+       ~output_event_count:0
+       ~interrupted:false);
+  let failed_after_success =
+    close_event ~attempt:1 ~status:(Close_event.Exited 1) first_command
+  in
+  expect_error
+    (`Attempt_after_success (0, 1))
+    (Run_result.create
+       ~spec:retry_spec
+       ~close_events:[ failed_after_success; successful_close_event ]
+       ~output_event_count:0
+       ~interrupted:false);
+  let retry_result =
+    ok
+      (Run_result.create
+         ~spec:retry_spec
+         ~close_events:[ successful_retry; failed_first_attempt ]
+         ~output_event_count:0
+         ~interrupted:false)
+  in
+  assert (Run_result.exit_code retry_result = 0);
+  expect_error
+    (`Duplicate_close_event_attempt (0, 0))
+    (Run_result.create
+       ~spec:retry_spec
+       ~close_events:[ successful_close_event; successful_close_event ]
+       ~output_event_count:0
+       ~interrupted:false);
+  let cancel_policy =
+    ok (Run_policy.create ~kill_others_on:[ Run_policy.Success ] ())
+  in
+  let cancel_spec =
+    ok
+      (Run_spec.create
+         ~commands:[ first_command; second_command ]
+         ~policy:cancel_policy)
+  in
+  let cancelled_result =
+    ok
+      (Run_result.create
+         ~spec:cancel_spec
+         ~close_events:[ successful_close_event ]
+         ~output_event_count:0
+         ~interrupted:false)
+  in
+  assert (Run_result.exit_code cancelled_result = 0);
+  let retry_cancel_policy =
+    ok
+      (Run_policy.create
+         ~kill_others_on:[ Run_policy.Success ]
+         ~restart_tries:1
+         ())
+  in
+  let retry_cancel_spec =
+    ok
+      (Run_spec.create
+         ~commands:[ first_command; second_command ]
+         ~policy:retry_cancel_policy)
+  in
+  let retryable_second_failure =
+    close_event ~status:(Close_event.Exited 1) second_command
+  in
+  let retryable_sibling_cancelled_result =
+    ok
+      (Run_result.create
+         ~spec:retry_cancel_spec
+         ~close_events:[ retryable_second_failure; successful_close_event ]
+         ~output_event_count:0
+         ~interrupted:false)
+  in
+  assert (Run_result.exit_code retryable_sibling_cancelled_result = 0);
+  let completed_second_failure =
+    close_event ~attempt:1 ~status:(Close_event.Exited 1) second_command
+  in
+  let completed_failure_before_cancel_result =
+    ok
+      (Run_result.create
+         ~spec:retry_cancel_spec
+         ~close_events:
+           [ retryable_second_failure; completed_second_failure; successful_close_event ]
+         ~output_event_count:0
+         ~interrupted:false)
+  in
+  assert (Run_result.exit_code completed_failure_before_cancel_result = 1);
+  let killed_second_command =
+    close_event
+      ~killed:true
+      ~status:(Close_event.Signaled "SIGTERM")
+      second_command
+  in
+  let killed_sibling_result =
+    ok
+      (Run_result.create
+         ~spec:cancel_spec
+         ~close_events:[ successful_close_event; killed_second_command ]
+         ~output_event_count:0
+         ~interrupted:false)
+  in
+  assert (Run_result.exit_code killed_sibling_result = 0);
+  let require_second_after_first_cancels_policy =
+    ok
+      (Run_policy.create
+         ~kill_others_on:[ Run_policy.Success ]
+         ~success_condition:(Run_policy.Commands [ 1 ])
+         ())
+  in
+  let require_second_after_first_cancels_spec =
+    ok
+      (Run_spec.create
+         ~commands:[ first_command; second_command ]
+         ~policy:require_second_after_first_cancels_policy)
+  in
+  let required_sibling_killed_result =
+    ok
+      (Run_result.create
+         ~spec:require_second_after_first_cancels_spec
+         ~close_events:[ successful_close_event; killed_second_command ]
+         ~output_event_count:0
+         ~interrupted:false)
+  in
+  assert (Run_result.exit_code required_sibling_killed_result = 1);
+  let kill_on_failure_policy =
+    ok (Run_policy.create ~kill_others_on:[ Run_policy.Failure ] ())
+  in
+  let kill_on_failure_spec =
+    ok
+      (Run_spec.create
+         ~commands:[ first_command; second_command ]
+         ~policy:kill_on_failure_policy)
+  in
+  expect_error
+    `Missing_close_events
+    (Run_result.create
+       ~spec:kill_on_failure_spec
+       ~close_events:[ successful_close_event ]
+       ~output_event_count:0
+       ~interrupted:false);
+  let failed_close_event =
+    close_event ~status:(Close_event.Exited 1) first_command
+  in
+  let failed_cancelled_result =
+    ok
+      (Run_result.create
+         ~spec:kill_on_failure_spec
+         ~close_events:[ failed_close_event ]
+         ~output_event_count:0
+         ~interrupted:false)
+  in
+  assert (Run_result.exit_code failed_cancelled_result = 1);
+  let killed_after_failure_result =
+    ok
+      (Run_result.create
+         ~spec:kill_on_failure_spec
+         ~close_events:[ failed_close_event; killed_second_command ]
+         ~output_event_count:0
+         ~interrupted:false)
+  in
+  assert (Run_result.exit_code killed_after_failure_result = 1)
+
+let test_close_event_validation () =
+  let command = command 0 "echo ok" in
+  expect_error
+    `Negative_exit_code
+    (Close_event.create
+       ~command
+       ~attempt:0
+       ~killed:false
+       ~status:(Close_event.Exited (-1))
+       ~started_at:0.0
+       ~ended_at:1.0);
+  expect_error
+    `Empty_signal
+    (Close_event.create
+       ~command
+       ~attempt:0
+       ~killed:false
+       ~status:(Close_event.Signaled " ")
+       ~started_at:0.0
+       ~ended_at:1.0)
+
+let test_cli_config_validation () =
+  let config =
+    ok
+      (Cli_config.create
+         ~command_texts:[ "echo api"; "echo worker" ]
+         ~names_csv:(Some "api,worker")
+         ~name_separator:","
+         ~spacious:true
+         ~timings:true
+         ~raw:true
+         ~hide_csv:(Some "worker,99,missing")
+         ~no_color:true
+         ~prefix:(Some "command")
+         ~prefix_colors_csv:(Some "red,blue")
+         ~prefix_length:8
+         ~pad_prefix:true
+         ~timestamp_format:"HH:mm:ss.SSS"
+         ~handle_input:false
+         ~default_input_target:"0"
+         ~success:"command-worker"
+         ~kill_others:true
+         ~kill_others_on_fail:true
+         ~kill_signal:"SIGKILL"
+         ~kill_timeout_ms:(Some 250)
+         ~max_processes:(Some 2)
+         ~restart_tries:2
+         ~restart_after:"exponential"
+         ~teardown_texts:[ "printf clean" ])
+  in
+  let commands = Cli_config.commands config in
+  let policy = Cli_config.policy config in
+  let display = Cli_config.display config in
+  let teardown = Run_policy.teardown policy in
+  assert (List.length commands = 2);
+  assert (List.length teardown = 1);
+  assert (Command.name (List.nth commands 0) = Some "api");
+  assert (Command.name (List.nth commands 1) = Some "worker");
+  assert (Command.index (List.nth teardown 0) = 2);
+  assert (Command.text (List.nth teardown 0) = "printf clean");
+  assert (Command.raw (List.nth teardown 0));
+  assert (Command.prefix_color (List.nth commands 0) = Some "red");
+  assert (Command.prefix_color (List.nth commands 1) = Some "blue");
+  assert (display.labels = Some [ "api"; "worker" ]);
+  assert (display.spacious);
+  assert (display.timings);
+  assert (display.no_color);
+  assert (display.prefix = Some "command");
+  assert (display.prefix_length = 8);
+  assert (display.pad_prefix);
+  assert (display.timestamp_format = "HH:mm:ss.SSS");
+  assert (Command.raw (List.nth commands 0));
+  assert (Command.raw (List.nth commands 1));
+  assert (not (Command.hidden (List.nth commands 0)));
+  assert (Command.hidden (List.nth commands 1));
+  assert (
+    Run_policy.kill_others_on policy
+    = [ Run_policy.Success; Run_policy.Failure ]);
+  assert (Run_policy.kill_signal policy = Run_policy.Sigkill);
+  assert (Run_policy.kill_timeout_ms policy = Some 250);
+  assert (Run_policy.success_condition policy = Run_policy.Commands [ 1 ]);
+  assert (Run_policy.max_processes policy = Some 2);
+  assert (Run_policy.restart_tries policy = 2);
+  assert (Run_policy.restart_delay policy = Run_policy.Exponential_backoff);
+  assert (Cli_config.input config = None);
+  let input_config =
+    ok
+      (Cli_config.create
+         ~command_texts:[ "echo api"; "echo worker" ]
+         ~names_csv:(Some "api,worker")
+         ~name_separator:","
+         ~spacious:false
+         ~timings:false
+         ~raw:false
+         ~hide_csv:None
+         ~no_color:false
+         ~prefix:None
+         ~prefix_colors_csv:None
+         ~prefix_length:10
+         ~pad_prefix:false
+         ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS"
+         ~handle_input:true
+         ~default_input_target:"worker"
+         ~success:"all"
+         ~kill_others:false
+         ~kill_others_on_fail:false
+         ~kill_signal:"SIGTERM"
+         ~kill_timeout_ms:None
+         ~max_processes:None
+         ~restart_tries:0
+         ~restart_after:"0"
+         ~teardown_texts:[])
+  in
+  assert (Option.is_some (Cli_config.input input_config));
+  let fail_only_config =
+    ok
+      (Cli_config.create
+         ~teardown_texts:[]
+         ~command_texts:[ "echo api" ]
+         ~names_csv:None
+         ~name_separator:","
+         ~spacious:false
+         ~timings:false
+         ~raw:false
+         ~hide_csv:None
+         ~no_color:false
+         ~prefix:None
+         ~prefix_colors_csv:None
+         ~prefix_length:10
+         ~pad_prefix:false
+         ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS"
+       ~handle_input:false
+       ~default_input_target:"0"
+         ~success:"!command-0"
+         ~kill_others:false
+         ~kill_others_on_fail:true
+         ~kill_signal:"SIGTERM"
+         ~kill_timeout_ms:None
+         ~max_processes:None
+         ~restart_tries:0
+         ~restart_after:"0")
+  in
+  assert (
+    Run_policy.kill_others_on (Cli_config.policy fail_only_config)
+    = [ Run_policy.Failure ]);
+  assert (
+    Run_policy.success_condition (Cli_config.policy fail_only_config)
+    = Run_policy.NoCommands);
+  assert ((Cli_config.display fail_only_config).labels = None);
+  let first_success_config =
+    ok
+      (Cli_config.create
+         ~teardown_texts:[]
+         ~command_texts:[ "echo api" ]
+         ~names_csv:None
+         ~name_separator:","
+         ~spacious:false
+         ~timings:false
+         ~raw:false
+         ~hide_csv:None
+         ~no_color:false
+         ~prefix:None
+         ~prefix_colors_csv:None
+         ~prefix_length:10
+         ~pad_prefix:false
+         ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS"
+       ~handle_input:false
+       ~default_input_target:"0"
+         ~success:"first"
+         ~kill_others:false
+         ~kill_others_on_fail:false
+         ~kill_signal:"SIGTERM"
+         ~kill_timeout_ms:None
+         ~max_processes:None
+         ~restart_tries:0
+         ~restart_after:"0")
+  in
+  assert (
+    Run_policy.success_condition (Cli_config.policy first_success_config)
+    = Run_policy.First);
+  let repeated_prefix_color_config =
+    ok
+      (Cli_config.create
+         ~teardown_texts:[]
+         ~command_texts:[ "echo api"; "echo worker"; "echo docs" ]
+         ~names_csv:None
+         ~name_separator:","
+         ~spacious:false
+         ~timings:false
+         ~raw:false
+         ~hide_csv:None
+         ~no_color:false
+         ~prefix:None
+         ~prefix_colors_csv:(Some "red,blue")
+         ~prefix_length:10
+         ~pad_prefix:false
+         ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS"
+       ~handle_input:false
+       ~default_input_target:"0"
+         ~success:"all"
+         ~kill_others:false
+         ~kill_others_on_fail:false
+         ~kill_signal:"SIGTERM"
+         ~kill_timeout_ms:None
+         ~max_processes:None
+         ~restart_tries:0
+         ~restart_after:"0")
+  in
+  assert (
+    List.map Command.prefix_color (Cli_config.commands repeated_prefix_color_config)
+    = [ Some "red"; Some "blue"; Some "blue" ]);
+  let spaced_name_config =
+    ok
+      (Cli_config.create
+         ~teardown_texts:[]
+         ~command_texts:[ "echo api"; "echo worker" ]
+         ~names_csv:(Some "api, worker")
+         ~name_separator:","
+         ~spacious:false
+         ~timings:false
+         ~raw:false
+         ~hide_csv:(Some "worker")
+         ~no_color:false
+         ~prefix:None
+         ~prefix_colors_csv:None
+         ~prefix_length:10
+         ~pad_prefix:false
+         ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS"
+       ~handle_input:false
+       ~default_input_target:"0"
+         ~success:"command-worker"
+         ~kill_others:false
+         ~kill_others_on_fail:false
+         ~kill_signal:"SIGTERM"
+         ~kill_timeout_ms:None
+         ~max_processes:None
+         ~restart_tries:0
+         ~restart_after:"0")
+  in
+  assert (
+    List.map Command.name (Cli_config.commands spaced_name_config)
+    = [ Some "api"; Some " worker" ]);
+  assert (
+    List.for_all
+      (fun command -> not (Command.hidden command))
+      (Cli_config.commands spaced_name_config));
+  assert (
+    Run_policy.success_condition (Cli_config.policy spaced_name_config)
+    = Run_policy.Commands []);
+  let custom_name_separator_config =
+    ok
+      (Cli_config.create
+         ~teardown_texts:[]
+         ~command_texts:[ "echo api"; "echo worker"; "echo docs" ]
+         ~names_csv:(Some "api| worker|docs")
+         ~name_separator:"|"
+         ~spacious:false
+         ~timings:false
+         ~raw:false
+         ~hide_csv:(Some "docs")
+         ~no_color:false
+         ~prefix:None
+         ~prefix_colors_csv:None
+         ~prefix_length:10
+         ~pad_prefix:false
+         ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS"
+       ~handle_input:false
+       ~default_input_target:"0"
+         ~success:"command- worker"
+         ~kill_others:false
+         ~kill_others_on_fail:false
+         ~kill_signal:"SIGTERM"
+         ~kill_timeout_ms:None
+         ~max_processes:None
+         ~restart_tries:0
+         ~restart_after:"0")
+  in
+  assert (
+    List.map Command.name (Cli_config.commands custom_name_separator_config)
+    = [ Some "api"; Some " worker"; Some "docs" ]);
+  assert (Command.hidden (List.nth (Cli_config.commands custom_name_separator_config) 2));
+  assert (
+    Run_policy.success_condition (Cli_config.policy custom_name_separator_config)
+    = Run_policy.Commands [ 1 ]);
+  let unmatched_negated_success_config =
+    ok
+      (Cli_config.create
+         ~teardown_texts:[]
+         ~command_texts:[ "echo api" ]
+         ~names_csv:None
+         ~name_separator:","
+         ~spacious:false
+         ~timings:false
+         ~raw:false
+         ~hide_csv:None
+         ~no_color:false
+         ~prefix:None
+         ~prefix_colors_csv:None
+         ~prefix_length:10
+         ~pad_prefix:false
+         ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS"
+       ~handle_input:false
+       ~default_input_target:"0"
+         ~success:"!command-missing"
+         ~kill_others:false
+         ~kill_others_on_fail:false
+         ~kill_signal:"SIGTERM"
+         ~kill_timeout_ms:None
+         ~max_processes:None
+         ~restart_tries:0
+         ~restart_after:"0")
+  in
+  assert (
+    Run_policy.success_condition
+      (Cli_config.policy unmatched_negated_success_config)
+    = Run_policy.Commands [ 0 ]);
+  expect_error
+    (`Input_router_error (`Unknown_default_input_target "missing"))
+    (Cli_config.create
+       ~teardown_texts:[]
+       ~command_texts:[ "echo api" ]
+       ~names_csv:None
+       ~name_separator:","
+       ~spacious:false
+       ~timings:false
+       ~raw:false
+       ~hide_csv:None
+       ~no_color:false
+       ~prefix:None
+       ~prefix_colors_csv:None
+       ~prefix_length:10
+       ~pad_prefix:false
+       ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS"
+       ~handle_input:true
+       ~default_input_target:"missing"
+       ~success:"all"
+       ~kill_others:false
+       ~kill_others_on_fail:false
+       ~kill_signal:"SIGTERM"
+       ~kill_timeout_ms:None
+       ~max_processes:None
+       ~restart_tries:0
+       ~restart_after:"0");
+  expect_error
+    (`Invalid_success_condition "command-")
+    (Cli_config.create
+       ~teardown_texts:[]
+       ~command_texts:[ "echo api" ]
+       ~names_csv:None
+         ~name_separator:","
+       ~spacious:false
+       ~timings:false
+       ~raw:false
+       ~hide_csv:None
+       ~no_color:false
+       ~prefix:None
+       ~prefix_colors_csv:None
+       ~prefix_length:10
+       ~pad_prefix:false
+       ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS"
+       ~handle_input:false
+       ~default_input_target:"0"
+       ~success:"command-"
+       ~kill_others:false
+       ~kill_others_on_fail:false
+       ~kill_signal:"SIGTERM"
+       ~kill_timeout_ms:None
+       ~max_processes:None
+       ~restart_tries:0
+       ~restart_after:"0");
+  expect_error
+    (`Invalid_restart_after "later")
+    (Cli_config.create
+       ~teardown_texts:[]
+       ~command_texts:[ "echo api" ]
+       ~names_csv:None
+         ~name_separator:","
+       ~spacious:false
+       ~timings:false
+       ~raw:false
+       ~hide_csv:None
+       ~no_color:false
+       ~prefix:None
+       ~prefix_colors_csv:None
+       ~prefix_length:10
+       ~pad_prefix:false
+       ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS"
+       ~handle_input:false
+       ~default_input_target:"0"
+       ~success:"all"
+       ~kill_others:false
+       ~kill_others_on_fail:false
+       ~kill_signal:"SIGTERM"
+       ~kill_timeout_ms:None
+       ~max_processes:None
+       ~restart_tries:0
+       ~restart_after:"later");
+  expect_error
+    (`Name_count_mismatch (1, 2))
+    (Cli_config.create
+       ~teardown_texts:[]
+       ~command_texts:[ "echo api"; "echo worker" ]
+       ~names_csv:(Some "api")
+         ~name_separator:","
+       ~spacious:false
+       ~timings:false
+       ~raw:false
+       ~hide_csv:None
+       ~no_color:false
+       ~prefix:None
+       ~prefix_colors_csv:None
+       ~prefix_length:10
+       ~pad_prefix:false
+       ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS"
+       ~handle_input:false
+       ~default_input_target:"0"
+       ~success:"all"
+       ~kill_others:false
+       ~kill_others_on_fail:false
+       ~kill_signal:"SIGTERM"
+       ~kill_timeout_ms:None
+       ~max_processes:None
+       ~restart_tries:0
+       ~restart_after:"0");
+  expect_error
+    (`Empty_command_name 1)
+    (Cli_config.create
+       ~teardown_texts:[]
+       ~command_texts:[ "echo api"; "echo worker" ]
+       ~names_csv:(Some "api, ")
+         ~name_separator:","
+       ~spacious:false
+       ~timings:false
+       ~raw:false
+       ~hide_csv:None
+       ~no_color:false
+       ~prefix:None
+       ~prefix_colors_csv:None
+       ~prefix_length:10
+       ~pad_prefix:false
+       ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS"
+       ~handle_input:false
+       ~default_input_target:"0"
+       ~success:"all"
+       ~kill_others:false
+       ~kill_others_on_fail:false
+       ~kill_signal:"SIGTERM"
+       ~kill_timeout_ms:None
+       ~max_processes:None
+       ~restart_tries:0
+       ~restart_after:"0");
+  expect_error
+    `Empty_name_separator
+    (Cli_config.create
+       ~teardown_texts:[]
+       ~command_texts:[ "echo api" ]
+       ~names_csv:(Some "api")
+       ~name_separator:""
+       ~spacious:false
+       ~timings:false
+       ~raw:false
+       ~hide_csv:None
+       ~no_color:false
+       ~prefix:None
+       ~prefix_colors_csv:None
+       ~prefix_length:10
+       ~pad_prefix:false
+       ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS"
+       ~handle_input:false
+       ~default_input_target:"0"
+       ~success:"all"
+       ~kill_others:false
+       ~kill_others_on_fail:false
+       ~kill_signal:"SIGTERM"
+       ~kill_timeout_ms:None
+       ~max_processes:None
+       ~restart_tries:0
+       ~restart_after:"0");
+  expect_error
+    (`Run_spec_error `Empty_command_list)
+    (Cli_config.create
+       ~teardown_texts:[]
+       ~command_texts:[]
+       ~names_csv:None
+         ~name_separator:","
+       ~spacious:false
+       ~timings:false
+       ~raw:false
+       ~hide_csv:None
+       ~no_color:false
+       ~prefix:None
+       ~prefix_colors_csv:None
+       ~prefix_length:10
+       ~pad_prefix:false
+       ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS"
+       ~handle_input:false
+       ~default_input_target:"0"
+       ~success:"all"
+       ~kill_others:false
+       ~kill_others_on_fail:false
+       ~kill_signal:"SIGTERM"
+       ~kill_timeout_ms:None
+       ~max_processes:None
+       ~restart_tries:0
+       ~restart_after:"0");
+  expect_error
+    (`Command_error (1, `Empty_command))
+    (Cli_config.create
+       ~command_texts:[ "echo api" ]
+       ~teardown_texts:[ " " ]
+       ~names_csv:None
+         ~name_separator:","
+       ~spacious:false
+       ~timings:false
+       ~raw:false
+       ~hide_csv:None
+       ~no_color:false
+       ~prefix:None
+       ~prefix_colors_csv:None
+       ~prefix_length:10
+       ~pad_prefix:false
+       ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS"
+       ~handle_input:false
+       ~default_input_target:"0"
+       ~success:"all"
+       ~kill_others:false
+       ~kill_others_on_fail:false
+       ~kill_signal:"SIGTERM"
+       ~kill_timeout_ms:None
+       ~max_processes:None
+       ~restart_tries:0
+       ~restart_after:"0")
+
+let output_chunks events =
+  events
+  |> List.filter_map (fun event ->
+    match Output_event.payload event with
+    | Output_event.Output_chunk_payload { chunk; _ } -> Some chunk
+    | Output_event.Lifecycle_payload _ -> None)
+
+let rec run_with_events ~policy command_texts =
+  let commands =
+    command_texts
+    |> List.mapi (fun index text -> ok (Command.create ~index text))
+  in
+  run_commands_with_events ~policy commands
+
+and run_commands_with_events ~policy commands =
+  run_commands_with_backend_events
+    ~backend:Posix_runner_backend.backend
+    ~policy
+    commands
+
+and run_commands_with_backend_events ~backend ~policy commands =
+  Eio_main.run (fun env ->
+    let spec = ok (Run_spec.create ~commands ~policy) in
+    let events = ref [] in
+    let result =
+      Runner.run
+        ~input:None
+        ~input_source:None
+        ~backend
+        ~process_mgr:(Eio.Stdenv.process_mgr env)
+        ~now:(fun () -> Eio.Time.now (Eio.Stdenv.clock env))
+        ~sleep:(fun seconds -> Eio.Time.sleep (Eio.Stdenv.clock env) seconds)
+        ~spec
+        ~on_output_event:(fun event -> events := event :: !events)
+    in
+		    (result, List.rev !events))
+
+module Slow_eof_source = struct
+  type t =
+    { mutable first_read : bool
+    ; sleep : unit -> unit
+    }
+
+  let read_methods = []
+
+  let single_read t _buffer =
+    if t.first_read then (
+      t.first_read <- false;
+      t.sleep ());
+    raise End_of_file
+end
+
+let slow_eof_source ~sleep =
+  Eio.Resource.T
+    ({ Slow_eof_source.first_read = true; sleep },
+     Eio.Flow.Pi.source (module Slow_eof_source))
+
+module Failing_source = struct
+  type t = unit
+
+  let read_methods = []
+  let single_read () _buffer = failwith "reader boom"
+end
+
+let failing_source () =
+  Eio.Resource.T ((), Eio.Flow.Pi.source (module Failing_source))
+
+let backend_process ?(process_id = "test") ?(write_stdin = fun _ -> ())
+    ?(close_stdin = fun () -> ()) ?stdout ?stderr
+    ?(signal = fun _ -> Ok true) ?(await = fun () -> Close_event.Exited 0)
+    () =
+  let stdout =
+    match stdout with
+    | Some stdout -> stdout
+    | None -> Eio.Flow.string_source ""
+  in
+  let stderr =
+    match stderr with
+    | Some stderr -> stderr
+    | None -> Eio.Flow.string_source ""
+  in
+  { Runner_backend.process_id
+  ; write_stdin
+  ; close_stdin
+  ; stdout = (stdout :> Runner_backend.source)
+  ; stderr = (stderr :> Runner_backend.source)
+  ; signal
+  ; await
+  }
+
+let test_runner_uses_backend_boundary () =
+  let spawned_commands = ref [] in
+  let backend =
+    { Runner_backend.spawn =
+        (fun ~sw:_ ~command ->
+          spawned_commands := Command.text command :: !spawned_commands;
+          backend_process
+            ~stdout:
+              (Eio.Flow.string_source
+                 (Printf.sprintf "backend:%s\n" (Command.text command)))
+            ())
+    }
+  in
+  let commands = [ command 0 "first"; command 1 "second" ] in
+  let result, events =
+    run_commands_with_backend_events ~backend ~policy:Run_policy.default commands
+  in
+  let result = ok result in
+  assert (Run_result.exit_code result = 0);
+  assert (List.sort String.compare !spawned_commands = [ "first"; "second" ]);
+  assert (
+    List.sort String.compare (output_chunks events)
+    = [ "backend:first"; "backend:second" ]);
+  assert (
+    List.for_all
+      (fun event ->
+        match Output_event.payload event with
+        | Output_event.Output_chunk_payload { process_id; _ } ->
+          process_id = Some "test"
+        | Output_event.Lifecycle_payload _ -> true)
+      events)
+
+let test_runner_executes_teardown_without_affecting_exit_code () =
+  let main_command = command 0 "main" in
+  let teardown_command = ok (Command.create ~index:1 ~raw:true "cleanup") in
+  let policy = ok (Run_policy.create ~teardown:[ teardown_command ] ()) in
+  let spawned_commands = ref [] in
+  let backend =
+    { Runner_backend.spawn =
+        (fun ~sw:_ ~command ->
+          spawned_commands := Command.text command :: !spawned_commands;
+          match Command.text command with
+          | "main" ->
+            backend_process
+              ~stdout:(Eio.Flow.string_source "main-output\n")
+              ~await:(fun () -> Close_event.Exited 0)
+              ()
+          | "cleanup" ->
+            backend_process
+              ~stdout:(Eio.Flow.string_source "cleanup-output")
+              ~await:(fun () -> Close_event.Exited 1)
+              ()
+          | _ -> assert false)
+    }
+  in
+  let result, events =
+    run_commands_with_backend_events ~backend ~policy [ main_command ]
+  in
+  let result = ok result in
+  assert (Run_result.exit_code result = 0);
+  assert (List.rev !spawned_commands = [ "main"; "cleanup" ]);
+  assert (List.length (Run_result.close_events result) = 1);
+  assert (output_chunks events = [ "main-output"; "cleanup-output" ])
+
+let test_runner_reports_output_reader_failure () =
+  let backend =
+    { Runner_backend.spawn =
+        (fun ~sw:_ ~command:_ ->
+          backend_process ~stdout:(failing_source ()) ())
+    }
+  in
+  let result, _events =
+    run_commands_with_backend_events
+      ~backend
+      ~policy:Run_policy.default
+      [ command 0 "boom" ]
+  in
+  match result with
+  | Error (`Unexpected_runner_error message) ->
+    assert (message = "Failure(\"reader boom\")")
+  | Ok _ | Error _ -> assert false
+
+let test_runner_signals_process_when_output_emit_fails () =
+  let signaled = ref false in
+  let started_at = Unix.gettimeofday () in
+  let result =
+    Eio_main.run (fun env ->
+      let clock = Eio.Stdenv.clock env in
+      let backend =
+        { Runner_backend.spawn =
+            (fun ~sw:_ ~command:_ ->
+              backend_process
+                ~stdout:(failing_source ())
+                ~signal:
+                  (fun signal ->
+                    assert (signal = Sys.sigkill);
+                    signaled := true;
+                    Ok true)
+                ~await:
+                  (fun () ->
+                    let deadline = Eio.Time.now clock +. 0.4 in
+                    while (not !signaled) && Eio.Time.now clock < deadline do
+                      Eio.Time.sleep clock 0.01
+                    done;
+                    if !signaled then Close_event.Signaled "9"
+                    else Close_event.Exited 99)
+                ())
+        }
+      in
+      let spec =
+        ok
+          (Run_spec.create
+             ~commands:[ command 0 "chatty" ]
+             ~policy:Run_policy.default)
+      in
+      Runner.run
+        ~input:None
+        ~input_source:None
+        ~backend
+        ~process_mgr:(Eio.Stdenv.process_mgr env)
+        ~now:(fun () -> Eio.Time.now clock)
+        ~sleep:(fun seconds -> Eio.Time.sleep clock seconds)
+        ~spec
+        ~on_output_event:(fun _event -> ()))
+  in
+  let elapsed = Unix.gettimeofday () -. started_at in
+  assert !signaled;
+  assert (elapsed < 0.2);
+  match result with
+  | Error (`Unexpected_runner_error message) ->
+    assert (message = "Failure(\"reader boom\")")
+  | Ok _ | Error _ -> assert false
+
+let test_runner_cancels_retry_during_output_drain () =
+  let policy =
+    ok
+      (Run_policy.create
+         ~kill_others_on:[ Run_policy.Failure ]
+         ~restart_tries:1
+         ())
+  in
+  let commands = [ command 0 "retrying"; command 1 "failing" ] in
+  let spawn_counts = Array.make 2 0 in
+  let result =
+    Eio_main.run (fun env ->
+      let clock = Eio.Stdenv.clock env in
+      let backend =
+        { Runner_backend.spawn =
+            (fun ~sw:_ ~command ->
+              let command_index = Command.index command in
+              spawn_counts.(command_index) <- spawn_counts.(command_index) + 1;
+              match command_index with
+              | 0 ->
+                backend_process
+                  ~stdout:
+                    (slow_eof_source
+                       ~sleep:(fun () -> Eio.Time.sleep clock 0.25))
+                  ~await:(fun () -> Close_event.Exited 1)
+                  ()
+              | 1 ->
+                backend_process
+                  ~await:
+                    (fun () ->
+                      Eio.Time.sleep clock 0.05;
+                      Close_event.Exited 1)
+                  ()
+              | _ -> assert false)
+        }
+      in
+      let spec = ok (Run_spec.create ~commands ~policy) in
+      Runner.run
+        ~input:None
+        ~input_source:None
+        ~backend
+        ~process_mgr:(Eio.Stdenv.process_mgr env)
+        ~now:(fun () -> Eio.Time.now (Eio.Stdenv.clock env))
+        ~sleep:(fun seconds -> Eio.Time.sleep (Eio.Stdenv.clock env) seconds)
+        ~spec
+        ~on_output_event:(fun _event -> ()))
+  in
+  let result = ok result in
+  assert (spawn_counts.(0) = 1);
+  assert (Run_result.exit_code result = 1);
+  assert (
+    Run_result.close_events result
+    |> List.exists (fun close_event ->
+      Command.index (Close_event.command close_event) = 0
+      && Close_event.killed close_event))
+
+let test_runner_reports_signal_failure () =
+  let policy =
+    ok
+      (Run_policy.create
+         ~kill_others_on:[ Run_policy.Failure ]
+         ~kill_signal:Run_policy.Sigterm
+         ())
+  in
+  let commands = [ command 0 "failing"; command 1 "stubborn" ] in
+  let started_at = Unix.gettimeofday () in
+  let result =
+    Eio_main.run (fun env ->
+      let clock = Eio.Stdenv.clock env in
+      let backend =
+        { Runner_backend.spawn =
+            (fun ~sw:_ ~command ->
+              match Command.index command with
+              | 0 ->
+                backend_process
+                  ~await:
+                    (fun () ->
+                      Eio.Time.sleep clock 0.05;
+                      Close_event.Exited 1)
+                  ()
+              | 1 ->
+                backend_process
+                  ~signal:(fun _ -> Error "signal failed")
+                  ~await:
+                    (fun () ->
+                      Eio.Time.sleep clock 1.0;
+                      Close_event.Exited 0)
+                  ()
+              | _ -> assert false)
+        }
+      in
+      let spec = ok (Run_spec.create ~commands ~policy) in
+      Runner.run
+        ~input:None
+        ~input_source:None
+        ~backend
+        ~process_mgr:(Eio.Stdenv.process_mgr env)
+        ~now:(fun () -> Eio.Time.now clock)
+        ~sleep:(fun seconds -> Eio.Time.sleep clock seconds)
+        ~spec
+        ~on_output_event:(fun _event -> ()))
+  in
+  let elapsed = Unix.gettimeofday () -. started_at in
+  assert (elapsed < 0.5);
+  match result with
+  | Error (`Unexpected_runner_error "signal failed") -> ()
+  | Ok _ | Error _ -> assert false
+
+let test_runner_keeps_draining_process_until_close_recorded () =
+  let policy =
+    ok
+      (Run_policy.create
+         ~kill_others_on:[ Run_policy.Success ]
+         ~success_condition:(Run_policy.Commands [ 0 ])
+         ())
+  in
+  let commands = [ command 0 "chatty-success"; command 1 "fast-success" ] in
+  let result =
+    Eio_main.run (fun env ->
+      let clock = Eio.Stdenv.clock env in
+      let backend =
+        { Runner_backend.spawn =
+            (fun ~sw:_ ~command ->
+              match Command.index command with
+              | 0 ->
+                backend_process
+                  ~stdout:
+                    (slow_eof_source
+                       ~sleep:(fun () -> Eio.Time.sleep clock 0.25))
+                  ~await:(fun () -> Close_event.Exited 0)
+                  ()
+              | 1 ->
+                backend_process
+                  ~await:
+                    (fun () ->
+                      Eio.Time.sleep clock 0.05;
+                      Close_event.Exited 0)
+                  ()
+              | _ -> assert false)
+        }
+      in
+      let spec = ok (Run_spec.create ~commands ~policy) in
+      Runner.run
+        ~input:None
+        ~input_source:None
+        ~backend
+        ~process_mgr:(Eio.Stdenv.process_mgr env)
+        ~now:(fun () -> Eio.Time.now clock)
+        ~sleep:(fun seconds -> Eio.Time.sleep clock seconds)
+        ~spec
+        ~on_output_event:(fun _event -> ()))
+  in
+  let result = ok result in
+  let first_close_event =
+    Run_result.close_events result
+    |> List.find (fun close_event ->
+      Command.index (Close_event.command close_event) = 0)
+  in
+  assert (Run_result.exit_code result = 0);
+  assert (not (Close_event.killed first_close_event));
+  assert (Close_event.status first_close_event = Close_event.Exited 0)
+
+let test_runner_does_not_mark_unsignaled_sibling_as_killed () =
+  let policy =
+    ok
+      (Run_policy.create
+         ~kill_others_on:[ Run_policy.Success; Run_policy.Failure ]
+         ~kill_signal:Run_policy.Sigterm
+         ())
+  in
+  let commands = [ command 0 "successful"; command 1 "already-exiting" ] in
+  let result =
+    Eio_main.run (fun env ->
+      let clock = Eio.Stdenv.clock env in
+      let backend =
+        { Runner_backend.spawn =
+            (fun ~sw:_ ~command ->
+              match Command.index command with
+              | 0 ->
+                backend_process
+                  ~await:
+                    (fun () ->
+                      Eio.Time.sleep clock 0.05;
+                      Close_event.Exited 0)
+                  ()
+              | 1 ->
+                backend_process
+                  ~signal:(fun _ -> Ok false)
+                  ~await:
+                    (fun () ->
+                      Eio.Time.sleep clock 0.10;
+                      Close_event.Exited 1)
+                  ()
+              | _ -> assert false)
+        }
+      in
+      let spec = ok (Run_spec.create ~commands ~policy) in
+      Runner.run
+        ~input:None
+        ~input_source:None
+        ~backend
+        ~process_mgr:(Eio.Stdenv.process_mgr env)
+        ~now:(fun () -> Eio.Time.now clock)
+        ~sleep:(fun seconds -> Eio.Time.sleep clock seconds)
+        ~spec
+        ~on_output_event:(fun _event -> ()))
+  in
+  let result = ok result in
+  let sibling_close_event =
+    Run_result.close_events result
+    |> List.find (fun close_event ->
+      Command.index (Close_event.command close_event) = 1)
+  in
+  assert (Run_result.exit_code result = 1);
+  assert (not (Close_event.killed sibling_close_event));
+  assert (Close_event.status sibling_close_event = Close_event.Exited 1)
+
+let test_runner_executes_commands_concurrently () =
+  let policy = Run_policy.default in
+  let first_marker = Filename.temp_file "concurrently-first" ".state" in
+  let second_marker = Filename.temp_file "concurrently-second" ".state" in
+  Sys.remove first_marker;
+  Sys.remove second_marker;
+  let waits_for marker_to_write marker_to_wait output =
+    Printf.sprintf
+      "printf ready > %s; i=0; while [ \"$i\" -lt 200 ]; do if [ -f %s ]; then \
+       printf %s; exit 0; fi; i=$((i + 1)); sleep 0.01; done; exit 42"
+      (Filename.quote marker_to_write)
+      (Filename.quote marker_to_wait)
+      (Filename.quote output)
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      if Sys.file_exists first_marker then Sys.remove first_marker;
+      if Sys.file_exists second_marker then Sys.remove second_marker)
+    (fun () ->
+      let result, events =
+        run_with_events
+          ~policy
+          [ waits_for first_marker second_marker "one"
+          ; waits_for second_marker first_marker "two"
+          ]
+      in
+      let result = ok result in
+      assert (Run_result.exit_code result = 0);
+      let chunks = output_chunks events in
+      assert (List.mem "one" chunks);
+      assert (List.mem "two" chunks))
+
+let test_runner_preserves_blank_output_lines () =
+  let policy = Run_policy.default in
+  let result, events =
+    run_with_events ~policy [ "printf 'a\\n\\nb\\n'" ]
+  in
+  let result = ok result in
+  assert (Run_result.exit_code result = 0);
+  assert (output_chunks events = [ "a"; ""; "b" ])
+
+let test_runner_preserves_raw_output_bytes () =
+  let policy = Run_policy.default in
+  let command =
+    ok (Command.create ~index:0 ~raw:true "printf 'a\\nb'")
+  in
+  let result, events = run_commands_with_events ~policy [ command ] in
+  let result = ok result in
+  assert (Run_result.exit_code result = 0);
+  assert (output_chunks events = [ "a\nb" ])
+
+let test_runner_applies_command_environment () =
+  let policy = Run_policy.default in
+  let command =
+    ok
+      (Command.create
+         ~index:0
+         ~env:[ "CONCURRENTLY_TEST_VALUE", "from-env" ]
+         "printf \"$CONCURRENTLY_TEST_VALUE\"")
+  in
+  let result, events = run_commands_with_events ~policy [ command ] in
+  let result = ok result in
+  assert (Run_result.exit_code result = 0);
+  assert (output_chunks events = [ "from-env" ])
+
+let test_runner_applies_command_cwd () =
+  let policy = Run_policy.default in
+  let directory = Filename.temp_file "concurrently-cwd" ".dir" in
+  Sys.remove directory;
+  Unix.mkdir directory 0o700;
+  let marker = Filename.concat directory "marker" in
+  let command =
+    ok (Command.create ~index:0 ~cwd:directory "printf from-cwd > marker")
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      if Sys.file_exists marker then Sys.remove marker;
+      if Sys.file_exists directory then Unix.rmdir directory)
+    (fun () ->
+      let result, _events = run_commands_with_events ~policy [ command ] in
+      let result = ok result in
+      assert (Run_result.exit_code result = 0);
+      let input = open_in marker in
+      Fun.protect
+        ~finally:(fun () -> close_in input)
+        (fun () -> assert (input_line input = "from-cwd")))
+
+let test_runner_drains_oversized_output_lines () =
+  let policy = Run_policy.default in
+  let result, events =
+    run_with_events
+      ~policy
+      [ "awk 'BEGIN { for (i = 0; i < 2000000; i++) printf \"x\"; printf \"\\n\" }'" ]
+  in
+  let result = ok result in
+  let chunks = output_chunks events in
+  assert (Run_result.exit_code result = 0);
+  assert (List.length chunks > 1);
+  assert (
+    chunks
+    |> List.fold_left (fun total chunk -> total + String.length chunk) 0
+    = 2_000_000)
+
+let test_runner_respects_max_processes () =
+  let policy = ok (Run_policy.create ~max_processes:1 ()) in
+  let started_at = Unix.gettimeofday () in
+  let result, _events =
+    run_with_events
+      ~policy
+      [ "sleep 0.2; printf one"; "sleep 0.2; printf two" ]
+  in
+  let elapsed = Unix.gettimeofday () -. started_at in
+  let result = ok result in
+  assert (Run_result.exit_code result = 0);
+  assert (elapsed >= 0.35)
+
+let test_runner_retries_failed_commands () =
+  let marker = Filename.temp_file "concurrently-retry" ".state" in
+  Sys.remove marker;
+  let policy = ok (Run_policy.create ~restart_tries:1 ()) in
+  let command =
+    Printf.sprintf
+      "if [ ! -f %s ]; then touch %s; exit 1; else printf retry-ok; fi"
+      (Filename.quote marker)
+      (Filename.quote marker)
+  in
+  Fun.protect
+    ~finally:(fun () -> if Sys.file_exists marker then Sys.remove marker)
+    (fun () ->
+      let result, events = run_with_events ~policy [ command ] in
+      let result = ok result in
+      let close_events = Run_result.close_events result in
+      assert (Run_result.exit_code result = 0);
+      assert (List.length close_events = 2);
+      assert (List.mem "retry-ok" (output_chunks events));
+      assert (
+        List.exists
+          (fun close_event ->
+            Close_event.attempt close_event = 0
+            && Close_event.status close_event = Close_event.Exited 1)
+          close_events);
+      assert (
+        List.exists
+          (fun close_event ->
+            Close_event.attempt close_event = 1
+            && Close_event.status close_event = Close_event.Exited 0)
+          close_events))
+
+let test_runner_applies_restart_delay () =
+  let policy =
+    ok
+      (Run_policy.create
+         ~restart_tries:2
+         ~restart_delay:Run_policy.Exponential_backoff
+         ())
+  in
+  let command = command 0 "flaky" in
+  let spawn_count = ref 0 in
+  let slept_seconds = ref [] in
+  let now_seconds = ref 0.0 in
+  let backend =
+    { Runner_backend.spawn =
+        (fun ~sw:_ ~command:_ ->
+          incr spawn_count;
+          let status =
+            if !spawn_count = 1 then Close_event.Exited 1
+            else Close_event.Exited 0
+          in
+          backend_process ~await:(fun () -> status) ())
+    }
+  in
+  let result, events =
+    Eio_main.run (fun env ->
+      let spec = ok (Run_spec.create ~commands:[ command ] ~policy) in
+      let events = ref [] in
+      let result =
+        Runner.run
+          ~input:None
+          ~input_source:None
+          ~backend
+          ~process_mgr:(Eio.Stdenv.process_mgr env)
+          ~now:(fun () -> !now_seconds)
+          ~sleep:
+            (fun seconds ->
+              slept_seconds := seconds :: !slept_seconds;
+              now_seconds := !now_seconds +. seconds)
+          ~spec
+          ~on_output_event:(fun event -> events := event :: !events)
+      in
+      result, List.rev !events)
+  in
+  let result = ok result in
+  assert (!spawn_count = 2);
+  assert (
+    abs_float (List.fold_left ( +. ) 0.0 !slept_seconds -. 1.0) < 0.0001);
+  assert (Run_result.exit_code result = 0);
+  assert (
+    List.exists
+      (fun event ->
+        match Output_event.payload event with
+        | Output_event.Lifecycle_payload
+            (Output_event.Restarting
+              { next_attempt = 1; delay_ms = Some 1000 }) ->
+          true
+        | _ -> false)
+      events)
+
+let test_runner_releases_process_slot_during_restart_delay () =
+  let policy =
+    ok
+      (Run_policy.create
+         ~max_processes:1
+         ~restart_tries:1
+         ~restart_delay:(Run_policy.Fixed_delay_ms 1000)
+         ())
+  in
+  let commands = [ command 0 "flaky"; command 1 "queued" ] in
+  let spawn_order = ref [] in
+  let first_command_spawns = ref 0 in
+  let now_seconds = ref 0.0 in
+  let result =
+    Eio_main.run (fun env ->
+      let saw_queued_command = ref false in
+      let backend =
+        { Runner_backend.spawn =
+            (fun ~sw:_ ~command ->
+              let command_index = Command.index command in
+              spawn_order := command_index :: !spawn_order;
+              let status =
+                match command_index with
+                | 0 ->
+                  incr first_command_spawns;
+                  if !first_command_spawns = 1 then Close_event.Exited 1
+                  else Close_event.Exited 0
+                | 1 ->
+                  saw_queued_command := true;
+                  Close_event.Exited 0
+                | _ -> assert false
+              in
+              backend_process ~await:(fun () -> status) ())
+        }
+      in
+      let sleep seconds =
+        assert (seconds > 0.0);
+        assert (seconds <= 0.05);
+        let deadline = Unix.gettimeofday () +. 0.2 in
+        while
+          (not !saw_queued_command) && Unix.gettimeofday () < deadline
+        do
+          Eio.Fiber.yield ()
+        done;
+        assert !saw_queued_command;
+        now_seconds := !now_seconds +. seconds
+      in
+      let spec = ok (Run_spec.create ~commands ~policy) in
+      Runner.run
+        ~input:None
+        ~input_source:None
+        ~backend
+        ~process_mgr:(Eio.Stdenv.process_mgr env)
+        ~now:(fun () -> !now_seconds)
+        ~sleep
+        ~spec
+        ~on_output_event:(fun _event -> ()))
+  in
+  let result = ok result in
+  assert (Run_result.exit_code result = 0);
+  assert (List.rev !spawn_order = [ 0; 1; 0 ])
+
+let test_runner_cancels_retry_delay_without_waiting_full_backoff () =
+  let policy =
+    ok
+      (Run_policy.create
+         ~kill_others_on:[ Run_policy.Success ]
+         ~restart_tries:1
+         ~restart_delay:(Run_policy.Fixed_delay_ms 1000)
+         ())
+  in
+  let commands = [ command 0 "retrying"; command 1 "failing" ] in
+  let started_at = Unix.gettimeofday () in
+  let result =
+    Eio_main.run (fun env ->
+      let clock = Eio.Stdenv.clock env in
+      let backend =
+        { Runner_backend.spawn =
+            (fun ~sw:_ ~command ->
+              let status =
+                match Command.index command with
+                | 0 -> Close_event.Exited 1
+                | 1 ->
+                  Eio.Time.sleep clock 0.05;
+                  Close_event.Exited 0
+                | _ -> assert false
+              in
+              backend_process ~await:(fun () -> status) ())
+        }
+      in
+      let spec = ok (Run_spec.create ~commands ~policy) in
+      Runner.run
+        ~input:None
+        ~input_source:None
+        ~backend
+        ~process_mgr:(Eio.Stdenv.process_mgr env)
+        ~now:(fun () -> Eio.Time.now clock)
+        ~sleep:(fun seconds -> Eio.Time.sleep clock seconds)
+        ~spec
+        ~on_output_event:(fun _event -> ()))
+  in
+  let elapsed = Unix.gettimeofday () -. started_at in
+  let result = ok result in
+  assert (elapsed < 0.5);
+  assert (
+    Run_result.close_events result
+    |> List.exists (fun close_event ->
+      Command.index (Close_event.command close_event) = 0
+      && Close_event.killed close_event))
+
+let test_runner_kills_siblings_on_failure () =
+  let policy =
+    ok
+      (Run_policy.create
+         ~kill_others_on:[ Run_policy.Failure ]
+         ~kill_signal:Run_policy.Sigterm
+         ())
+  in
+  let started_at = Unix.gettimeofday () in
+  let result, events =
+    run_with_events ~policy [ "sleep 2; printf slow"; "exit 1" ]
+  in
+  let elapsed = Unix.gettimeofday () -. started_at in
+  let result = ok result in
+  assert (Run_result.exit_code result = 1);
+  assert (elapsed < 1.0);
+  assert (not (List.mem "slow" (output_chunks events)))
+
+let test_runner_force_kills_siblings_after_kill_timeout () =
+  let policy =
+    ok
+      (Run_policy.create
+         ~kill_others_on:[ Run_policy.Success ]
+         ~kill_signal:Run_policy.Sigterm
+         ~kill_timeout_ms:50
+         ())
+  in
+  let commands = [ command 0 "successful"; command 1 "stubborn" ] in
+  let signaled = ref [] in
+  let started_at = Unix.gettimeofday () in
+  let result =
+    Eio_main.run (fun env ->
+      let clock = Eio.Stdenv.clock env in
+      let backend =
+        { Runner_backend.spawn =
+            (fun ~sw:_ ~command ->
+              match Command.index command with
+              | 0 ->
+                backend_process
+                  ~await:
+                    (fun () ->
+                      Eio.Time.sleep clock 0.02;
+                      Close_event.Exited 0)
+                  ()
+              | 1 ->
+                backend_process
+                  ~signal:
+                    (fun signal ->
+                      signaled := signal :: !signaled;
+                      Ok true)
+                  ~await:
+                    (fun () ->
+                      let deadline = Eio.Time.now clock +. 0.5 in
+                      while
+                        (not (List.mem Sys.sigkill !signaled))
+                        && Eio.Time.now clock < deadline
+                      do
+                        Eio.Time.sleep clock 0.01
+                      done;
+                      if List.mem Sys.sigkill !signaled then
+                        Close_event.Signaled "9"
+                      else Close_event.Exited 99)
+                  ()
+              | _ -> assert false)
+        }
+      in
+      let spec = ok (Run_spec.create ~commands ~policy) in
+      Runner.run
+        ~input:None
+        ~input_source:None
+        ~backend
+        ~process_mgr:(Eio.Stdenv.process_mgr env)
+        ~now:(fun () -> Eio.Time.now clock)
+        ~sleep:(fun seconds -> Eio.Time.sleep clock seconds)
+        ~spec
+        ~on_output_event:(fun _event -> ()))
+  in
+  let elapsed = Unix.gettimeofday () -. started_at in
+  let result = ok result in
+  let sibling_close_event =
+    Run_result.close_events result
+    |> List.find (fun close_event ->
+      Command.index (Close_event.command close_event) = 1)
+  in
+  assert (elapsed < 0.5);
+  assert (List.rev !signaled = [ Sys.sigterm; Sys.sigkill ]);
+  assert (Close_event.killed sibling_close_event);
+  assert (Close_event.status sibling_close_event = Close_event.Signaled "9")
+
+let test_runner_does_not_mark_draining_exited_process_as_killed () =
+  let marker = Filename.temp_file "concurrently-draining" ".state" in
+  Sys.remove marker;
+  let policy =
+    ok
+      (Run_policy.create
+         ~kill_others_on:[ Run_policy.Success; Run_policy.Failure ]
+         ~kill_signal:Run_policy.Sigterm
+         ())
+  in
+  let successful_command =
+    Printf.sprintf
+      "while [ ! -f %s ]; do sleep 0.01; done; sleep 0.5; exit 0"
+      (Filename.quote marker)
+  in
+  let failed_command =
+    Printf.sprintf
+      "printf ready > %s; i=0; while [ \"$i\" -lt 10000 ]; do printf \
+       xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx; \
+       i=$((i + 1)); done; exit 1"
+      (Filename.quote marker)
+  in
+  Fun.protect
+    ~finally:(fun () -> if Sys.file_exists marker then Sys.remove marker)
+    (fun () ->
+      let result, _events =
+        run_with_events ~policy [ successful_command; failed_command ]
+      in
+      let result = ok result in
+      let failed_close_event =
+        Run_result.close_events result
+        |> List.find (fun close_event ->
+          Command.index (Close_event.command close_event) = 1)
+      in
+      assert (Run_result.exit_code result = 1);
+      assert (not (Close_event.killed failed_close_event));
+      assert (Close_event.status failed_close_event = Close_event.Exited 1))
+
+let test_runner_cancels_queued_commands_after_failure () =
+  let policy =
+    ok
+      (Run_policy.create
+         ~max_processes:1
+         ~kill_others_on:[ Run_policy.Failure ]
+         ~kill_signal:Run_policy.Sigterm
+         ())
+  in
+  let result, events =
+    run_with_events ~policy [ "exit 1"; "printf queued" ]
+  in
+  let result = ok result in
+  let queued_close_event =
+    Run_result.close_events result
+    |> List.find (fun close_event ->
+      Command.index (Close_event.command close_event) = 1)
+  in
+  assert (Run_result.exit_code result = 1);
+  assert (Close_event.killed queued_close_event);
+  assert (not (List.mem "queued" (output_chunks events)))
+
+let test_runner_applies_close_policy_before_descendant_pipe_eof () =
+  let marker = Filename.temp_file "concurrently-sibling" ".state" in
+  Sys.remove marker;
+  let policy =
+    ok
+      (Run_policy.create
+         ~kill_others_on:[ Run_policy.Failure ]
+         ~kill_signal:Run_policy.Sigterm
+         ())
+  in
+  Fun.protect
+    ~finally:(fun () -> if Sys.file_exists marker then Sys.remove marker)
+    (fun () ->
+      let started_at = Unix.gettimeofday () in
+      let result, events =
+        run_with_events
+          ~policy
+          [ Printf.sprintf
+              "while [ ! -f %s ]; do sleep 0.01; done; sleep 5 & exit 1"
+              (Filename.quote marker)
+          ; Printf.sprintf
+              "printf ready > %s; trap 'printf sibling-killed; exit 0' TERM; \
+               while true; do sleep 1; done"
+              (Filename.quote marker)
+          ]
+      in
+      let elapsed = Unix.gettimeofday () -. started_at in
+      let result = ok result in
+      assert (Run_result.exit_code result = 1);
+      assert (elapsed < 2.0);
+      assert (List.mem "sibling-killed" (output_chunks events)))
+
+let test_runner_passes_dash_prefixed_commands_to_shell () =
+  let result, _events = run_with_events ~policy:Run_policy.default [ "-foo" ] in
+  let result = ok result in
+  let close_event =
+    match Run_result.close_events result with
+    | [ close_event ] -> close_event
+    | _ -> assert false
+  in
+  assert (Run_result.exit_code result = 1);
+  assert (Close_event.status close_event = Close_event.Exited 127)
+
+let () =
+  test_command_validation ();
+  test_run_policy_validation ();
+  test_run_policy_decisions ();
+  test_run_spec_validation ();
+  test_input_router_routes_default_and_prefixed_input ();
+  test_output_event_validation ();
+  test_output_formatter_validation ();
+  test_output_formatter_streams_unbuffered_output ();
+  test_output_formatter_prefix_modes ();
+  test_output_formatter_prefix_colors ();
+  test_output_formatter_buffers_command_level_blocks ();
+  test_output_formatter_preserves_blank_buffered_lines ();
+  test_output_formatter_raw_and_hidden_commands ();
+  test_run_result_validation ();
+  test_close_event_validation ();
+  test_cli_config_validation ();
+  test_runner_uses_backend_boundary ();
+  test_runner_executes_teardown_without_affecting_exit_code ();
+  test_runner_reports_output_reader_failure ();
+  test_runner_signals_process_when_output_emit_fails ();
+  test_runner_cancels_retry_during_output_drain ();
+  test_runner_reports_signal_failure ();
+  test_runner_keeps_draining_process_until_close_recorded ();
+  test_runner_does_not_mark_unsignaled_sibling_as_killed ();
+  test_runner_executes_commands_concurrently ();
+  test_runner_preserves_blank_output_lines ();
+  test_runner_preserves_raw_output_bytes ();
+  test_runner_applies_command_environment ();
+  test_runner_applies_command_cwd ();
+  test_runner_drains_oversized_output_lines ();
+  test_runner_respects_max_processes ();
+  test_runner_retries_failed_commands ();
+  test_runner_applies_restart_delay ();
+  test_runner_releases_process_slot_during_restart_delay ();
+  test_runner_cancels_retry_delay_without_waiting_full_backoff ();
+  test_runner_kills_siblings_on_failure ();
+  test_runner_force_kills_siblings_after_kill_timeout ();
+  test_runner_does_not_mark_draining_exited_process_as_killed ();
+  test_runner_cancels_queued_commands_after_failure ();
+  test_runner_applies_close_policy_before_descendant_pipe_eof ();
+  test_runner_passes_dash_prefixed_commands_to_shell ();
+  print_endline "domain tests ok"
