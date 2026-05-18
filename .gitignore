@@ -24,6 +24,7 @@ setup.log
 
 # Dune generated files
 *.install
+compile_commands.json
 
 # Local OPAM switch
 _opam/

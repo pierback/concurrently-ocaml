@@ -33,9 +33,16 @@ jobs:
         with:
           ocaml-compiler: ${{ matrix.ocaml-compiler }}
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
       - run: opam install . --deps-only --with-test
 
       - run: opam exec -- dune build @install @runtest
+
+      - run: npm run compat:concurrently
 
   native-packages:
     strategy:
@@ -96,6 +103,13 @@ jobs:
           --platform ${{ matrix.npm_os }}
           --arch ${{ matrix.npm_cpu }}
           --binary ${{ matrix.binary }}
+
+      - name: Smoke npm install
+        run: >-
+          npm run smoke:npm-install --
+          --target ${{ matrix.target }}
+          --platform ${{ matrix.npm_os }}
+          --arch ${{ matrix.npm_cpu }}
 
       - name: Upload npm package artifact
         uses: actions/upload-artifact@v4

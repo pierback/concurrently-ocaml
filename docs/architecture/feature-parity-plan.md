@@ -167,7 +167,7 @@ signal, process-tree teardown, and pipe implementations.
 | Teardown commands | CLI config, Run policy, Runner | Implemented for sequential cleanup commands with raw output and exit-code isolation |
 | Timings output and close-event timings | Runner, Output formatter | Partial: npm-style lifecycle timing messages and summary tables are implemented for deterministic success, failure, restart, hidden, raw, named, grouped, custom timestamp, and kill-on-fail cases |
 | Help and version flags | CLI config, npm distribution | Implemented for `--version`, `-v`, `-V`, `--help`, and `-h`; deterministic help output is pinned byte-for-byte against npm `concurrently@9.2.1`, and npm install smoke verifies matching `concurrently`/`conc` help aliases |
-| Programmatic library entrypoint | Run API, Runner, Node package API | Partial: `Run_api` accepts structured command inputs with per-command `env`, `cwd`, `raw`, `prefix_color`, `name`, `hidden`, and `ipc`, then delegates to backend-aware `Runner.run`; the JS package exposes CommonJS and ESM `concurrently()` entrypoints that delegate supported options to the native binary, return `{ result, commands }`, and emit per-command close observable events from native close-event JSON |
+| Programmatic library entrypoint | Run API, Runner, Node package API | Partial: `Run_api` accepts structured command inputs with per-command `env`, `cwd`, `raw`, `prefix_color`, `name`, `hidden`, and `ipc`, then delegates to backend-aware `Runner.run`; the JS package exposes CommonJS and ESM `concurrently()` entrypoints that delegate supported options to the native binary, return `{ result, commands }`, and emit native-backed per-command `stdout`, `stderr`, `timer`, `stateChange`, and `close` observable events |
 
 ## Compatibility Evidence And Divergence Ledger
 
@@ -231,7 +231,7 @@ Known divergences tracked as incomplete work:
 | Area | Upstream behavior | Current status |
 | --- | --- | --- |
 | Timing table row order for runtime-dependent signal durations | npm sorts the timing table by measured duration. When one command is killed after another exits, relative durations can legitimately differ by runtime and platform. | Deterministic kill-on-fail signal timing matches npm under normalized timestamps/durations. Success-triggered kill timing is not pinned byte-for-byte because duration-sorted row order depends on process scheduling and signal latency. |
-| Programmatic API parity | Upstream `concurrently()` accepts structured command inputs with per-command `env`, `cwd`, `raw`, `prefixColor`, and `name`, writes through configured streams, and returns `{ result, commands }` with observable command handles. | OCaml now exposes `Run_api` for structured command input and validated run/display/input construction over the same core model. The JS package now has CommonJS and ESM import entrypoints with a native-backed `concurrently()` function, supported option mapping, output/input stream forwarding, per-command JS `env`/`cwd`/`raw` metadata, and a `{ result, commands }` shape backed by native close-event JSON. Command close observables now emit the native close event and update handle `killed`/`exited` state. Per-command stdout/stderr/error/timer/state observables, per-command kill, and IPC messaging are still incomplete. |
+| Programmatic API parity | Upstream `concurrently()` accepts structured command inputs with per-command `env`, `cwd`, `raw`, `prefixColor`, and `name`, writes through configured streams, and returns `{ result, commands }` with observable command handles. | OCaml now exposes `Run_api` for structured command input and validated run/display/input construction over the same core model. The JS package now has CommonJS and ESM import entrypoints with a native-backed `concurrently()` function, supported option mapping, output/input stream forwarding, per-command JS `env`/`cwd`/`raw` metadata, and a `{ result, commands }` shape backed by native close-event JSON. The native binary also exposes an internal structured event fd for the JS package, so command handles emit native-backed `stdout`, `stderr`, `timer`, `stateChange`, and `close` events without parsing formatted terminal output. Per-command `error`, per-command `kill`, IPC messaging, custom JS `spawn`/`kill`, custom upstream flow controllers, and exact RxJS `Subject` semantics are still incomplete. |
 | Full chalk compatibility | Upstream delegates simple dot-path color names/styles to chalk and special-cases leading `#RGB`/`#RRGGBB` foreground colors. Function-style values such as `rgb(...)` and `ansi256(...)` fall back to reset in published `concurrently@9.2.1`; newer source-only forms are not part of the pinned package target. | Published-package reset, named foreground/background, bright foreground, modifiers, modifier chains, short/full truecolor hex, and invalid fallback prefix output is pinned in compatibility tests. Remaining work is to decide whether source-only color behavior beyond `concurrently@9.2.1` should be a future target-version upgrade rather than current parity work. |
 | Windows backend | Upstream supports Windows process semantics. | Windows npm packages are withheld until a Windows-native runner backend exists. |
 
@@ -386,9 +386,10 @@ Known divergences tracked as incomplete work:
    root package is restricted to the JS launcher, native-backed CommonJS/ESM API
    shim, type declarations, package metadata, README, and LICENSE, so users do
    not receive OCaml source, tests, Dune files, or local development scripts.
-   The JS API now emits native-backed command close observable events for
-   spawned commands, so import users can observe the same terminal close data as
-   the top-level `result` promise without parsing formatted output.
+   The JS API now emits native-backed command stdout, stderr, timer,
+   state-change, and close observable events for spawned commands through an
+   internal structured event fd, so import users do not have to parse formatted
+   terminal output to observe command handles.
    GitHub Actions builds platform packages, smoke-installs the packed root and
    platform package into a clean npm project, asserts the lean root package
    surface, executes `conc`, imports the CommonJS and ESM API entrypoints, and
