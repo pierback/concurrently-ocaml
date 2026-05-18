@@ -1,9 +1,11 @@
 _build/
-bin/
-lib/
+_opam/
+dist/
+scripts/
 test/
 .vscode/
 .github/
 .dockerignore
 .gitignore
 Dockerfile
+Dockerfile.test

@@ -1,186 +1,287 @@
-open Unix
-open ANSITerminal
+module Cli_config = Concurrentlyocaml.Cli_config
+module Output_event = Concurrentlyocaml.Output_event
+module Output_formatter = Concurrentlyocaml.Output_formatter
+module Posix_runner_backend = Concurrentlyocaml.Posix_runner_backend
+module Runner = Concurrentlyocaml.Runner
+module Runner_backend = Concurrentlyocaml.Runner_backend
 
-let word_list = ref []
-let commands = ref []
-let spacious_mode = ref false
-let benchmark_mode = ref false
-let kill_others = ref false
-let kill_others_on_fail = ref false
-let kill_signal = ref "SIGTERM"
-
-
-let speclist = [
-  ("-n", Arg.String (fun s -> word_list := String.split_on_char ',' s), "List of words separated by commas");
-  ("--spacious", Arg.Unit (fun () -> spacious_mode := true), "Enable spacious mode (adds new lines)");
-  ("-sp", Arg.Unit (fun () -> spacious_mode := true), "Enable spacious mode (adds new lines)");
-  ("-b", Arg.Set benchmark_mode, "Enable benchmark mode (tracks execution time)");
-  ("--benchmark", Arg.Set benchmark_mode, "Enable benchmark mode (tracks execution time)");
-  ("-k", Arg.Set kill_others, "Kill other processes if one exits or dies");
-  ("--kill-others-on-fail", Arg.Set kill_others_on_fail, "Kill other processes if one exits with a non-zero status code");
-  ("--kill-signal", Arg.String (fun s -> kill_signal := s), "Signal to send to other processes if one exits or dies (default: SIGTERM)");
-]
-
-let usage_msg = "Usage: " ^ Sys.argv.(0) ^ " -n <word_list> <command1> <command2> ..."
-
-let emojis = [" 🍕"; " 🌞"; " 🚗"; " 🌈"; " 🐱"; " 🌸"; " 🎈"; " 🍦"; " 📚"; " 🎸"; " 🏆"; " 🚀"; " 🍪"; " 🎃"; " 🏖 "; " 🎵 "] 
-
-let colorize str color =
-  sprintf [ANSITerminal.Foreground color] str
-
-let format_to_grey str =
-  sprintf [ANSITerminal.Foreground ANSITerminal.Black] "%s" str
-
-let format_time elapsed_time =
-  if elapsed_time >= 1.0 then
-    let seconds = int_of_float elapsed_time in
-    let milliseconds = int_of_float ((elapsed_time -. float_of_int seconds) *. 1000.0) in
-    Printf.sprintf "%d,%d sec" seconds milliseconds
-  else
-    let milliseconds = int_of_float (elapsed_time *. 1000.0) in
-    let nanoseconds = int_of_float ((elapsed_time *. 1000.0 *. 1000.0) -. (float_of_int milliseconds) *. 1000.0) in
-    let rounded_nanoseconds = (nanoseconds + 5) / 10 in
-    let milliseconds =
-      if rounded_nanoseconds >= 100 then
-        milliseconds + 1
-      else
-        milliseconds
-    in
-    Printf.sprintf "%d,%02d ms" milliseconds rounded_nanoseconds
-
-let generate_bench_tag elapsed_time =
-  let time_str = format_time elapsed_time in
-  format_to_grey time_str
-
-let pretty_format ?(format_out=[]) ?(error_out=[]) ?(tag="") ~elapsed_time color =
-  let prefix_char = colorize "| " color in
-
-  let lines = if (List.length format_out) > 0 then format_out else error_out in
-
-  match lines with
-  | [] -> ""
-  | first_line :: rest_lines ->
-    let first_formatted_line =
-      if !benchmark_mode  then
-        let bench_tag = generate_bench_tag elapsed_time in
-        Printf.sprintf "\n%s[%s] %s:\n%s%s" prefix_char tag bench_tag prefix_char first_line
-      else if !spacious_mode then
-        Printf.sprintf "\n%s[%s]:\n%s%s" prefix_char tag prefix_char first_line
-      else if List.length rest_lines > 0 then
-        Printf.sprintf "\n%s[%s]:\n%s%s" prefix_char tag prefix_char first_line
-      else
-        Printf.sprintf "%s[%s]: %s" prefix_char tag first_line
-    in
-
-    let formatted_lines =
-      if !spacious_mode || !benchmark_mode || List.length rest_lines > 0 then
-        List.map (fun line -> Printf.sprintf "%s%s" prefix_char line) rest_lines
-      else
-        List.map (fun line -> line) rest_lines
-      in
-
-    let newline_needed = if (List.length formatted_lines) > 0 then "\n" else "" in
-    first_formatted_line ^ newline_needed ^ (String.concat "\n" formatted_lines)
-    
-let execute_command tag cmd =
-  let start_time = Unix.gettimeofday () in
-  let (in_channel, out_channel, err_channel) = Unix.open_process_full cmd (Unix.environment ()) in
-  let rec read_lines channel lines =
-    try
-      let line = input_line channel in
-      read_lines channel (line :: lines)
-    with
-    | End_of_file -> lines
+let print_output output =
+  let channel =
+    match output.Output_formatter.stream with
+    | Output_event.Stdout -> stdout
+    | Output_event.Stderr -> stderr
   in
+  output_string channel output.Output_formatter.text;
+  if output.Output_formatter.trailing_newline then output_char channel '\n';
+  flush channel
 
-  let output_lines = List.rev (read_lines in_channel []) in
-  let error_lines = List.rev (read_lines err_channel []) in
+let print_outputs outputs = List.iter print_output outputs
 
-  let end_time = Unix.gettimeofday () in
-  let elapsed_time = end_time -. start_time in
-
-  let exit_code = Unix.close_process_full (in_channel, out_channel, err_channel) in
-  let (color, code) = match exit_code with
-    | WEXITED 0 -> ANSITerminal.Green, 0
-    | WEXITED 1 | _ -> ANSITerminal.Red, 1 in
-
-  let formatted_output = pretty_format ~format_out:output_lines ~tag:tag ~elapsed_time:elapsed_time ~error_out:error_lines color in
-  Printf.printf "%s\n" formatted_output;
-
-  exit code
-
-let select_random_emoji used_emojis =
-  let rec generate_unique_emoji () =
-    let emoji = List.nth emojis (Random.int (List.length emojis)) in
-    if Hashtbl.mem used_emojis emoji then
-      generate_unique_emoji ()
-    else
-      emoji
+let run_config env config =
+  let display = Cli_config.display config in
+  let spec = Cli_config.spec config in
+  let formatter_options =
+    { Output_formatter.labels = display.Cli_config.labels
+    ; prefix = display.Cli_config.prefix
+    ; prefix_length = display.Cli_config.prefix_length
+    ; pad_prefix = display.Cli_config.pad_prefix
+    ; timestamp_format = display.Cli_config.timestamp_format
+    ; spacious = display.Cli_config.spacious
+    ; timings = display.Cli_config.timings
+    ; color_mode =
+        (if display.Cli_config.no_color then Output_formatter.Never
+         else Output_formatter.Always)
+    }
   in
-  let unique_emoji = generate_unique_emoji () in
-  Hashtbl.replace used_emojis unique_emoji ();  (* Mark the emoji as used *)
-  unique_emoji
+  let process_mgr = Eio.Stdenv.process_mgr env in
+  let clock = Eio.Stdenv.clock env in
+  let now () = Eio.Time.now clock in
+  let sleep seconds = Eio.Time.sleep clock seconds in
+  let wall_now = Unix.gettimeofday in
+  match
+    Output_formatter.create
+      ~now
+      ~wall_now
+      ~commands:(Cli_config.commands config)
+      formatter_options
+  with
+  | Error error ->
+    Printf.eprintf "Error: %s\n" (Output_formatter.error_message error);
+    1
+  | Ok formatter ->
+    (match
+       Runner.run
+         ~input:(Cli_config.input config)
+         ~input_source:(Some ((Eio.Stdenv.stdin env :> Runner_backend.source)))
+         ~backend:Posix_runner_backend.backend
+         ~process_mgr
+         ~now
+         ~sleep
+         ~spec
+         ~on_output_event:
+           (fun event -> Output_formatter.handle_event formatter event |> print_outputs)
+     with
+     | Ok result -> Concurrentlyocaml.Run_result.exit_code result
+     | Error error ->
+       Printf.eprintf "Error: %s\n" (Runner.error_message error);
+       1)
 
-let generate_word_list count =
-  let used_emojis = Hashtbl.create (List.length emojis) in
-  let rec generate_words n acc =
-    if n <= 0 then acc
-    else
-      generate_words (n - 1) (select_random_emoji used_emojis :: acc)
+let run command_texts names_csv name_separator spacious timings raw hide_csv
+    no_color handle_input default_input_target success prefix prefix_colors_csv
+    prefix_length timestamp_format pad_prefix kill_others kill_others_on_fail
+    kill_signal kill_timeout_ms max_processes restart_tries restart_after
+    teardown_texts =
+  match
+    Cli_config.create
+      ~teardown_texts
+      ~command_texts
+      ~names_csv
+      ~name_separator
+      ~spacious
+      ~timings
+      ~raw
+      ~hide_csv
+      ~no_color
+      ~prefix
+      ~prefix_colors_csv
+      ~prefix_length
+      ~pad_prefix
+      ~timestamp_format
+      ~handle_input
+      ~default_input_target
+      ~success
+      ~kill_others
+      ~kill_others_on_fail
+      ~kill_signal
+      ~kill_timeout_ms
+      ~max_processes
+      ~restart_tries
+      ~restart_after
+  with
+  | Error error ->
+    Printf.eprintf "Error: %s\n" (Cli_config.error_message error);
+    1
+  | Ok config -> Eio_main.run (fun env -> run_config env config)
+
+let names =
+  let doc = "Comma-separated command names. Count must match command count." in
+  Cmdliner.Arg.(
+    value & opt (some string) None & info [ "n"; "names" ] ~docv:"NAMES" ~doc)
+
+let name_separator =
+  let doc = "Character or string used to split --names." in
+  Cmdliner.Arg.(
+    value & opt string "," & info [ "name-separator" ] ~docv:"SEPARATOR" ~doc)
+
+let spacious =
+  let doc = "Print each command block with extra spacing." in
+  Cmdliner.Arg.(value & flag & info [ "spacious"; "sp" ] ~doc)
+
+let timings =
+  let doc = "Show elapsed time for each command." in
+  Cmdliner.Arg.(value & flag & info [ "timings" ] ~doc)
+
+let raw =
+  let doc = "Output only raw command output, without prefixes or colors." in
+  Cmdliner.Arg.(value & flag & info [ "r"; "raw" ] ~doc)
+
+let hide =
+  let doc = "Comma-separated command indexes or names whose output is hidden." in
+  Cmdliner.Arg.(value & opt (some string) None & info [ "hide" ] ~docv:"COMMANDS" ~doc)
+
+let no_color =
+  let doc = "Disable ANSI colors in formatted output." in
+  Cmdliner.Arg.(value & flag & info [ "no-color" ] ~doc)
+
+let handle_input =
+  let doc = "Forward stdin to running commands." in
+  Cmdliner.Arg.(value & flag & info [ "i"; "handle-input" ] ~doc)
+
+let default_input_target =
+  let doc = "Command index or name that receives unprefixed stdin." in
+  Cmdliner.Arg.(
+    value
+    & opt string "0"
+    & info [ "default-input-target" ] ~docv:"TARGET" ~doc)
+
+let prefix =
+  let doc =
+    "Prefix mode: index, name, command, none, time, or a template using \
+     {index}, {pid}, {name}, {command}, and {time}."
   in
-  generate_words count []
-  
-let create_child_process word cmd =
-  let pid = Unix.fork () in
-  if pid = 0 then (* Child process *)
-    let exit_code = execute_command word cmd in
-    exit exit_code
-  else (* Parent process *)
-    pid
-  
-let rec execute_commands_and_track_failures words cmds failures successes =
-  match words, cmds with
-  | [], [] -> (failures, successes)
-  | _, [] | [], _ -> (failures, successes)
-  | word :: rest_words, cmd :: rest_cmds ->
-    let pid = create_child_process word cmd in
-    match Unix.waitpid [] pid with
-    | _, WEXITED 1 -> execute_commands_and_track_failures rest_words rest_cmds (failures + 1) successes
-    | _, WEXITED _ -> execute_commands_and_track_failures rest_words rest_cmds failures (successes + 1)
-    | _, WSIGNALED _ | _, WSTOPPED _ -> execute_commands_and_track_failures rest_words rest_cmds (failures + 1) successes
+  Cmdliner.Arg.(
+    value & opt (some string) None & info [ "p"; "prefix" ] ~docv:"PREFIX" ~doc)
 
-let handle_kill_signal signal pids =
-  List.iter (fun pid -> Unix.kill signal pid) pids
+let prefix_colors =
+  let doc =
+    "Comma-separated prefix colors. Basic chalk-style colors, background \
+     colors, modifiers, auto, reset, and #RRGGBB foreground colors are \
+     supported; the last color repeats when there are more commands than \
+     colors."
+  in
+  Cmdliner.Arg.(
+    value
+    & opt (some string) None
+    & info [ "c"; "prefix-colors" ] ~docv:"COLORS" ~doc)
+
+let prefix_length =
+  let doc = "Maximum displayed command prefix length when --prefix=command." in
+  Cmdliner.Arg.(
+    value & opt int 10 & info [ "l"; "prefix-length" ] ~docv:"COUNT" ~doc)
+
+let timestamp_format =
+  let doc = "Timestamp format for time prefixes." in
+  Cmdliner.Arg.(
+    value
+    & opt string "yyyy-MM-dd HH:mm:ss.SSS"
+    & info [ "t"; "timestamp-format" ] ~docv:"FORMAT" ~doc)
+
+let pad_prefix =
+  let doc = "Pad short prefixes so all prefixes have the same length." in
+  Cmdliner.Arg.(value & flag & info [ "pad-prefix" ] ~doc)
+
+let success =
+  let doc =
+    "Success condition: all, first, last, command-{index}, command-{name}, or \
+     !command-{index/name}."
+  in
+  Cmdliner.Arg.(
+    value & opt string "all" & info [ "s"; "success" ] ~docv:"CONDITION" ~doc)
+
+let kill_others =
+  let doc = "Cancel sibling commands when one command completes." in
+  Cmdliner.Arg.(value & flag & info [ "k"; "kill-others" ] ~doc)
+
+let kill_others_on_fail =
+  let doc = "Cancel sibling commands when one command fails." in
+  Cmdliner.Arg.(value & flag & info [ "kill-others-on-fail" ] ~doc)
+
+let kill_signal =
+  let doc = "Signal to send when cancelling sibling commands." in
+  Cmdliner.Arg.(
+    value
+    & opt string "SIGTERM"
+    & info [ "kill-signal"; "ks" ] ~docv:"SIGNAL" ~doc)
+
+let kill_timeout =
+  let doc = "Milliseconds to wait before force-killing cancelled commands." in
+  Cmdliner.Arg.(
+    value
+    & opt (some int) None
+    & info [ "kill-timeout" ] ~docv:"MS" ~doc)
+
+let max_processes =
+  let doc = "Maximum number of commands to run at once." in
+  Cmdliner.Arg.(
+    value
+    & opt (some int) None
+    & info [ "m"; "max-processes" ] ~docv:"COUNT" ~doc)
+
+let restart_tries =
+  let doc = "How many times a failed command should restart." in
+  Cmdliner.Arg.(
+    value & opt int 0 & info [ "restart-tries" ] ~docv:"COUNT" ~doc)
+
+let restart_after =
+  let doc =
+    "Delay before restarting a failed command, in milliseconds, or exponential."
+  in
+  Cmdliner.Arg.(
+    value & opt string "0" & info [ "restart-after" ] ~docv:"DELAY" ~doc)
+
+let teardown =
+  let doc =
+    "Cleanup command to execute before exiting. May be specified multiple \
+     times. Teardown output is raw and does not affect the exit code."
+  in
+  Cmdliner.Arg.(
+    value & opt_all string [] & info [ "teardown" ] ~docv:"COMMAND" ~doc)
+
+let command_texts =
+  let doc = "Command to run. Use -- before commands that start with '-'." in
+  Cmdliner.Arg.(value & pos_all string [] & info [] ~docv:"COMMAND" ~doc)
+
+let command =
+  let doc = "Run several shell commands and prefix their output." in
+  let info = Cmdliner.Cmd.info "concurrentlyocaml" ~doc in
+  Cmdliner.Cmd.v
+    info
+    Cmdliner.Term.(
+      const run
+      $ command_texts
+      $ names
+      $ name_separator
+      $ spacious
+      $ timings
+      $ raw
+      $ hide
+      $ no_color
+      $ handle_input
+      $ default_input_target
+      $ success
+      $ prefix
+      $ prefix_colors
+      $ prefix_length
+      $ timestamp_format
+      $ pad_prefix
+      $ kill_others
+      $ kill_others_on_fail
+      $ kill_signal
+      $ kill_timeout
+      $ max_processes
+      $ restart_tries
+      $ restart_after
+      $ teardown)
+
+let normalize_spacious_argv () =
+  let after_command_separator = ref false in
+  Array.iteri
+    (fun index argument ->
+      if index > 0 && not !after_command_separator then
+        if argument = "--" then after_command_separator := true
+        else if argument = "-sp" then Sys.argv.(index) <- "--sp")
+    Sys.argv
 
 let () =
-  Arg.parse speclist (fun arg -> commands := !commands @ [arg]) usage_msg;
-
-  let word_list_length = List.length !word_list in
-
-  if word_list_length > 0 && word_list_length <> List.length !commands then
-    begin
-      Printf.printf "Error: Number of words and commands must match.\n";
-      exit 1
-    end;
-
-  if word_list_length = 0 then
-    begin
-      Random.self_init ();
-      word_list := generate_word_list (List.length !commands);
-    end;
-
-  let child_processes = ref [] in
-  let (failures, _) = execute_commands_and_track_failures !word_list !commands 0 0 in
-
-  if !kill_others || !kill_others_on_fail then
-    begin
-      let sig_to_send =
-        match !kill_signal with
-        | "SIGTERM" -> 15
-        | "SIGKILL" -> 9
-        | _ -> failwith "Invalid signal"
-      in
-      handle_kill_signal sig_to_send !child_processes;
-    end;
-
-  exit (if failures > 0 then 1 else 0)
+  normalize_spacious_argv ();
+  exit (Cmdliner.Cmd.eval' command)
