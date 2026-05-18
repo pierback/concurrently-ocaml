@@ -3,4 +3,4 @@
  (foreign_stubs
   (language c)
   (names posix_process_group_stubs))
- (libraries ANSITerminal eio eio.unix eio_posix unix))
+ (libraries ANSITerminal eio eio.unix eio_posix str unix))

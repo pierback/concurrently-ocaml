@@ -13,6 +13,7 @@ type running_process =
 
 type command_result =
   | Closed of Close_event.t
+  | Skipped
   | Failed of run_error
 
 exception Fatal_runner_error of run_error
@@ -33,6 +34,38 @@ let signal_number = function
      | "USR1" | "SIGUSR1" -> Ok Sys.sigusr1
      | "USR2" | "SIGUSR2" -> Ok Sys.sigusr2
      | value -> Error (`Unsupported_kill_signal value))
+
+let kill_signal_label = function
+  | Run_policy.Sigterm -> "SIGTERM"
+  | Run_policy.Sigkill -> "SIGKILL"
+  | Run_policy.Named_signal signal ->
+    let signal = signal |> String.trim |> String.uppercase_ascii in
+    assert (signal <> "");
+    if String.length signal >= 3 && String.sub signal 0 3 = "SIG" then signal
+    else "SIG" ^ signal
+
+let signal_label = function
+  | signal when signal = string_of_int Sys.sighup -> "SIGHUP"
+  | signal when signal = string_of_int Sys.sigint -> "SIGINT"
+  | signal when signal = string_of_int Sys.sigkill -> "SIGKILL"
+  | signal when signal = string_of_int Sys.sigterm -> "SIGTERM"
+  | signal when signal = string_of_int Sys.sigusr1 -> "SIGUSR1"
+  | signal when signal = string_of_int Sys.sigusr2 -> "SIGUSR2"
+  | "1" -> "SIGHUP"
+  | "2" -> "SIGINT"
+  | "9" -> "SIGKILL"
+  | "15" -> "SIGTERM"
+  | "30" -> "SIGUSR1"
+  | "31" -> "SIGUSR2"
+  | signal ->
+    let signal = String.uppercase_ascii signal in
+    if String.length signal >= 3 && String.sub signal 0 3 = "SIG" then signal
+    else signal
+
+let close_status_label = function
+  | Close_event.Exited code -> string_of_int code
+  | Close_event.Signaled signal -> signal_label signal
+  | Close_event.Spawn_error message -> message
 
 let validate_kill_signal policy =
   match Run_policy.kill_others_on policy with
@@ -66,8 +99,60 @@ let create_lifecycle_event ~command ~attempt lifecycle =
   | Ok event -> event
   | Error _ -> assert false
 
+let create_lifecycle_event_with_process_id ~process_id ~command ~attempt lifecycle =
+  match
+    Output_event.lifecycle_with_process_id
+      ~process_id
+      ~command
+      ~attempt
+      ~lifecycle
+  with
+  | Ok event -> event
+  | Error _ -> assert false
+
 let emit_lifecycle ~emit_event ~command ~attempt lifecycle =
   create_lifecycle_event ~command ~attempt lifecycle |> emit_event
+
+let emit_lifecycle_with_process_id
+    ~process_id
+    ~emit_event
+    ~command
+    ~attempt
+    lifecycle =
+  create_lifecycle_event_with_process_id
+    ~process_id
+    ~command
+    ~attempt
+    lifecycle
+  |> emit_event
+
+let emit_lifecycle_best_effort ~emit_event ~command ~attempt lifecycle =
+  match emit_lifecycle ~emit_event ~command ~attempt lifecycle with
+  | () -> ()
+  | exception _ -> ()
+
+let emit_lifecycle_with_process_id_best_effort
+    ~process_id
+    ~emit_event
+    ~command
+    ~attempt
+    lifecycle =
+  match
+    emit_lifecycle_with_process_id
+      ~process_id
+      ~emit_event
+      ~command
+      ~attempt
+      lifecycle
+  with
+  | () -> ()
+  | exception _ -> ()
+
+let stopped_lifecycle close_event =
+  Output_event.Stopped_with_status
+    { status = Close_event.status close_event
+    ; killed = Close_event.killed close_event
+    }
 
 let emit_output_chunk ~emit_event ~command ~attempt ~process_id ~stream ~chunk =
   match
@@ -226,8 +311,8 @@ let run ~input ~input_source ~backend ~process_mgr:_process_mgr ~now ~sleep
   let run_after_validation () =
   let max_processes =
     match Run_policy.max_processes policy with
-    | None -> command_count
-    | Some value -> min value command_count
+    | None -> max 1 command_count
+    | Some value -> max 1 (min value command_count)
   in
   let output_event_count = ref 0 in
   let termination_signal = ref None in
@@ -246,7 +331,9 @@ let run ~input ~input_source ~backend ~process_mgr:_process_mgr ~now ~sleep
   let event_mutex = Eio.Mutex.create () in
   let error_mutex = Eio.Mutex.create () in
   let run_errors = ref [] in
-  let close_events = Eio.Stream.create (Run_spec.close_event_capacity spec) in
+  let close_events =
+    Eio.Stream.create (max 1 (Run_spec.close_event_capacity spec))
+  in
   let process_slots = Eio.Semaphore.make max_processes in
   let emit event =
     Eio.Mutex.use_rw ~protect:true event_mutex (fun () ->
@@ -257,6 +344,16 @@ let run ~input ~input_source ~backend ~process_mgr:_process_mgr ~now ~sleep
     match emit event with
     | () -> ()
     | exception _ -> ()
+  in
+  let emit_kill_status ~after_command =
+    Output_event.status_message
+      ~after_command:(Some after_command)
+      ~stream:Output_event.Stdout
+      ~chunk:
+        (Printf.sprintf
+           "--> Sending %s to other processes.."
+           (kill_signal_label (Run_policy.kill_signal policy)))
+    |> emit_best_effort
   in
   let record_failure error =
     Eio.Mutex.use_rw ~protect:true error_mutex (fun () ->
@@ -276,6 +373,14 @@ let run ~input ~input_source ~backend ~process_mgr:_process_mgr ~now ~sleep
       ~attempt
       lifecycle
   in
+  let emit_lifecycle_with_process_id ~process_id ~command ~attempt lifecycle =
+    emit_lifecycle_with_process_id
+      ~process_id
+      ~emit_event:emit
+      ~command
+      ~attempt
+      lifecycle
+  in
   let remove_running command_index =
     Eio.Mutex.use_rw ~protect:true state_mutex (fun () ->
       running_processes :=
@@ -285,11 +390,7 @@ let run ~input ~input_source ~backend ~process_mgr:_process_mgr ~now ~sleep
       exited_command_indexes :=
         List.filter
           (fun exited_command_index -> exited_command_index <> command_index)
-          !exited_command_indexes;
-      retry_pending_command_indexes :=
-        List.filter
-          (fun retry_command_index -> retry_command_index <> command_index)
-          !retry_pending_command_indexes)
+          !exited_command_indexes)
   in
   let mark_exited command_index =
     Eio.Mutex.use_rw ~protect:true state_mutex (fun () ->
@@ -509,11 +610,9 @@ let run ~input ~input_source ~backend ~process_mgr:_process_mgr ~now ~sleep
         `Stop_daemon)
   in
   let close_event_completes_command close_event =
-    Close_event.killed close_event
-    || Close_event.is_success close_event
-    || Close_event.attempt close_event >= Run_policy.restart_tries policy
+    Run_policy.close_event_completes_command policy close_event
   in
-  let add_close_event close_event =
+  let add_close_event ?(collect = true) close_event =
     let command_index = Command.index (Close_event.command close_event) in
     if close_event_completes_command close_event then
       Eio.Mutex.use_rw ~protect:true state_mutex (fun () ->
@@ -523,10 +622,11 @@ let run ~input ~input_source ~backend ~process_mgr:_process_mgr ~now ~sleep
           List.filter
             (fun retry_command_index -> retry_command_index <> command_index)
             !retry_pending_command_indexes);
-    Eio.Stream.add close_events (Closed close_event)
+    if collect then Eio.Stream.add close_events (Closed close_event)
   in
   let add_command_result = function
     | Closed close_event -> add_close_event close_event
+    | Skipped -> Eio.Stream.add close_events Skipped
     | Failed error -> record_failure error
   in
   let cancel_non_running_commands signal =
@@ -563,8 +663,18 @@ let run ~input ~input_source ~backend ~process_mgr:_process_mgr ~now ~sleep
         Eio.Mutex.use_ro state_mutex (fun () ->
           current_attempts.(Command.index command))
       in
-      cancelled_close_event ~now ~attempt ~signal command)
-    |> List.iter add_command_result
+      command, attempt, cancelled_close_event ~now ~attempt ~signal command)
+    |> List.iter (fun (command, attempt, result) ->
+      add_command_result result;
+      match result with
+      | Closed close_event ->
+        emit_lifecycle_best_effort
+          ~emit_event:emit
+          ~command
+          ~attempt
+          (stopped_lifecycle close_event)
+      | Skipped -> ()
+      | Failed _ -> ())
   in
   let cancel_terminated_commands_once () =
     match !termination_signal with
@@ -578,7 +688,7 @@ let run ~input ~input_source ~backend ~process_mgr:_process_mgr ~now ~sleep
     | Error error -> Error error
     | Ok signal ->
       let closing_index = Command.index (Close_event.command close_event) in
-      let processes_to_signal, commands_to_cancel =
+      let processes_to_signal, commands_to_cancel, skipped_command_count =
         Eio.Mutex.use_rw ~protect:true state_mutex (fun () ->
           let siblings =
             List.filter
@@ -593,18 +703,6 @@ let run ~input ~input_source ~backend ~process_mgr:_process_mgr ~now ~sleep
           let active_indexes = !active_command_indexes in
           let starting_indexes = !starting_command_indexes in
           let retry_pending_indexes = !retry_pending_command_indexes in
-          let active_retry_commands =
-            List.filter
-              (fun command ->
-                let command_index = Command.index command in
-                command_index <> closing_index
-                && not (List.mem command_index !closed_command_indexes)
-                && List.mem command_index active_indexes
-                && not (List.mem command_index starting_indexes)
-                && not (List.mem command_index running_indexes)
-                && List.mem command_index retry_pending_indexes)
-              commands
-          in
           let pending_commands =
             List.filter
               (fun command ->
@@ -612,7 +710,12 @@ let run ~input ~input_source ~backend ~process_mgr:_process_mgr ~now ~sleep
                 command_index <> closing_index
                 && not (List.mem command_index !closed_command_indexes)
                 && not (List.mem command_index running_indexes)
-                && not (List.mem command_index active_indexes))
+                && not (List.mem command_index active_indexes)
+                (* npm concurrently does not cancel a command whose failed
+                   attempt already committed to a retry backoff when a sibling
+                   later satisfies kill-others. The retry lifecycle keeps the
+                   command's max-processes slot and is allowed to finish. *)
+                && not (List.mem command_index retry_pending_indexes))
               commands
           in
           let starting_commands =
@@ -625,21 +728,29 @@ let run ~input ~input_source ~backend ~process_mgr:_process_mgr ~now ~sleep
                 && not (List.mem command_index running_indexes))
               commands
           in
-          let commands_to_cancel =
-            List.rev_append starting_commands pending_commands
-            |> List.rev_append active_retry_commands
+          let pending_command_indexes = List.map Command.index pending_commands in
+          let commands_to_cancel = starting_commands in
+          let cancelled_command_indexes =
+            List.map Command.index commands_to_cancel
           in
-          let cancelled_command_indexes = List.map Command.index commands_to_cancel in
+          let closed_without_close_event_indexes =
+            List.rev_append pending_command_indexes cancelled_command_indexes
+          in
           killed_command_indexes :=
             cancelled_command_indexes
             |> List.rev_append !killed_command_indexes
             |> List.sort_uniq Int.compare;
           closed_command_indexes :=
-            cancelled_command_indexes
+            closed_without_close_event_indexes
             |> List.rev_append !closed_command_indexes
             |> List.sort_uniq Int.compare;
-          siblings, commands_to_cancel)
+          siblings, commands_to_cancel, List.length pending_commands)
       in
+      for _index = 1 to skipped_command_count do
+        Eio.Stream.add close_events Skipped
+      done;
+      if processes_to_signal <> [] || commands_to_cancel <> [] then
+        emit_kill_status ~after_command:(Close_event.command close_event);
       let signaled_command_indexes, signal_errors =
         processes_to_signal
         |> List.fold_left
@@ -672,20 +783,27 @@ let run ~input ~input_source ~backend ~process_mgr:_process_mgr ~now ~sleep
            ~sw
            ~initial_signal:signal
            signaled_command_indexes;
-         commands_to_cancel
-         |> List.map (fun command ->
-           let attempt =
-             Eio.Mutex.use_ro state_mutex (fun () ->
-               current_attempts.(Command.index command))
-           in
-           cancelled_close_event ~now ~attempt ~signal command)
-         |> List.iter add_command_result;
-         Ok ())
+         let cancelled_stop_events =
+           commands_to_cancel
+           |> List.filter_map (fun command ->
+             let attempt =
+               Eio.Mutex.use_ro state_mutex (fun () ->
+                 current_attempts.(Command.index command))
+             in
+             match cancelled_close_event ~now ~attempt ~signal command with
+             | Closed close_event ->
+               add_command_result (Closed close_event);
+               Some (command, attempt, stopped_lifecycle close_event)
+             | Failed error ->
+               add_command_result (Failed error);
+               None
+             | Skipped ->
+               None)
+         in
+         Ok cancelled_stop_events)
   in
   let should_retry close_event =
-    (not (Close_event.killed close_event))
-    && (not (Close_event.is_success close_event))
-    && Close_event.attempt close_event < Run_policy.restart_tries policy
+    Run_policy.should_retry policy close_event
   in
   let set_current_attempt command_index attempt =
     Eio.Mutex.use_rw ~protect:true state_mutex (fun () ->
@@ -703,7 +821,9 @@ let run ~input ~input_source ~backend ~process_mgr:_process_mgr ~now ~sleep
         retry_pending_command_indexes :=
           command_index :: !retry_pending_command_indexes
           |> List.sort_uniq Int.compare);
-      add_close_event close_event;
+      add_close_event
+        ~collect:(Run_policy.collect_retry_close_events policy)
+        close_event;
       emit_lifecycle
         ~command:(Close_event.command close_event)
         ~attempt:(Close_event.attempt close_event)
@@ -713,10 +833,17 @@ let run ~input ~input_source ~backend ~process_mgr:_process_mgr ~now ~sleep
       add_close_event close_event;
       if Run_policy.should_kill_after_close policy close_event then
         match signal_siblings ~sw close_event with
-        | Ok () -> ()
-        | Error error -> record_failure error
-      else ();
-      `Done)
+        | Ok cancelled_stop_events -> `Done cancelled_stop_events
+        | Error error ->
+          record_failure error;
+          `Done []
+      else `Done [])
+  in
+  let emit_deferred_stop_events stop_events =
+    List.iter
+      (fun (command, attempt, lifecycle) ->
+        emit_lifecycle_best_effort ~emit_event:emit ~command ~attempt lifecycle)
+      stop_events
   in
   let run_command_attempt ~sw command attempt =
     let command_index = Command.index command in
@@ -851,6 +978,12 @@ let run ~input ~input_source ~backend ~process_mgr:_process_mgr ~now ~sleep
         (match process_result with
          | Error error ->
            record_failure error;
+           emit_lifecycle_with_process_id_best_effort
+             ~process_id:process.Runner_backend.process_id
+             ~emit_event:emit
+             ~command
+             ~attempt
+             Output_event.Stopped;
            remove_running command_index;
            remove_active command_index;
            `Done
@@ -870,7 +1003,8 @@ let run ~input ~input_source ~backend ~process_mgr:_process_mgr ~now ~sleep
              with
              | Closed close_event ->
                let next_action = finish_close_event ~sw close_event in
-               `Closed next_action
+               `Closed (close_event, next_action)
+             | Skipped -> assert false
              | Failed error ->
                record_failure error;
                `Failed
@@ -884,17 +1018,31 @@ let run ~input ~input_source ~backend ~process_mgr:_process_mgr ~now ~sleep
              | None, Ok (), Ok () -> None
            in
            (match reader_error with
-            | Some error ->
+           | Some error ->
               record_failure error;
+              emit_lifecycle_with_process_id_best_effort
+                ~process_id:process.Runner_backend.process_id
+                ~emit_event:emit
+                ~command
+                ~attempt
+                Output_event.Stopped;
               remove_running command_index;
               remove_active command_index;
               `Done
             | None ->
            let next_action =
              match close_action with
-             | `Closed next_action ->
-               emit_lifecycle ~command ~attempt Output_event.Stopped;
-               next_action
+             | `Closed (close_event, next_action) ->
+               emit_lifecycle_with_process_id
+                 ~process_id:process.Runner_backend.process_id
+                 ~command
+                 ~attempt
+                 (stopped_lifecycle close_event);
+               (match next_action with
+                | `Done stop_events ->
+                  emit_deferred_stop_events stop_events;
+                  `Done
+                | `Retry _ as retry -> retry)
              | `Failed -> `Done
            in
            remove_running command_index;
@@ -915,18 +1063,23 @@ let run ~input ~input_source ~backend ~process_mgr:_process_mgr ~now ~sleep
         (match command_result with
          | Closed close_event ->
            let next_action = finish_close_event ~sw close_event in
+           emit_lifecycle ~command ~attempt (stopped_lifecycle close_event);
+           let next_action =
+             match next_action with
+             | `Done stop_events ->
+               emit_deferred_stop_events stop_events;
+               `Done
+             | `Retry _ as retry -> retry
+           in
            remove_active command_index;
            next_action
          | Failed error ->
            record_failure error;
            remove_active command_index;
+           `Done
+         | Skipped ->
+           remove_active command_index;
            `Done))
-  in
-  let run_command_attempt_with_slot ~sw command attempt =
-    Eio.Semaphore.acquire process_slots;
-    Fun.protect
-      ~finally:(fun () -> Eio.Semaphore.release process_slots)
-      (fun () -> run_command_attempt ~sw command attempt)
   in
   let retry_sleep_quantum_seconds = 0.05 in
   let sleep_until_retry_or_close command delay_ms =
@@ -949,13 +1102,27 @@ let run ~input ~input_source ~backend ~process_mgr:_process_mgr ~now ~sleep
   let rec run_command_loop ~sw command attempt =
     if command_is_closed (Command.index command) then ()
     else
-      match run_command_attempt_with_slot ~sw command attempt with
+      match run_command_attempt ~sw command attempt with
       | `Done -> ()
       | `Retry (next_attempt, delay_ms) ->
         if delay_ms <= 0 || sleep_until_retry_or_close command delay_ms then
           run_command_loop ~sw command next_attempt
   in
-  let run_command ~sw command = run_command_loop ~sw command 0 in
+  let run_command ~sw command =
+    (* npm max-processes slots are command-lifecycle slots: queued commands wait
+       until retries finish, even while the current command is in backoff. *)
+    Eio.Semaphore.acquire process_slots;
+    Fun.protect
+      ~finally:(fun () -> Eio.Semaphore.release process_slots)
+      (fun () -> run_command_loop ~sw command 0)
+  in
+  let emit_teardown_status message =
+    Output_event.status_message
+      ~after_command:None
+      ~stream:Output_event.Stdout
+      ~chunk:("--> " ^ message)
+    |> emit_best_effort
+  in
   let emit_teardown_lifecycle ~command lifecycle =
     create_lifecycle_event ~command ~attempt:0 lifecycle |> emit_best_effort
   in
@@ -977,6 +1144,10 @@ let run ~input ~input_source ~backend ~process_mgr:_process_mgr ~now ~sleep
   in
   let run_teardown_command command =
     let command_index = Command.index command in
+    emit_teardown_status
+      (Printf.sprintf
+         "Running teardown command \"%s\""
+         (Command.text command));
     emit_teardown_lifecycle ~command Output_event.Started;
     Eio.Switch.run ~name:"Runner.teardown" (fun command_sw ->
       let spawn_result =
@@ -1012,9 +1183,11 @@ let run ~input ~input_source ~backend ~process_mgr:_process_mgr ~now ~sleep
               ~stream:Output_event.Stderr
               process.Runner_backend.stderr)
         in
-        (match process.Runner_backend.await () with
-         | _status -> ()
-         | exception _ -> ());
+        let close_status =
+          match process.Runner_backend.await () with
+          | status -> Some status
+          | exception _ -> None
+        in
         (match Eio.Promise.await_exn stdout_reader with
          | () -> ()
          | exception _ -> ());
@@ -1022,6 +1195,14 @@ let run ~input ~input_source ~backend ~process_mgr:_process_mgr ~now ~sleep
          | () -> ()
          | exception _ -> ());
         remove_running command_index;
+        (match close_status with
+         | None -> ()
+         | Some status ->
+           emit_teardown_status
+             (Printf.sprintf
+                "Teardown command \"%s\" exited with code %s"
+                (Command.text command)
+                (close_status_label status)));
         emit_teardown_lifecycle ~command Output_event.Stopped)
   in
   let run_teardown_commands () =
@@ -1039,6 +1220,7 @@ let run ~input ~input_source ~backend ~process_mgr:_process_mgr ~now ~sleep
             else remaining
           in
           collect remaining (close_event :: collected)
+        | Skipped -> collect (remaining - 1) collected
         | Failed error -> raise (Fatal_runner_error error))
     in
     collect command_count []

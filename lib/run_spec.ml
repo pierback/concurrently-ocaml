@@ -18,26 +18,23 @@ let rec validate_command_indexes expected_index = function
       Error (`Command_index_mismatch (expected_index, actual_index))
     else validate_command_indexes (expected_index + 1) rest
 
-let calculate_close_event_capacity ~command_count ~restart_tries =
-  if restart_tries = max_int then Error `Close_event_capacity_overflow
-  else
-    let attempt_count = restart_tries + 1 in
-    if command_count > max_int / attempt_count then
-    Error `Close_event_capacity_overflow
-    else Ok (command_count * attempt_count)
-
-let create ~commands ~policy =
+let create_internal ~allow_empty ~commands ~policy : (t, create_error) result =
   match commands with
-  | [] -> Error `Empty_command_list
+  | [] when not allow_empty -> Error `Empty_command_list
   | _ ->
     (match validate_command_indexes 0 commands with
      | Error error -> Error error
      | Ok () ->
        let command_count = List.length commands in
-       let restart_tries = Run_policy.restart_tries policy in
-       (match calculate_close_event_capacity ~command_count ~restart_tries with
-        | Error error -> Error error
+       (match Run_policy.close_event_capacity policy ~command_count with
+        | Error error -> Error (error :> create_error)
         | Ok close_event_capacity -> Ok { commands; policy; close_event_capacity }))
+
+let create ~commands ~policy =
+  create_internal ~allow_empty:false ~commands ~policy
+
+let create_empty ~policy =
+  create_internal ~allow_empty:true ~commands:[] ~policy
 
 let commands t = t.commands
 let policy t = t.policy

@@ -10,6 +10,8 @@ type options =
   ; timestamp_format : string
   ; spacious : bool
   ; timings : bool
+  ; group : bool
+  ; raw : bool
   ; color_mode : color_mode
   }
 
@@ -23,7 +25,6 @@ type create_error =
   [ `Label_count_mismatch of int * int
   | `Negative_prefix_length
   | `Non_positive_command_count
-  | `Unsupported_prefix_color of int * string
   ]
 
 type t
@@ -36,6 +37,5 @@ val create :
   (t, create_error) result
 
 val handle_event : t -> Output_event.t -> output list
-val format_elapsed : float -> string
 val default_labels : int -> (string list, create_error) result
 val error_message : create_error -> string

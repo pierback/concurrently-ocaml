@@ -2,6 +2,7 @@ type t
 
 type create_error =
   [ `Empty_command
+  | `Empty_cwd
   | `Negative_index
   ]
 
