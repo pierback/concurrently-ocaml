@@ -54,12 +54,14 @@ module accepts structured commands with command-local `name`, `cwd`, `env`,
 `Command.t`/`Run_spec.t` model as the CLI, and runs through the explicit
 `Runner_backend.t` seam.
 
-The Node-style JavaScript API is still incomplete: command observables and IPC
-messaging are tracked in the feature parity plan. The package does now expose
-CommonJS and ESM `concurrently()` entrypoints that delegate supported options to
-the native binary, forward configured streams, preserve native close events,
-carry per-command `env`/`cwd`/`raw` fields, and return a `{ result, commands }`
-shape for simple imports.
+The Node-style JavaScript API is still incomplete: per-command `kill`, IPC,
+custom JS `spawn`/`kill`, custom upstream flow controllers, and exact RxJS
+`Subject` semantics are tracked in the feature parity plan. The package does
+now expose CommonJS and ESM `concurrently()` entrypoints that delegate supported
+options to the native binary, forward configured streams, preserve native close
+events, carry per-command `env`/`cwd`/`raw` fields, return a
+`{ result, commands }` shape for simple imports, and emit native-backed command
+`stdout`, `stderr`, `timer`, `stateChange`, and `close` events.
 
 ## Implemented CLI Surface
 

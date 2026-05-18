@@ -23,8 +23,9 @@ distribution packaging.
   command model, run spec, input router, and formatter options as the CLI path.
 - Node package API: the importable JavaScript package surface. It should track
   npm `concurrently`'s top-level `concurrently()` contract while delegating
-  process execution to the native binary until a deeper native observable API
-  exists.
+  process execution to the native binary. Native-backed command observables are
+  fed by structured events from the binary, not by parsing formatted terminal
+  output.
 - Runner: the module that owns command lifecycle: spawn, stream, restart, kill,
   wait, and close-event collection.
 - Runner backend: the platform-specific adapter that owns process spawning,

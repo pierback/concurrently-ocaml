@@ -2,15 +2,45 @@
   "name": "@pierback/concurrently-ml",
   "version": "0.0.13",
   "description": "OCaml 5 command runner targeting feature parity with npm concurrently",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "type": "commonjs",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./index.d.mts",
+        "default": "./index.mjs"
+      },
+      "require": {
+        "types": "./index.d.ts",
+        "default": "./index.js"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "index.mjs",
+    "index.d.ts",
+    "index.d.mts",
+    "npm/bin/",
+    "npm/lib/",
+    "README.md",
+    "LICENSE"
+  ],
   "bin": {
+    "concurrently": "npm/bin/concurrently-ml.js",
     "conc": "npm/bin/concurrently-ml.js",
     "concml": "npm/bin/concurrently-ml.js"
   },
   "scripts": {
-    "build": "dune build @install",
-    "test": "dune runtest",
-    "compile": "dune build bin/main.exe",
-    "package:platform": "node scripts/ci/package-platform.js"
+    "setup:opam": "sh scripts/dev/setup-opam-switch.sh",
+    "build": "opam exec -- dune build @install",
+    "test": "opam exec -- dune runtest",
+    "compile": "opam exec -- dune build bin/main.exe",
+    "package:platform": "node scripts/ci/package-platform.js",
+    "smoke:npm-install": "node scripts/ci/smoke-npm-install.js",
+    "compat:concurrently": "node scripts/ci/compat-concurrently.js"
   },
   "keywords": [
     "concurrently",
@@ -21,11 +51,24 @@
   ],
   "author": "Franz Pieringer",
   "license": "MIT",
-  "dependencies": {},
   "optionalDependencies": {
     "@pierback/concurrently-ml-darwin-arm64": "0.0.13",
     "@pierback/concurrently-ml-darwin-x64": "0.0.13",
     "@pierback/concurrently-ml-linux-arm64": "0.0.13",
     "@pierback/concurrently-ml-linux-x64": "0.0.13"
-  }
+  },
+  "main": "index.js",
+  "directories": {
+    "doc": "docs",
+    "lib": "lib",
+    "test": "test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pierback/concurrently-ocaml.git"
+  },
+  "bugs": {
+    "url": "https://github.com/pierback/concurrently-ocaml/issues"
+  },
+  "homepage": "https://github.com/pierback/concurrently-ocaml#readme"
 }
