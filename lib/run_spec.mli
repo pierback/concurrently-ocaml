@@ -11,6 +11,8 @@ val create :
   policy:Run_policy.t ->
   (t, create_error) result
 
+val create_empty : policy:Run_policy.t -> (t, create_error) result
+
 val commands : t -> Command.t list
 val policy : t -> Run_policy.t
 val command_count : t -> int

@@ -12,6 +12,7 @@ type t =
 
 type create_error =
   [ `Empty_command
+  | `Empty_cwd
   | `Negative_index
   ]
 
@@ -20,17 +21,20 @@ let create ?name ?cwd ?(env = []) ?prefix_color ?(raw = false) ?(hidden = false)
   if index < 0 then Error `Negative_index
   else if String.trim text = "" then Error `Empty_command
   else
-    Ok
-      { index
-      ; text
-      ; name
-      ; cwd
-      ; env
-      ; prefix_color
-      ; raw
-      ; hidden
-      ; ipc
-      }
+    (match cwd with
+     | Some cwd when String.trim cwd = "" -> Error `Empty_cwd
+     | Some _ | None ->
+       Ok
+         { index
+         ; text
+         ; name
+         ; cwd
+         ; env
+         ; prefix_color
+         ; raw
+         ; hidden
+         ; ipc
+         })
 
 let index t = t.index
 let text t = t.text

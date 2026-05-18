@@ -18,11 +18,13 @@ type create_error =
   | `Unknown_command_index of int
   ]
 
-let validate_close_events ~commands ~restart_tries close_events =
+let validate_close_events ~commands ~policy close_events =
   let command_count = Array.length commands in
   let close_events_by_command = Array.make command_count [] in
   let validate_contiguous_attempts () =
-    let validate_attempts command_index close_events =
+    if not (Run_policy.collect_retry_close_events policy) then Ok ()
+    else
+      let validate_attempts command_index close_events =
       let sorted_close_events =
         List.sort
           (fun left right ->
@@ -53,8 +55,8 @@ let validate_close_events ~commands ~restart_tries close_events =
         with
         | Error error -> Error error
         | Ok () -> validate_command (command_index + 1)
-    in
-    validate_command 0
+      in
+      validate_command 0
   in
   let rec validate = function
     | [] -> validate_contiguous_attempts ()
@@ -66,7 +68,7 @@ let validate_close_events ~commands ~restart_tries close_events =
         Error (`Unknown_command_index index)
       else if not (Command.equal command commands.(index)) then
         Error (`Unexpected_command index)
-      else if attempt > restart_tries then
+      else if Run_policy.attempt_exceeds_restart_limit policy ~attempt then
         Error (`Attempt_exceeds_restart_tries (index, attempt))
       else
         let seen_close_events = close_events_by_command.(index) in
@@ -83,9 +85,6 @@ let validate_close_events ~commands ~restart_tries close_events =
   in
   validate close_events
 
-let close_event_completes_command ~restart_tries close_event =
-  Close_event.is_success close_event || Close_event.attempt close_event = restart_tries
-
 let final_close_events ~command_count close_events =
   let final_events = Array.make command_count None in
   List.iter
@@ -99,21 +98,21 @@ let final_close_events ~command_count close_events =
     close_events;
   final_events
 
-let cancelling_command_indexes ~restart_tries policy close_events =
+let cancelling_command_indexes policy close_events =
   close_events
   |> List.filter_map (fun close_event ->
     if
       (not (Close_event.killed close_event))
-      && close_event_completes_command ~restart_tries close_event
+      && Run_policy.close_event_completes_command policy close_event
       && Run_policy.should_kill_after_close policy close_event
     then Some (Command.index (Close_event.command close_event))
     else None)
   |> List.sort_uniq Int.compare
 
-let has_cancelling_complete_close_event ~restart_tries policy close_events =
-  cancelling_command_indexes ~restart_tries policy close_events <> []
+let has_cancelling_complete_close_event policy close_events =
+  cancelling_command_indexes policy close_events <> []
 
-let validate_complete_close_events ~command_count ~restart_tries close_events =
+let validate_complete_close_events ~command_count ~policy close_events =
   let final_events = final_close_events ~command_count close_events in
   let rec validate command_index =
     if command_index = command_count then Ok ()
@@ -121,7 +120,7 @@ let validate_complete_close_events ~command_count ~restart_tries close_events =
       match final_events.(command_index) with
       | None -> Error `Missing_close_events
       | Some close_event ->
-        if close_event_completes_command ~restart_tries close_event then
+        if Run_policy.close_event_completes_command policy close_event then
           validate (command_index + 1)
         else
           Error
@@ -135,25 +134,21 @@ let create ~spec ~close_events ~output_event_count ~interrupted =
   let commands = Array.of_list (Run_spec.commands spec) in
   let command_count = Array.length commands in
   let policy = Run_spec.policy spec in
-  let restart_tries = Run_policy.restart_tries policy in
   if output_event_count < 0 then Error `Negative_output_event_count
   else if close_event_count > Run_spec.close_event_capacity spec then
     Error `Too_many_close_events
   else
-    match validate_close_events ~commands ~restart_tries close_events with
+    match validate_close_events ~commands ~policy close_events with
     | Error error -> Error error
     | Ok () ->
       if
         (not interrupted)
         && not
-             (has_cancelling_complete_close_event
-                ~restart_tries
-                policy
-                close_events)
+             (has_cancelling_complete_close_event policy close_events)
       then
         validate_complete_close_events
           ~command_count
-          ~restart_tries
+          ~policy
           close_events
         |> Result.map (fun () ->
           { spec; close_events; output_event_count; interrupted })
@@ -166,16 +161,17 @@ let interrupted t = t.interrupted
 
 let close_events_for_exit t =
   let policy = Run_spec.policy t.spec in
-  let restart_tries = Run_policy.restart_tries policy in
-  match cancelling_command_indexes ~restart_tries policy t.close_events with
+  match cancelling_command_indexes policy t.close_events with
   | [] -> t.close_events
   | cancelling_command_indexes ->
+    (* npm -k still evaluates the configured success condition after sibling
+       cancellation. With default "all", killed siblings remain failures; with
+       "first", the successful cancelling command decides the run. *)
     List.filter
       (fun close_event ->
         let command_index = Command.index (Close_event.command close_event) in
-        (not (Close_event.killed close_event))
-        && (List.mem command_index cancelling_command_indexes
-            || close_event_completes_command ~restart_tries close_event))
+        List.mem command_index cancelling_command_indexes
+        || Run_policy.close_event_completes_command policy close_event)
       t.close_events
 
 let exit_code t =
