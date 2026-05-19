@@ -209,7 +209,9 @@ Currently mirrored deterministic behavior:
   with exit status 0.
 - Published `dist/src/completion-listener.js`: unmatched `--success` values and
   empty command selectors fall back to the default all-command success
-  condition, including failed-command exit projection.
+  condition, including failed-command exit projection; deterministic serialized
+  `first`, `last`, `command-{index}`, `command-{name}`, and `!command-{name}`
+  selectors project exit status like upstream.
 - `src/logger.spec.ts` and `bin/concurrently.spec.ts`: raw/hidden suppression,
   formatted child stderr-to-stdout routing, grouped stderr-to-stdout routing,
   name prefixes, deprecated name separator warnings, empty separator name splitting, command prefixes,
@@ -480,6 +482,8 @@ Known divergences tracked as incomplete work:
    script/task containers, wildcard suffix truncation at `&`, embedded literal
    runner wildcard matching, escaped script key decoding, invalid package JSON
    fallback, kill-others exit projection, raw kill output, kill-on-fail behavior,
+   serialized success-condition exit projection for `first`, `last`, selected
+   command index/name, and negated command-name selectors,
    max-process serialization including restart-exhaustion queueing, npm-style
    max-process numeric coercion for zero, invalid, fractional, and negative values,
    fractional/invalid restart-count coercion, deterministic restart-after and
