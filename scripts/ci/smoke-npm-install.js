@@ -53,6 +53,11 @@ assertFile(nativeBinaryPath);
 const platformPackage = readJson(platformPackageJsonPath);
 assertEqual(platformPackage.name, platformPackageName, "platform package name");
 assertEqual(platformPackage.version, rootPackage.version, "platform package version");
+assertEqual(
+  rootPackage.optionalDependencies[platformPackageName],
+  rootPackage.version,
+  "root optional dependency version"
+);
 assertArrayEqual(platformPackage.os, [platform], "platform package os");
 assertArrayEqual(platformPackage.cpu, [arch], "platform package cpu");
 assertArrayEqual(platformPackage.files, ["bin/", "SHA256SUMS"], "platform package files");

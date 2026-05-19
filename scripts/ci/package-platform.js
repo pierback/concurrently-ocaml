@@ -18,6 +18,10 @@ const target = required("target");
 const platform = required("platform");
 const arch = required("arch");
 const binary = resolve(required("binary"));
+const expectedTarget = platform === "linux" ? `${platform}-${arch}-gnu` : `${platform}-${arch}`;
+if (target !== expectedTarget) {
+  throw new Error(`target ${target} does not match expected ${expectedTarget}`);
+}
 const rootPackage = JSON.parse(readFileSync(resolve("package.json"), "utf8"));
 const binaryName = platform === "win32" ? "concurrently-ml.exe" : "concurrently-ml";
 const packageName = `${rootPackage.name}-${target}`;

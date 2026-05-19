@@ -40,16 +40,18 @@ Distribute npm packages as:
 - Root package: `@pierback/concurrently-ml`, containing the JS launcher and
   optional dependencies.
 - POSIX-compatible platform packages:
-  - `@pierback/concurrently-ml-linux-x64`
-  - `@pierback/concurrently-ml-linux-arm64`
+  - `@pierback/concurrently-ml-linux-x64-gnu`
+  - `@pierback/concurrently-ml-linux-arm64-gnu`
   - `@pierback/concurrently-ml-darwin-x64`
   - `@pierback/concurrently-ml-darwin-arm64`
 
 Each platform package contains exactly one native binary under `bin/`. The root
 launcher resolves the matching optional dependency first when run from an
-installed package root. In a source checkout, it prefers
-`_build/default/bin/main.exe` so local npm smoke tests exercise the current Dune
-build before falling back to an optional package.
+installed package root. Linux resolution is libc-aware: glibc hosts resolve the
+`linux-*-gnu` packages, and musl hosts resolve `linux-*-musl`, which remains
+unpublished until there is a real musl/static build target. In a source
+checkout, it prefers `_build/default/bin/main.exe` so local npm smoke tests
+exercise the current Dune build before falling back to an optional package.
 
 GitHub Actions builds and tests each POSIX-compatible target from source with
 OCaml 5.4.1, packs the platform package, uploads it as an artifact, and
@@ -70,6 +72,8 @@ those details must remain behind `Runner_backend.t`.
   fixtures.
 - Runner parity work must define behavior at the backend interface, not by
   leaking Unix assumptions into `Command` or `Run_policy`.
+- Alpine/musl users do not accidentally execute a glibc binary. They receive a
+  missing-platform-package error until musl packages are intentionally added.
 - Windows support is withheld until it is explicit backend work, not accidental
   compatibility through shell strings and POSIX signal names.
 

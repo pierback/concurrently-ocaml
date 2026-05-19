@@ -7,7 +7,8 @@ const { spawn } = require("node:child_process");
 const packageRoot = resolve(__dirname, "..", "..");
 
 const binaryName = process.platform === "win32" ? "concurrently-ml.exe" : "concurrently-ml";
-const platformPackage = `@pierback/concurrently-ml-${process.platform}-${process.arch}`;
+const platformTargetName = platformTarget();
+const platformPackage = `@pierback/concurrently-ml-${platformTargetName}`;
 
 const localBinaryPath = join(packageRoot, "_build", "default", "bin", "main.exe");
 const packagedBinaryPath = join(packageRoot, "concurrently-ml");
@@ -34,11 +35,30 @@ const resolveBinaryPath = () => {
   );
   if (!binaryPath) {
     throw new Error(
-      `No concurrently-ml native binary was found for ${process.platform}-${process.arch}. Install the matching optional platform package or run \`npm run compile\` from the package root.`
+      `No concurrently-ml native binary was found for ${platformTargetName}. Install the matching optional platform package or run \`npm run compile\` from the package root.`
     );
   }
   return binaryPath;
 };
+
+function platformTarget() {
+  if (process.platform === "linux") {
+    return `${process.platform}-${process.arch}-${linuxLibc()}`;
+  }
+  return `${process.platform}-${process.arch}`;
+}
+
+function linuxLibc() {
+  try {
+    const header = process.report?.getReport?.().header ?? {};
+    if (header.glibcVersionRuntime || header.glibcVersionCompiler) {
+      return "gnu";
+    }
+  } catch (_error) {
+    return "musl";
+  }
+  return "musl";
+}
 
 const runNative = (args, options = {}) =>
   spawn(resolveBinaryPath(), args, {

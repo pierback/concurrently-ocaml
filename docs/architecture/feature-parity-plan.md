@@ -60,8 +60,8 @@ signal, process-tree teardown, and pipe implementations.
   prefers optional native platform packages from installed package roots. The
   root npm package exposes npm-compatible `concurrently` and `conc` binary
   aliases plus the project-specific `concml` alias.
-- GitHub Actions now includes a native package matrix for Linux x64/arm64 and
-  macOS x64/arm64. Each native package job now packs the platform package and
+- GitHub Actions now includes a native package matrix for Linux GNU x64/arm64
+  and macOS x64/arm64. Each native package job now packs the platform package and
   root package into a clean npm project, verifies that the root tarball did not
   leak OCaml source/build/test files, asserts that the installed launcher
   resolves the optional platform package's native binary, verifies the platform
@@ -488,10 +488,9 @@ Known divergences tracked as incomplete work:
    input routing, version and help flag aliases, and default input target
    routing. The Ubuntu CI build runs this harness after
    `dune build @install @runtest`. Remaining compatibility work: translate more
-   upstream behavior tests for duration-order-sensitive
-   timing signal cases, broader wildcard and shortcut edge cases, deeper package
-   CLI behavior tests, and add backend conformance tests that do not depend on
-   npm availability.
+   upstream behavior tests for broader wildcard and shortcut edge cases, deeper
+   package CLI behavior tests, and add backend conformance tests that do not
+   depend on npm availability.
 
 9. Npm binary distribution
 
@@ -500,9 +499,12 @@ Known divergences tracked as incomplete work:
    packages so `conc` works immediately after npm install.
 
    Status: partially complete. The root package now declares optional platform
-   packages for Linux and macOS targets, exposes `concurrently`, `conc`, and
+   packages for Linux GNU and macOS targets, exposes `concurrently`, `conc`, and
    `concml` npm binaries, and the launcher resolves the matching native package
-   before falling back to a local development build. The packed
+   before falling back to a local development build. The Linux resolver is
+   libc-aware: glibc hosts select `linux-*-gnu` packages, while musl hosts select
+   unpublished `linux-*-musl` packages instead of accidentally executing a glibc
+   binary. The packed
    root package is restricted to the JS launcher, package metadata, README, and
    LICENSE, so users do not receive OCaml source, tests, Dune files, local
    development scripts, or a JavaScript programmatic API.
@@ -515,8 +517,8 @@ Known divergences tracked as incomplete work:
    package's native binary, verifies the platform package checksum manifest,
    executes `conc`/`concurrently`, and publishes packages on version tags with
    npm provenance. Windows packaging is withheld until a Windows backend exists.
-   Remaining distribution work: decide whether Linux musl/static builds are
-   required, and implement then package Windows runner behavior.
+   Remaining distribution work: add musl/static packages only when a real musl
+   build target exists, and implement then package Windows runner behavior.
 
 10. Platform backend split
 
