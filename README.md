@@ -39,14 +39,14 @@ development the launcher can also fall back to `_build/default/bin/main.exe`
 after `npm run compile`.
 
 The packed root npm package is intentionally lean: it contains the launcher,
-the native-backed JavaScript API shim, type declarations, package metadata,
-README, and LICENSE only. OCaml source, Dune/opam metadata, tests, and
-development scripts stay out of the install payload.
+package metadata, README, and LICENSE only. It does not expose a JavaScript
+programmatic API. OCaml source, Dune/opam metadata, tests, and development
+scripts stay out of the install payload.
 
 Windows platform packages are intentionally withheld until a Windows runner
 backend exists.
 
-## OCaml Library Surface
+## Library Scope
 
 OCaml callers can bypass CLI parsing with `Concurrentlyocaml.Run_api`. The
 module accepts structured commands with command-local `name`, `cwd`, `env`,
@@ -54,14 +54,8 @@ module accepts structured commands with command-local `name`, `cwd`, `env`,
 `Command.t`/`Run_spec.t` model as the CLI, and runs through the explicit
 `Runner_backend.t` seam.
 
-The Node-style JavaScript API is still incomplete: per-command `kill`, IPC,
-custom JS `spawn`/`kill`, custom upstream flow controllers, and exact RxJS
-`Subject` semantics are tracked in the feature parity plan. The package does
-now expose CommonJS and ESM `concurrently()` entrypoints that delegate supported
-options to the native binary, forward configured streams, preserve native close
-events, carry per-command `env`/`cwd`/`raw` fields, return a
-`{ result, commands }` shape for simple imports, and emit native-backed command
-`stdout`, `stderr`, `timer`, `stateChange`, and `close` events.
+The npm package is binary-only by design. JavaScript in this repository is
+limited to install, launcher, packaging, and test glue.
 
 ## Implemented CLI Surface
 
@@ -69,7 +63,7 @@ The current native CLI covers the core process-supervision path: multiple
 commands, names, `--name-separator`, prefixes, prefix colors, raw output,
 hidden output, `-m`/`--max-processes`, success conditions, restart tries and delays,
 process-group kill policies, `--ks`/`--kill-signal`, `--kill-timeout`, PID
-prefixes, `--timings`, `--group`, `--cwd`, `-i`/`--handle-input`,
+prefixes, `--timings`, `--group`, `-i`/`--handle-input`,
 `--default-input-target`, `-P`/`--passthrough-arguments`, npm/yarn/pnpm/bun/node/deno
 script shortcuts with package-script wildcards, and `--teardown`.
 Formatted output includes npm-style command close notifications, while `--raw`
@@ -77,10 +71,12 @@ and hidden commands suppress those notifications like npm `concurrently`.
 Cancellation status lines are emitted for `-k`/`--kill-others` in formatted
 output.
 
+Like npm `concurrently`, CLI flags can also be supplied through
+`CONCURRENTLY_*` environment variables, with explicit CLI arguments taking
+precedence over environment defaults.
+
 `--max-processes` accepts either an exact integer or a percentage of detected
 CPUs, such as `50%`.
-
-`--cwd` sets the working directory for all main commands and teardown commands.
 
 `--passthrough-arguments` replaces `{1}`, `{@}`, and `{*}` placeholders in
 commands with arguments after `--`.

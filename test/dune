@@ -1,3 +1,42 @@
 (test
  (name domain_tests)
+ (modules domain_tests)
  (libraries unix eio_main eio concurrentlyocaml))
+
+(tests
+ (names cli_command_inputs_tests)
+ (modules cli_command_inputs_tests)
+ (libraries unix concurrentlyocaml))
+
+(tests
+ (names
+  cli_argv_tests
+  cli_env_options_tests
+  cli_short_options_tests
+  output_color_tests
+  output_buffer_tests
+  output_prefix_tests
+  output_timing_tests
+  process_signal_tests
+  runner_input_queue_tests)
+ (modules
+  cli_argv_tests
+  cli_env_options_tests
+  cli_short_options_tests
+  output_color_tests
+  output_buffer_tests
+  output_prefix_tests
+  output_timing_tests
+  process_signal_tests
+  runner_input_queue_tests)
+ (libraries concurrentlyocaml))
+
+(test
+ (name runner_input_reader_tests)
+ (modules runner_input_reader_tests)
+ (libraries eio_main eio concurrentlyocaml))
+
+(test
+ (name runner_output_reader_tests)
+ (modules runner_output_reader_tests)
+ (libraries eio concurrentlyocaml))

@@ -34,6 +34,10 @@ type t =
       ; chunk : string
       ; after_command : Command.t option
       }
+  | Runtime_warning of
+      { stream : stream
+      ; chunk : string
+      }
 
 type payload =
   | Output_chunk_payload of
@@ -46,6 +50,10 @@ type payload =
       { stream : stream
       ; chunk : string
       ; after_command : Command.t option
+      }
+  | Runtime_warning_payload of
+      { stream : stream
+      ; chunk : string
       }
 
 type create_error =
@@ -97,13 +105,15 @@ let lifecycle_with_process_id ~process_id ~command ~attempt ~lifecycle =
 let status_message ~after_command ~stream ~chunk =
   Status_message { stream; chunk; after_command }
 
+let runtime_warning ~stream ~chunk = Runtime_warning { stream; chunk }
+
 let command = function
   | Output_chunk { command; _ } | Lifecycle { command; _ } -> Some command
-  | Status_message _ -> None
+  | Status_message _ | Runtime_warning _ -> None
 
 let attempt = function
   | Output_chunk { attempt; _ } | Lifecycle { attempt; _ } -> attempt
-  | Status_message _ -> 0
+  | Status_message _ | Runtime_warning _ -> 0
 
 let payload = function
   | Output_chunk { process_id; stream; chunk; _ } ->
@@ -111,8 +121,9 @@ let payload = function
   | Lifecycle { lifecycle; _ } -> Lifecycle_payload lifecycle
   | Status_message { stream; chunk; after_command } ->
     Status_message_payload { stream; chunk; after_command }
+  | Runtime_warning { stream; chunk } -> Runtime_warning_payload { stream; chunk }
 
 let process_id = function
   | Output_chunk { process_id; _ } -> process_id
   | Lifecycle { process_id; _ } -> process_id
-  | Status_message _ -> None
+  | Status_message _ | Runtime_warning _ -> None

@@ -1,17 +1,17 @@
 type route =
   { target_index : int
+  ; target_label : string
   ; payload : string
   }
 
 type t =
   { commands : Command.t list
-  ; default_target_index : int
+  ; default_target : string
+  ; default_target_index : int option
   }
 
 type create_error =
-  [ `Empty_default_input_target
-  | `Unknown_default_input_target of string
-  ]
+  [ `Empty_default_input_target ]
 
 let resolve_target commands token =
   let rec loop resolved = function
@@ -34,11 +34,13 @@ let resolve_target commands token =
 
 let create ~commands ~default_input_target =
   let target = String.trim default_input_target in
-  if String.equal target "" then Error `Empty_default_input_target
-  else
-    match resolve_target commands target with
-    | Some default_target_index -> Ok { commands; default_target_index }
-    | None -> Error (`Unknown_default_input_target default_input_target)
+  let target = if String.equal target "" then "0" else target in
+  Ok
+    {
+      commands;
+      default_target = target;
+      default_target_index = resolve_target commands target;
+    }
 
 let split_target_prefix input =
   match String.index_opt input ':' with
@@ -55,11 +57,17 @@ let route t input =
   match split_target_prefix input with
   | Some (target, payload) ->
     (match resolve_target t.commands target with
-     | Some target_index -> { target_index; payload }
-     | None -> { target_index = t.default_target_index; payload = input })
-  | None -> { target_index = t.default_target_index; payload = input }
+     | Some target_index -> { target_index; target_label = target; payload }
+     | None ->
+       { target_index = Option.value ~default:(-1) t.default_target_index
+       ; target_label = t.default_target
+       ; payload = input
+       })
+  | None ->
+    { target_index = Option.value ~default:(-1) t.default_target_index
+    ; target_label = t.default_target
+    ; payload = input
+    }
 
 let error_message = function
   | `Empty_default_input_target -> "default input target must not be empty"
-  | `Unknown_default_input_target target ->
-    Printf.sprintf "unknown default input target: %s" target

@@ -165,8 +165,8 @@ let close_events_for_exit t =
   | [] -> t.close_events
   | cancelling_command_indexes ->
     (* npm -k still evaluates the configured success condition after sibling
-       cancellation. With default "all", killed siblings remain failures; with
-       "first", the successful cancelling command decides the run. *)
+       cancellation. Signaled siblings remain failures, but a sibling that traps
+       the signal and exits 0 still satisfies the default "all" condition. *)
     List.filter
       (fun close_event ->
         let command_index = Command.index (Close_event.command close_event) in

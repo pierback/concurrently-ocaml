@@ -2,9 +2,10 @@
 
 ## Target
 
-Build `concurrently-ocaml` as a feature-complete OCaml implementation of npm
-`concurrently` v9.2.1, with a hard-cutover OCaml 5.4.1 + Dune 3.23 + Eio
-architecture and reproducible native npm distribution.
+Build `concurrently-ocaml` as a feature-complete native OCaml CLI replacement
+for npm `concurrently`/`conc` v9.2.1 in package scripts, with a hard-cutover
+OCaml 5.4.1 + Dune 3.23 + Eio architecture and reproducible native npm
+distribution.
 
 Speed and terminal ergonomics are primary product requirements. The native
 implementation should preserve the OCaml advantage with fast startup,
@@ -18,6 +19,12 @@ contract.
 The target is not a thin CLI wrapper. The library should own the core run model,
 and the executable should only parse CLI input, call the library, and translate
 the final run result to a process exit code.
+
+The JavaScript programmatic API from npm `concurrently` is an explicit
+non-goal. This package should not ship CommonJS or ESM import entrypoints,
+command observables, Node IPC shims, or custom JavaScript spawn/kill hooks.
+JavaScript is limited to npm install, launcher, packaging, and compatibility
+test glue.
 
 The core domain model must stay OS-neutral. Process supervision is a backend
 concern: Unix-like runners and Windows runners should share the same
@@ -41,8 +48,8 @@ signal, process-tree teardown, and pipe implementations.
 - Output now flows through structured `Output_event.t` callbacks as lines are
   read from child pipes. `lib/output_formatter.ml` owns prefix modes, prefix
   padding, command-prefix truncation, timestamp prefixes, ANSI color rendering,
-  spacious blocks, timings output, and command-level buffering for the
-  currently exposed flags.
+  internal block formatting, timings output, and command-level buffering for
+  the currently exposed flags.
 - Kill-others now starts each POSIX command in its own process group and signals
   the group so shell children are cancelled with their parent shell.
 - The npm launcher prefers the local Dune binary inside a source checkout and
@@ -52,9 +59,9 @@ signal, process-tree teardown, and pipe implementations.
 - GitHub Actions now includes a native package matrix for Linux x64/arm64 and
   macOS x64/arm64. Each native package job now packs the platform package and
   root package into a clean npm project, verifies that the root tarball did not
-  leak OCaml source/build/test files, runs `conc` from that install, and imports
-  the CommonJS and ESM package entrypoints. Windows packaging is deliberately
-  withheld until a Windows-native runner backend exists.
+  leak OCaml source/build/test files, and runs `conc`/`concurrently` from that
+  install. Windows packaging is deliberately withheld until a Windows-native
+  runner backend exists.
 
 ## Deepening Opportunities
 
@@ -144,30 +151,31 @@ signal, process-tree teardown, and pipe implementations.
 | --- | --- | --- |
 | Multiple commands | Runner | Implemented through `Runner.run` |
 | Real concurrent execution | Runner | Implemented for one attempt per command |
-| Command names | CLI config, Output formatter | Implemented for `-n`/`--names` plus `--name-separator`; labels preserve spaces, missing names fall back to indexes by default, extra names are ignored, and deprecated separator warnings match npm |
+| Command names | CLI config, Output formatter | Implemented for `-n`/`--names` plus `--name-separator`; labels preserve spaces, missing names fall back to indexes by default, extra names are ignored, deprecated separator warnings match npm, and empty separators split names into single-character labels like npm |
 | Prefix modes: index, pid, time, command, name, none, template | Output formatter | Implemented for formatter output; PID comes from backend process identity on output events |
-| Prefix colors and auto colors | CLI config, Output formatter | Partial `--prefix-colors` support for npm-published reset defaults, named colors, modifiers, bright colors, backgrounds, `auto`, `reset`, invalid-color fallback, and short/full `#RGB`/`#RRGGBB` foregrounds |
-| Prefix length and padding | Output formatter | Implemented via `--prefix-length` and `--pad-prefix` |
+| Prefix colors and auto colors | CLI config, Output formatter | Implemented for pinned npm-published reset defaults, named colors, modifiers, bright colors, backgrounds, `auto`, `reset`, invalid-color fallback, function-style fallback, and short/full `#RGB`/`#RRGGBB` foregrounds |
+| Prefix length and padding | Output formatter | Implemented via `--prefix-length` and `--pad-prefix`, including npm-compatible default fallback, compact numeric `-lN` values, and JavaScript slicing semantics for zero, invalid, finite fractional, negative, and `Infinity` prefix lengths |
 | Raw output | CLI config, Run API, Output formatter | Global `--raw` support plus per-command raw mode through structured `Run_api` inputs |
 | Hide selected command output | CLI config, Output formatter | Implemented for `--hide` by index, name, and comma-separated selectors |
-| Grouped output | CLI config, Output formatter | Implemented via `-g`/`--group`; current command output streams; future non-raw command output is buffered and released in command index order |
+| Grouped output | CLI config, Output formatter | Implemented via `-g`/`--group`; non-raw command output is emitted on stdout and released in command index order |
 | Command close notifications | Runner, Output formatter, Run result | Implemented for default formatted output, grouped output, signal labels, cancellation status lines, raw/hidden suppression, and `-k` killed-sibling exit calculation like npm |
-| Cwd per run and per command | CLI config, Run API, Runner | Global `--cwd` support for CLI and programmatic runs; structured `Run_api` commands can override cwd per command |
+| Cwd per run and per command | Run API, Runner | CLI `--cwd` is not exposed by pinned `concurrently@9.2.1`; structured OCaml `Run_api` commands can still provide cwd values before they reach the Runner |
 | Env per command | Run API, Runner | Structured `Run_api` commands support per-command env merged by `Runner`; CLI env flags are not an npm surface |
 | Kill others on success/failure | Run policy, Runner | Implemented for POSIX process groups |
-| Signal choice and kill timeout | Run policy, Runner | Partial common signal support through `--kill-signal` and npm alias `--ks`; `--kill-timeout` force-kills still-running POSIX process groups with `SIGKILL` |
-| Max running processes | CLI config, Run policy, Runner | Implemented via `-m`/`--max-processes` for exact counts and percent-of-detected-CPU values |
+| Signal choice and kill timeout | Run policy, Runner | Implemented for OCaml/POSIX-supported signal names and aliases through `--kill-signal`, npm alias `--ks`, and `CONCURRENTLY_KILL_SIGNAL`/`CONCURRENTLY_KS`, including deterministic `SIGINT` and `SIGUSR1` parity; `--kill-timeout` accepts npm-style numeric coercion for invalid, sub-millisecond fractional, fractional, and negative values, emits npm-compatible Node timer warning text for negative values when used, emits force-kill status after the timeout window, and force-kills still-running POSIX process groups with `SIGKILL` |
+| Max running processes | CLI config, Run policy, Runner | Implemented via `-m`/`--max-processes` for exact counts, compact numeric `-mN` values, and percent-of-detected-CPU values |
 | Passthrough arguments | CLI config, Argument expander | Implemented via `-P`/`--passthrough-arguments` for `{1}`, `{@}`, and `{*}` placeholders |
-| Command shortcuts and script wildcards | CLI config, Script catalog | Partial shortcut expansion for `npm:`, `yarn:`, `pnpm:`, `bun:`, `node:`, and `deno:` with npm-compatible default names, package-script wildcards, omission filters, and deno task/package-script lookup |
-| Success condition: all, first, last, command selectors | Run policy, Runner | Implemented via `--success` |
-| Restart tries and delay | Run policy, Runner | Implemented for finite tries and npm-compatible negative retry-forever counts via `--restart-tries` and millisecond `--restart-after` |
+| Command shortcuts and script wildcards | CLI config, Script catalog | Implemented shortcut expansion for `npm:`, `yarn:`, `pnpm:`, `bun:`, `node:`, and `deno:` with npm-compatible default names, package-script wildcards, verbatim wildcard command construction, omission filters against full script names, and deno task/package-script lookup |
+| Success condition: all, first, last, command selectors | Run policy, Runner | Implemented via `--success`, including npm-compatible fallback where unmatched success values behave like `all` |
+| Restart tries and delay | Run policy, Runner | Implemented for finite tries, fractional/invalid npm completion-status projection, and npm-compatible negative/`Infinity` retry-forever counts via `--restart-tries`, plus npm-compatible `--restart-after` coercion for exponential, blank-as-zero, numeric, fractional, negative, unused invalid values, and invalid-delay warning text when retries use the timer |
 | Exponential restart backoff | Run policy, Runner | Implemented via `--restart-after exponential`; finite retry counts are overflow-validated up front, while retry-forever delays saturate instead of asserting on unreachable high attempts |
 | Input forwarding | Input router, Runner | Implemented for POSIX through `-i`/`--handle-input`; stdin write races are isolated by the backend interface |
-| Default input target | Input router | Implemented through `--default-input-target` by index or name |
-| Teardown commands | CLI config, Run policy, Runner | Implemented for sequential cleanup commands with raw output and exit-code isolation |
+| Default input target | Input router | Implemented through `--default-input-target` by index or name, including npm-compatible runtime handling for unresolved default targets and empty-target coercion to command `0` |
+| Teardown commands | CLI config, Run policy, Runner | Implemented for sequential cleanup commands, empty teardown shell commands, raw output, and exit-code isolation |
+| `CONCURRENTLY_*` environment defaults and boolean coercion | CLI env options, CLI argv, CLI config | Implemented for pinned npm CLI flags and aliases through argv normalization; explicit CLI arguments override env defaults, and yargs-style boolean `--flag=true/false`, non-true inline false, `--no-flag` negation, known short boolean groups like `-kg`/`-rg`, and mixed unknown/known short groups like `-xg`/`-xr`/`-rx` are supported |
 | Timings output and close-event timings | Runner, Output formatter | Partial: npm-style lifecycle timing messages and summary tables are implemented for deterministic success, failure, restart, hidden, raw, named, grouped, custom timestamp, and kill-on-fail cases |
-| Help and version flags | CLI config, npm distribution | Implemented for `--version`, `-v`, `-V`, `--help`, and `-h`; deterministic help output is pinned byte-for-byte against npm `concurrently@9.2.1`, and npm install smoke verifies matching `concurrently`/`conc` help aliases |
-| Programmatic library entrypoint | Run API, Runner, Node package API | Partial: `Run_api` accepts structured command inputs with per-command `env`, `cwd`, `raw`, `prefix_color`, `name`, `hidden`, and `ipc`, then delegates to backend-aware `Runner.run`; the JS package exposes CommonJS and ESM `concurrently()` entrypoints that delegate supported options to the native binary, return `{ result, commands }`, and emit native-backed per-command `stdout`, `stderr`, `timer`, `stateChange`, and `close` observable events |
+| Help and version flags | CLI argv, CLI config, npm distribution | Implemented for `--version`, `-v`, `-V`, `--help`, `-h`, yargs-style built-in aliases before separate option values, and no-command default help on stderr after npm-compatible unknown-option normalization; deterministic help output is pinned byte-for-byte against npm `concurrently@9.2.1`, and npm install smoke verifies matching `concurrently`/`conc` help aliases |
+| OCaml run API | Run API, Runner | Implemented for structured OCaml callers; not shipped as a JavaScript package API |
 
 ## Compatibility Evidence And Divergence Ledger
 
@@ -183,42 +191,91 @@ Currently mirrored deterministic behavior:
   failure, and signals.
 - `bin/concurrently.spec.ts`: `--version`, `-v`, and `-V` terminate cleanly
   with a package-version-shaped stdout line; `--help` and `-h` produce
-  byte-compatible yargs help text.
+  byte-compatible yargs help text, including built-in alias parsing before
+  separate option values; no-command invocations and unknown options that
+  consume the only command also produce byte-compatible default help on stderr
+  with exit status 0.
+- Published `dist/src/completion-listener.js`: unmatched `--success` values and
+  empty command selectors fall back to the default all-command success
+  condition, including failed-command exit projection.
 - `src/logger.spec.ts` and `bin/concurrently.spec.ts`: raw/hidden suppression,
-  name prefixes, deprecated name separator warnings, command prefixes, template
+  formatted child stderr-to-stdout routing, grouped stderr-to-stdout routing,
+  name prefixes, deprecated name separator warnings, empty separator name splitting, command prefixes,
+  npm-compatible prefix-length coercion and truncation, template prefixes, PID
   prefixes, no-prefix mode, and prefix padding.
+- Published `dist/bin/concurrently.js` and `docs/cli/configuration.md`:
+  `CONCURRENTLY_*` environment defaults for deterministic flags and aliases,
+  including explicit CLI boolean false overriding env true, non-true inline
+  boolean false coercion, and `--no-flag` negation with last-value-wins
+  behavior, known short boolean alias groups such as `-kg` and `-rg`, mixed
+  unknown/known short-option groups such as `-xg`, `-xr`, and `-rx`, and compact
+  numeric short values such as `-m1` and `-l2`, and short inline string values
+  such as `-p=raw` and `-n=api`, while compact string forms such as `-pcommand`
+  and `-napi,web` do not bind string option values; compact short CLI values
+  override `CONCURRENTLY_M`/`CONCURRENTLY_L` defaults, full-name
+  `CONCURRENTLY_MAX_PROCESSES` scheduling defaults, and input-routing defaults
+  from `CONCURRENTLY_HANDLE_INPUT` plus `CONCURRENTLY_DEFAULT_INPUT_TARGET`;
+  yargs-style missing separate option values before boolean flags are dropped
+  before command binding.
 - Published `dist/src/logger.js`/`dist/src/defaults.js` color behavior:
   byte-compatible ANSI output for default reset-colored prefixes, `red.bold`,
-  `bgRed.white.bold`, `gray.dim`, `hidden`, short/full truecolor hex prefixes,
-  and invalid-color fallback under deterministic `FORCE_COLOR` settings.
+  `bgRed.white.bold`, `bgBlueBright.white`, `gray.dim`, `auto`, `hidden`,
+  short/full truecolor hex prefixes, invalid-color fallback, and
+  published-package function-style fallback for `rgb(...)` and `ansi256(...)`
+  values under deterministic `FORCE_COLOR` settings, including full-name
+  `CONCURRENTLY_PREFIX_COLORS` environment defaults.
 - `src/command-parser/expand-arguments.spec.ts` and `bin/concurrently.spec.ts`:
   passthrough placeholder expansion and disabled passthrough behavior.
 - Published `dist/src/command-parser/expand-shortcut.js`: simple command
-  shortcut expansion (`npm:<script>` and related runners), generated default
-  names, explicit name override behavior, and mixed shortcut/literal default
-  prefixes.
+  shortcut expansion (`npm:<script>`, `yarn:<script>`, `pnpm:<script>`,
+  `bun:<script>`, `node:<script>`, `deno:<script>`), generated default names,
+  explicit name override behavior, mixed shortcut/literal default prefixes, and
+  passthrough expansion before shortcut parsing.
 - Published `dist/src/command-parser/expand-wildcard.js`: package script
-  wildcard expansion, wildcard-generated names, explicit name prefixes, and
-  omission filters for deterministic `npm:<glob>` cases, plus no-match
-  wildcard expansion as a clean no-output no-op.
-- `bin/concurrently.spec.ts`: finite `--restart-tries` restart notifications
-  and negative `--restart-tries` retry-forever behavior until a later attempt
-  succeeds.
+  wildcard expansion for `npm:<glob>`, `yarn:<glob>`, `pnpm:<glob>`,
+  `bun:<glob>`, and `node:<glob>`, Deno task wildcard expansion for
+  `deno:<glob>`, wildcard-generated names, explicit name prefixes, verbatim
+  expansion of spaced script names, and omission filters against full script
+  names for deterministic package-script cases, plus no-match wildcard
+  expansion as a clean no-output no-op.
+- `bin/concurrently.spec.ts`, published `dist/bin/concurrently.js`, and
+  `dist/src/flow-control/restart-process.js`: finite `--restart-tries` restart
+  notifications, negative `--restart-tries` retry-forever behavior until a
+  later attempt succeeds, `Infinity` retry-forever behavior, fractional and
+  invalid `--restart-tries` completion status projection, and deterministic
+  `--restart-after` coercion for unused invalid values, blank-as-zero values,
+  negative/fractional retry delays, and invalid-delay timer warning text in
+  formatted and raw modes.
 - `bin/concurrently.spec.ts` and `src/flow-control/teardown.spec.ts`:
-  teardown status messages, raw teardown output, and raw-mode suppression of
-  global teardown status messages.
+  teardown status messages, empty teardown commands, raw teardown output, and
+  raw-mode suppression of global teardown status messages.
 - `src/flow-control/kill-others.spec.ts` and `bin/concurrently.spec.ts`:
   `--kill-others`, `--kill-others-on-fail`, cancellation status messages, signal
-  close output, success projection, and max-process queued-command suppression
-  after success or failure cancellation.
+  close output, success projection, configured `SIGINT` and `SIGUSR1` kill
+  signals, and max-process queued-command suppression after success or failure
+  cancellation.
+- Published `dist/bin/concurrently.js` and `dist/src/flow-control/kill-others.js`:
+  `--ks` alias handling and full-name/alias
+  `CONCURRENTLY_KILL_SIGNAL`/`CONCURRENTLY_KS` environment defaults for
+  deterministic sibling cancellation, plus lazy signal resolution where an
+  unsupported `--kill-signal` value is accepted when no sibling signal is ever
+  sent, and yargs-style empty `--kill-signal ''` values fall back to the
+  default `SIGTERM` signal.
+- Published `dist/src/flow-control/kill-others.js` and
+  `dist/bin/concurrently.js`: deterministic `--kill-timeout` numeric coercion
+  for sub-millisecond fractional and fractional escalation delays, invalid
+  unused values, and negative-delay timer warning text in formatted and raw
+  modes.
 - `src/concurrently.spec.ts`: deterministic `maxProcesses` command-start
   serialization, including the documented rule that queued commands start only
   after a running command has exhausted its restart attempts, and that
   never-started queued commands do not print synthetic killed output after a
   cancellation condition fires.
 - `src/flow-control/input-handler.spec.ts` and `bin/concurrently.spec.ts`:
-  `--handle-input`, explicit index routing, and `--default-input-target`
-  behavior with bounded delayed stdin writes.
+  `--handle-input`, explicit index and command-name routing,
+  `--default-input-target` behavior with bounded delayed stdin writes, and
+  runtime logging for unresolved default input targets, including empty-target
+  coercion to command `0`.
 - `lib/flow-control/log-timings.ts` and `lib/flow-control/log-timings.spec.ts`:
   `--timings` start/stop lifecycle messages and final summary tables for
   success, failure, named commands, hidden commands, raw-mode suppression, and
@@ -231,8 +288,9 @@ Known divergences tracked as incomplete work:
 | Area | Upstream behavior | Current status |
 | --- | --- | --- |
 | Timing table row order for runtime-dependent signal durations | npm sorts the timing table by measured duration. When one command is killed after another exits, relative durations can legitimately differ by runtime and platform. | Deterministic kill-on-fail signal timing matches npm under normalized timestamps/durations. Success-triggered kill timing is not pinned byte-for-byte because duration-sorted row order depends on process scheduling and signal latency. |
-| Programmatic API parity | Upstream `concurrently()` accepts structured command inputs with per-command `env`, `cwd`, `raw`, `prefixColor`, and `name`, writes through configured streams, and returns `{ result, commands }` with observable command handles. | OCaml now exposes `Run_api` for structured command input and validated run/display/input construction over the same core model. The JS package now has CommonJS and ESM import entrypoints with a native-backed `concurrently()` function, supported option mapping, output/input stream forwarding, per-command JS `env`/`cwd`/`raw` metadata, and a `{ result, commands }` shape backed by native close-event JSON. The native binary also exposes an internal structured event fd for the JS package, so command handles emit native-backed `stdout`, `stderr`, `timer`, `stateChange`, and `close` events without parsing formatted terminal output. Per-command `error`, per-command `kill`, IPC messaging, custom JS `spawn`/`kill`, custom upstream flow controllers, and exact RxJS `Subject` semantics are still incomplete. |
-| Full chalk compatibility | Upstream delegates simple dot-path color names/styles to chalk and special-cases leading `#RGB`/`#RRGGBB` foreground colors. Function-style values such as `rgb(...)` and `ansi256(...)` fall back to reset in published `concurrently@9.2.1`; newer source-only forms are not part of the pinned package target. | Published-package reset, named foreground/background, bright foreground, modifiers, modifier chains, short/full truecolor hex, and invalid fallback prefix output is pinned in compatibility tests. Remaining work is to decide whether source-only color behavior beyond `concurrently@9.2.1` should be a future target-version upgrade rather than current parity work. |
+| SIGHUP shell job-control diagnostics | For shell commands such as `trap 'exit 129' HUP; sleep 1`, npm's process-tree kill path can surface an extra shell diagnostic like `Hangup: 1` before the command close notification. | The native POSIX backend signals the command process group directly, so the deterministic close status matches but that shell-emitted diagnostic is not reproduced. This remains tracked as process-tree parity work, not formatter output to fake. |
+| Unsupported kill-signal values when used | Upstream forwards the exact `--kill-signal` string to Node/tree-kill. Bare aliases such as `TERM`/`HUP`, and unsupported names such as `SIGFOO`, print a partial shutdown log and then throw Node's `ERR_UNKNOWN_SIGNAL` stack when used. | The native CLI accepts unused signal values like npm, supports deterministic OCaml/POSIX `SIG*` values when cancellation actually sends a signal, and returns a typed native error instead of reproducing Node's stack trace for unsupported values that are used. |
+| JavaScript programmatic API | Upstream `concurrently()` can be imported from JavaScript. | Explicit non-goal for this project. CLI parity for `concurrently`/`conc` in package scripts is the product surface; npm package JavaScript remains launcher and install glue only. |
 | Windows backend | Upstream supports Windows process semantics. | Windows npm packages are withheld until a Windows-native runner backend exists. |
 
 ## Implementation Slices
@@ -299,9 +357,10 @@ Known divergences tracked as incomplete work:
    Status: partially complete. `lib/output_formatter.ml` now owns labels,
    prefix modes, command-prefix truncation, prefix padding, timestamp prefixes,
    explicit prefix colors, npm-style reset-colored default prefixes, ANSI color
-   rendering, no-color mode, spacious output, timings output through npm's
-   `--timings` flag, global raw output, hidden command output, command-level
-   buffering, npm-style command close notifications, PID prefixes and `{pid}`
+   rendering, no-color mode, internal block formatting, timings output through
+   npm's `--timings` flag, global raw output, hidden command output,
+   command-level buffering, npm-style command close notifications, PID prefixes
+   and `{pid}`
    template placeholders from backend process identity, and deterministic
    no-color and pinned color compatibility tests. Per-command raw flags are
    supported when commands are constructed through `Run_api`. Remaining
@@ -317,9 +376,11 @@ Known divergences tracked as incomplete work:
    Status: partially complete. `--success` now supports `all`, `first`, `last`,
    `command-{index}`, `command-{name}`, and `!command-{index/name}` through the
    OS-neutral `Run_policy` module. `--restart-tries` and `--restart-after` now
-   support finite retry counts, npm-compatible negative retry-forever counts,
-   fixed millisecond delays, and npm-compatible exponential delay timing (`2^N`
-   seconds for retry index `N`). Infinite retries keep `Run_result` memory
+   support finite retry counts, fractional/invalid retry-count status
+   projection, npm-compatible negative retry-forever counts, fixed millisecond
+   delays, invalid-delay timer warning text, and npm-compatible exponential
+   delay timing (`2^N` seconds for retry index `N`). Infinite retries keep
+   `Run_result` memory
    bounded by collecting only terminal close events while still emitting
    lifecycle output for retry attempts. Killed running siblings stay visible to
    `--success all`, while never-started queued commands are closed internally
@@ -354,23 +415,29 @@ Known divergences tracked as incomplete work:
    prefixes, template prefixes, no-prefix mode, prefix padding, grouped
    passthrough placeholders, disabled passthrough behavior, finite restart
    logging, negative restart retry-forever success, teardown status lines,
-   raw teardown behavior, timing lifecycle
+   raw teardown behavior, PID prefix and template interpolation,
+   npm-compatible unknown-option parsing, timing lifecycle
    messages and timing table shape for success, failure, names, hidden output,
   raw suppression, grouped sorted output, finite restart attempts, custom
   timestamp formats, and deterministic kill-on-fail signalling with runtime
   timestamps/durations normalized, published-package ANSI prefix color output
   for reset defaults, `red.bold`, `bgRed.white.bold`, `gray.dim`, `hidden`,
-  short/full truecolor hex, and invalid-color fallback, shortcut expansion,
-  package-script wildcard expansion,
+  short/full truecolor hex, and invalid-color fallback, shortcut expansion
+  across npm/yarn/pnpm/bun/node/deno runners, package-script and Deno-task
+  wildcard expansion,
    kill-others exit projection, raw kill output, kill-on-fail behavior,
-   max-process serialization including restart-exhaustion queueing,
-   queued-command suppression after kill-on-success/failure, input forwarding,
-   explicit input routing, version and help flag aliases, and
-   default input target routing. The Ubuntu CI build runs this harness after
+   max-process serialization including restart-exhaustion queueing, npm-style
+   max-process numeric coercion for zero, invalid, fractional, and negative
+   values, fractional/invalid restart-count coercion, deterministic
+   restart-after and kill-timeout warning/coercion behavior, queued-command suppression after
+   kill-on-success/failure, input forwarding, explicit index and command-name
+   input routing, version and help flag aliases, and default input target
+   routing. The Ubuntu CI build
+   runs this harness after
    `dune build @install @runtest`. Remaining compatibility work: translate more
    upstream behavior tests for duration-order-sensitive
    timing signal cases, broader wildcard and shortcut edge cases, deeper package
-   API behavior tests, and add backend conformance tests that do not depend on
+   CLI behavior tests, and add backend conformance tests that do not depend on
    npm availability.
 
 9. Npm binary distribution
@@ -383,18 +450,14 @@ Known divergences tracked as incomplete work:
    packages for Linux and macOS targets, exposes `concurrently`, `conc`, and
    `concml` npm binaries, and the launcher resolves the matching native package
    before falling back to a local development build. The packed
-   root package is restricted to the JS launcher, native-backed CommonJS/ESM API
-   shim, type declarations, package metadata, README, and LICENSE, so users do
-   not receive OCaml source, tests, Dune files, or local development scripts.
-   The JS API now emits native-backed command stdout, stderr, timer,
-   state-change, and close observable events for spawned commands through an
-   internal structured event fd, so import users do not have to parse formatted
-   terminal output to observe command handles.
+   root package is restricted to the JS launcher, package metadata, README, and
+   LICENSE, so users do not receive OCaml source, tests, Dune files, local
+   development scripts, or a JavaScript programmatic API.
    GitHub Actions builds platform packages, smoke-installs the packed root and
    platform package into a clean npm project, asserts the lean root package
-   surface, executes `conc`, imports the CommonJS and ESM API entrypoints, and
-   publishes packages on version tags. Windows packaging is withheld until a
-   Windows backend exists. Remaining distribution work: add checksums or
+   surface, executes `conc`/`concurrently`, and publishes packages on version
+   tags. Windows packaging is withheld until a Windows backend exists.
+   Remaining distribution work: add checksums or
    SLSA/provenance policy beyond npm provenance, decide whether Linux
    musl/static builds are required, and implement then package Windows runner
    behavior.

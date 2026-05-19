@@ -1,21 +1,20 @@
-type command_input =
-  { text : string
-  ; name : string option
-  ; cwd : string option
-  ; env : (string * string) list
-  ; prefix_color : string option
-  ; raw : bool option
-  ; hidden : bool
-  ; ipc : bool
-  }
+type command_input = {
+  text : string;
+  name : string option;
+  cwd : string option;
+  env : (string * string) list;
+  prefix_color : string option;
+  raw : bool option;
+  hidden : bool;
+  ipc : bool;
+}
 
 type t
 
 type create_error =
   [ `Command_error of int * Command.create_error
   | `Input_router_error of Input_router.create_error
-  | `Run_spec_error of Run_spec.create_error
-  ]
+  | `Run_spec_error of Run_spec.create_error ]
 
 val command :
   ?name:string ->
@@ -33,7 +32,7 @@ val create :
   ?policy:Run_policy.t ->
   ?labels:string list ->
   ?prefix:string ->
-  ?prefix_length:int ->
+  ?prefix_length:float ->
   ?pad_prefix:bool ->
   ?timestamp_format:string ->
   ?spacious:bool ->
@@ -50,7 +49,6 @@ val run :
   t ->
   input_source:Runner_backend.source option ->
   backend:Runner_backend.t ->
-  process_mgr:_ Eio.Process.mgr ->
   now:(unit -> float) ->
   sleep:(float -> unit) ->
   on_output_event:(Output_event.t -> unit) ->
