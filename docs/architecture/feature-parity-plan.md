@@ -321,14 +321,16 @@ Currently mirrored deterministic behavior:
   `--timings` start/stop lifecycle messages and final summary tables for
   success, failure, named commands, hidden commands, raw-mode suppression, and
   grouped sorted output, finite restart attempts, custom `--timestamp-format`,
-  and deterministic kill-on-fail signalling, with timestamps and measured
-  durations normalized because they are inherently runtime-dependent.
+  deterministic kill-on-fail signalling, and success-triggered sibling
+  signalling with duration-sorted timing rows normalized, with timestamps,
+  measured durations, and duration-derived row order normalized because they
+  are inherently runtime-dependent.
 
 Known divergences tracked as incomplete work:
 
 | Area | Upstream behavior | Current status |
 | --- | --- | --- |
-| Timing table row order for runtime-dependent signal durations | npm sorts the timing table by measured duration. When one command is killed after another exits, relative durations can legitimately differ by runtime and platform. | Deterministic kill-on-fail signal timing matches npm under normalized timestamps/durations. Success-triggered kill timing is not pinned byte-for-byte because duration-sorted row order depends on process scheduling and signal latency. |
+| Timing table row order for runtime-dependent signal durations | npm sorts the timing table by measured duration. When one command is killed after another exits, relative durations can legitimately differ by runtime and platform. | Kill-on-fail and success-triggered kill timing now match npm under normalized timestamps, durations, and duration-derived table row order. This is intentionally normalized compatibility evidence rather than byte-stable output, because the upstream sort key is runtime duration. |
 | SIGHUP shell job-control diagnostics | For shell commands such as `trap 'exit 129' HUP; sleep 1`, npm's process-tree kill path can surface an extra shell diagnostic like `Hangup: 1` before the command close notification. | The native POSIX backend signals the command process group directly, so the deterministic close status matches but that shell-emitted diagnostic is not reproduced. This remains tracked as process-tree parity work, not formatter output to fake. |
 | Unsupported kill-signal stderr when used | Upstream forwards the exact `--kill-signal` string to Node/tree-kill. Bare aliases such as `TERM`/`HUP`, and unsupported names such as `SIGFOO`, print a partial shutdown log and then throw Node's `ERR_UNKNOWN_SIGNAL` stack when used. | The native CLI now matches the exit status, shutdown status line text, and `ERR_UNKNOWN_SIGNAL` headline for deterministic unsupported values. It still does not reproduce Node's environment-specific stack frames. |
 | JavaScript programmatic API | Upstream `concurrently()` can be imported from JavaScript. | Explicit non-goal for this project. CLI parity for `concurrently`/`conc` in package scripts is the product surface; npm package JavaScript remains launcher and install glue only. |

@@ -447,6 +447,20 @@ const cases = [
     normalizeStdout: normalizeTimingsStdout,
   },
   {
+    name: "timings kill-on-success signal table",
+    upstream: "lib/flow-control/log-timings.ts duration-sorted killed timing",
+    args: [
+      "--no-color",
+      "--timings",
+      "--kill-others",
+      "--success",
+      "first",
+      "printf ok",
+      "sleep 1",
+    ],
+    normalizeStdout: normalizeDurationSortedTimingsStdout,
+  },
+  {
     name: "colored default reset prefix",
     upstream: "dist/src/defaults.js prefixColors reset",
     args: ["printf one"],
@@ -2062,6 +2076,41 @@ function normalizeTimingsStdout(stdout) {
     .split("\n")
     .map(normalizeTimingsTableRow)
     .join("\n");
+}
+
+function normalizeDurationSortedTimingsStdout(stdout) {
+  return sortNormalizedTimingsTableRows(normalizeTimingsStdout(stdout));
+}
+
+function sortNormalizedTimingsTableRows(stdout) {
+  const lines = stdout.split("\n");
+  const rowIndexes = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    if (normalizedTimingsDataRow(lines[index])) {
+      rowIndexes.push(index);
+    }
+  }
+
+  const sortedRows = rowIndexes
+    .map((index) => lines[index])
+    .sort((left, right) => left.localeCompare(right));
+  for (let index = 0; index < rowIndexes.length; index += 1) {
+    lines[rowIndexes[index]] = sortedRows[index];
+  }
+  return lines.join("\n");
+}
+
+function normalizedTimingsDataRow(line) {
+  if (!line.startsWith("--> │")) {
+    return false;
+  }
+
+  const cells = line
+    .slice("--> ".length)
+    .split("│")
+    .slice(1, -1)
+    .map((cell) => cell.trim());
+  return cells.length === 5 && cells[1] === "<duration>";
 }
 
 function normalizePidStdout(stdout) {
