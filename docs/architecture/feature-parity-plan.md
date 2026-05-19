@@ -449,8 +449,9 @@ Known divergences tracked as incomplete work:
    `Run_policy`, and executes them through the same `Runner_backend` seam after
    the main command run drains. Cleanup output is raw and cleanup exit status is
    deliberately excluded from `Run_result` success calculation. `-i`/`--handle-input`
-   and `--default-input-target` now route stdin lines through `Input_router` to
-   command stdin, including npm-compatible `index:` and `name:` prefixes.
+   and `--default-input-target` now route bounded stdin chunks through
+   `Input_router` to command stdin, including npm-compatible `index:` and
+   `name:` prefixes.
    Remaining work: broader compatibility tests against npm `concurrently`.
 
 8. Compatibility test suite
@@ -491,8 +492,8 @@ Known divergences tracked as incomplete work:
    fractional/invalid restart-count coercion, deterministic restart-after and
    kill-timeout warning/coercion behavior, queued-command suppression after
    kill-on-success/failure, input forwarding, explicit index and command-name
-   input routing, version and help flag aliases, and default input target
-   routing. The Ubuntu CI build runs this harness after
+   input routing, whole-stdin-chunk input routing, version and help flag aliases,
+   and default input target routing. The Ubuntu CI build runs this harness after
    `dune build @install @runtest`. Remaining compatibility work: translate more
    upstream behavior tests for broader wildcard and shortcut edge cases, deeper
    package CLI behavior tests, and add backend conformance tests that do not

@@ -88,8 +88,8 @@ Teardown commands are executed after the main run drains. Their output is raw,
 and their exit status does not affect the main run exit code.
 
 Input handling is opt-in like npm `concurrently`: unprefixed stdin is forwarded
-to the default target, while `index:` and `name:` prefixes route one input line
-to a selected running command.
+to the default target, while `index:` and `name:` prefixes route stdin chunks to
+a selected running command.
 
 `npm run compat:concurrently` compares deterministic CLI cases against pinned
 `concurrently@9.2.1`.

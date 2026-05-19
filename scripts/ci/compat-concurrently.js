@@ -21,6 +21,10 @@ const firstInputEchoCommand =
   "node -e \"process.stdin.once('data',d=>{process.stdout.write('first:'+d);process.exit(0)})\"";
 const secondInputEchoCommand =
   "node -e \"process.stdin.once('data',d=>{process.stdout.write('second:'+d);process.exit(0)})\"";
+const firstChunkInputCommand =
+  "node -e \"process.stdin.on('data',d=>process.stdout.write('first:'+d)); setTimeout(()=>process.exit(0),500)\"";
+const secondChunkInputCommand =
+  "node -e \"process.stdin.on('data',d=>process.stdout.write('second:'+d)); setTimeout(()=>process.exit(0),500)\"";
 const delayedOneCommand =
   "node -e \"setTimeout(()=>process.stdout.write('one'),1200)\"";
 const forceNoColorEnv = { NO_COLOR: null, FORCE_COLOR: "0" };
@@ -1595,6 +1599,20 @@ const cases = [
       { delayMs: inputReadyDelayMs, input: "two\n" },
       { delayMs: secondInputReadyDelayMs, input: "0:one\n" },
     ],
+  },
+  {
+    name: "handle input routes whole stdin chunk",
+    upstream: "src/flow-control/input-handler.js data chunk routing",
+    args: [
+      "--no-color",
+      "-g",
+      "-i",
+      "-n",
+      "first,second",
+      firstChunkInputCommand,
+      secondChunkInputCommand,
+    ],
+    input: "1:two\n0:one\n",
   },
   {
     name: "empty default input target routes to first command",
