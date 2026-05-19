@@ -36,8 +36,8 @@
   "optionalDependencies": {
     "@pierback/concurrently-ml-darwin-arm64": "0.0.13",
     "@pierback/concurrently-ml-darwin-x64": "0.0.13",
-    "@pierback/concurrently-ml-linux-arm64": "0.0.13",
-    "@pierback/concurrently-ml-linux-x64": "0.0.13"
+    "@pierback/concurrently-ml-linux-arm64-gnu": "0.0.13",
+    "@pierback/concurrently-ml-linux-x64-gnu": "0.0.13"
   },
   "directories": {
     "doc": "docs",

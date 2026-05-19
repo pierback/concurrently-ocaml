@@ -50,12 +50,12 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            target: linux-x64
+            target: linux-x64-gnu
             npm_os: linux
             npm_cpu: x64
             binary: _build/default/bin/main.exe
           - os: ubuntu-24.04-arm
-            target: linux-arm64
+            target: linux-arm64-gnu
             npm_os: linux
             npm_cpu: arm64
             binary: _build/default/bin/main.exe
