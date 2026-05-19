@@ -155,6 +155,29 @@ try {
   );
   assertEqual(smoke.stderr, "", "conc smoke stderr");
 
+  const concurrentlySmoke = spawnSync(
+    concurrentlyBinPath,
+    ["--no-color", "printf concurrently"],
+    {
+      cwd: projectDir,
+      encoding: "utf8",
+    }
+  );
+  if (concurrentlySmoke.error) {
+    throw concurrentlySmoke.error;
+  }
+  if (concurrentlySmoke.status !== 0) {
+    throw new Error(
+      `concurrently smoke exited ${concurrentlySmoke.status}\nstdout:\n${concurrentlySmoke.stdout}\nstderr:\n${concurrentlySmoke.stderr}`
+    );
+  }
+  assertEqual(
+    concurrentlySmoke.stdout,
+    "[0] concurrently\n[0] printf concurrently exited with code 0\n",
+    "concurrently smoke stdout"
+  );
+  assertEqual(concurrentlySmoke.stderr, "", "concurrently smoke stderr");
+
   const versionSmoke = spawnSync(binPath, ["--version"], {
     cwd: projectDir,
     encoding: "utf8",
