@@ -242,8 +242,9 @@ Currently mirrored deterministic behavior:
 - Published `dist/src/command-parser/expand-wildcard.js`: package script
   wildcard expansion for `npm:<glob>`, `yarn:<glob>`, `pnpm:<glob>`,
   `bun:<glob>`, and `node:<glob>`, Deno task wildcard expansion for
-  `deno:<glob>`, wildcard-generated names, explicit name prefixes, verbatim
-  expansion of spaced script names, npm-compatible dropping of shell
+  `deno:<glob>` including JSONC comments/trailing commas and invalid-config
+  fallback to no tasks, wildcard-generated names, explicit name prefixes,
+  verbatim expansion of spaced script names, npm-compatible dropping of shell
   conjunction suffixes after `&`, unanchored literal runner matches such as
   `printf pre && npm run build-*`, JSON-style escaped package-script keys, and
   invalid-`package.json` fallback to no scripts, and omission filters against
@@ -438,16 +439,17 @@ Known divergences tracked as incomplete work:
    for reset defaults, `red.bold`, `bgRed.white.bold`, `gray.dim`, `hidden`,
    short/full truecolor hex, and invalid-color fallback, shortcut expansion
    across npm/yarn/pnpm/bun/node/deno runners, package-script and Deno-task
-   wildcard expansion, wildcard suffix truncation at `&`, embedded literal
-   runner wildcard matching, escaped script key decoding, invalid package JSON
-   fallback, kill-others exit projection, raw kill output, kill-on-fail behavior,
-   max-process serialization including restart-exhaustion queueing, npm-style
+   wildcard expansion, Deno JSONC trailing-comma and invalid-config fallback,
+   wildcard suffix truncation at `&`, embedded literal runner wildcard matching,
+   escaped script key decoding, invalid package JSON fallback, kill-others exit
+   projection, raw kill output, kill-on-fail behavior, max-process serialization
+   including restart-exhaustion queueing, npm-style
    max-process numeric coercion for zero, invalid, fractional, and negative values,
-  fractional/invalid restart-count coercion, deterministic restart-after and
-  kill-timeout warning/coercion behavior, queued-command suppression after
-  kill-on-success/failure, input forwarding, explicit index and command-name
-  input routing, version and help flag aliases, and default input target
-  routing. The Ubuntu CI build runs this harness after
+   fractional/invalid restart-count coercion, deterministic restart-after and
+   kill-timeout warning/coercion behavior, queued-command suppression after
+   kill-on-success/failure, input forwarding, explicit index and command-name
+   input routing, version and help flag aliases, and default input target
+   routing. The Ubuntu CI build runs this harness after
    `dune build @install @runtest`. Remaining compatibility work: translate more
    upstream behavior tests for duration-order-sensitive
    timing signal cases, broader wildcard and shortcut edge cases, deeper package

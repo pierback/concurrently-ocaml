@@ -6,6 +6,7 @@ let read_file path =
 let strip_jsonc_comments text =
   let length = String.length text in
   let buffer = Buffer.create length in
+  let failed = ref false in
   let rec string_literal index =
     if index = length then ()
     else (
@@ -23,9 +24,12 @@ let strip_jsonc_comments text =
       | '\n' ->
         Buffer.add_char buffer '\n';
         loop (index + 1)
+      | '\r' ->
+        Buffer.add_char buffer '\r';
+        loop (index + 1)
       | _ -> line_comment (index + 1)
   and block_comment index =
-    if index + 1 >= length then ()
+    if index + 1 >= length then failed := true
     else if text.[index] = '*' && text.[index + 1] = '/' then loop (index + 2)
     else block_comment (index + 1)
   and loop index =
@@ -44,7 +48,53 @@ let strip_jsonc_comments text =
         loop (index + 1)
   in
   loop 0;
+  if !failed then None else Some (Buffer.contents buffer)
+
+let strip_jsonc_trailing_commas text =
+  let length = String.length text in
+  let buffer = Buffer.create length in
+  let rec next_non_whitespace index =
+    if index = length then index
+    else
+      match text.[index] with
+      | ' ' | '\t' | '\n' | '\r' -> next_non_whitespace (index + 1)
+      | _ -> index
+  in
+  let rec string_literal index =
+    if index = length then ()
+    else (
+      Buffer.add_char buffer text.[index];
+      match text.[index] with
+      | '\\' when index + 1 < length ->
+          Buffer.add_char buffer text.[index + 1];
+          string_literal (index + 2)
+      | '"' -> loop (index + 1)
+      | _ -> string_literal (index + 1))
+  and loop index =
+    if index = length then ()
+    else
+      match text.[index] with
+      | '"' ->
+          Buffer.add_char buffer '"';
+          string_literal (index + 1)
+      | ',' ->
+          let next = next_non_whitespace (index + 1) in
+          if next < length && (text.[next] = '}' || text.[next] = ']') then
+            loop (index + 1)
+          else (
+            Buffer.add_char buffer ',';
+            loop (index + 1))
+      | character ->
+          Buffer.add_char buffer character;
+          loop (index + 1)
+  in
+  loop 0;
   Buffer.contents buffer
+
+let normalize_jsonc text =
+  match strip_jsonc_comments text with
+  | None -> None
+  | Some text -> Some (strip_jsonc_trailing_commas text)
 
 let skip_whitespace text index =
   let length = String.length text in
@@ -360,9 +410,10 @@ let find_top_level_object_field text field_name =
   let root_start = skip_whitespace text 0 in
   if root_start >= length || text.[root_start] <> '{' then None
   else
-    let rec loop index =
+    let rec loop index found =
       let index = skip_whitespace text index in
-      if index >= length || text.[index] = '}' then None
+      if index >= length then None
+      else if text.[index] = '}' then found
       else if text.[index] <> '"' then None
       else
         match decode_json_string text index with
@@ -372,20 +423,22 @@ let find_top_level_object_field text field_name =
           if after_key >= length || text.[after_key] <> ':' then None
           else
           let value_start = skip_whitespace text (after_key + 1) in
-          if String.equal key field_name then
-            if value_start < length && text.[value_start] = '{' then
-              Some value_start
-            else None
-          else
-            let after_value = skip_json_value text value_start in
-            let next_index =
-              if after_value < length && text.[after_value] = ',' then
-                after_value + 1
-              else after_value
-            in
-            loop next_index
+          let after_value = skip_json_value text value_start in
+          let next_index =
+            if after_value < length && text.[after_value] = ',' then
+              after_value + 1
+            else after_value
+          in
+          let found =
+            if String.equal key field_name then
+              if value_start < length && text.[value_start] = '{' then
+                Some value_start
+              else None
+            else found
+          in
+          loop next_index found
     in
-    loop (root_start + 1)
+    loop (root_start + 1) None
 
 let object_keys text object_start =
   let length = String.length text in
@@ -433,4 +486,8 @@ let deno_tasks ~cwd =
   in
   match deno_text with
   | None -> []
-  | Some text -> object_field_keys "tasks" (strip_jsonc_comments text)
+  | Some text ->
+      (match normalize_jsonc text with
+       | None -> []
+       | Some text ->
+           if valid_json text then object_field_keys "tasks" text else [])

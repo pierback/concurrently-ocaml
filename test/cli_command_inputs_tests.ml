@@ -207,6 +207,124 @@ let test_wildcard_ignores_invalid_package_json () =
   cleanup ();
   assert (inputs = [])
 
+let test_deno_wildcard_accepts_jsonc_comments_and_trailing_commas () =
+  let cwd =
+    Filename.concat (Filename.get_temp_dir_name ())
+      "concurrently-ocaml-deno-jsonc-test"
+  in
+  let deno_jsonc = Filename.concat cwd "deno.jsonc" in
+  let cleanup () =
+    match Sys.remove deno_jsonc with
+    | () -> Sys.rmdir cwd
+    | exception _ -> ()
+  in
+  cleanup ();
+  Unix.mkdir cwd 0o700;
+  Out_channel.with_open_text deno_jsonc (fun channel ->
+    output_string channel
+      {|{// comment
+"tasks":{"task-api":"printf api",},}
+|});
+  let inputs =
+    expand ~cwd:(Some cwd) ~passthrough_arguments:None
+      ~command_texts:[ "deno:task-*" ] ~names:None
+  in
+  cleanup ();
+  assert (command_texts inputs = [ "deno task task-api" ]);
+  assert (command_names inputs = [ "api" ])
+
+let test_deno_wildcard_accepts_jsonc_carriage_return_line_comment () =
+  let cwd =
+    Filename.concat (Filename.get_temp_dir_name ())
+      "concurrently-ocaml-deno-jsonc-cr-test"
+  in
+  let deno_jsonc = Filename.concat cwd "deno.jsonc" in
+  let cleanup () =
+    match Sys.remove deno_jsonc with
+    | () -> Sys.rmdir cwd
+    | exception _ -> ()
+  in
+  cleanup ();
+  Unix.mkdir cwd 0o700;
+  Out_channel.with_open_text deno_jsonc (fun channel ->
+    output_string channel
+      ("{// comment\r" ^ {|"tasks":{"task-api":"printf api"}}|}));
+  let inputs =
+    expand ~cwd:(Some cwd) ~passthrough_arguments:None
+      ~command_texts:[ "deno:task-*" ] ~names:None
+  in
+  cleanup ();
+  assert (command_texts inputs = [ "deno task task-api" ]);
+  assert (command_names inputs = [ "api" ])
+
+let test_deno_wildcard_ignores_invalid_jsonc () =
+  let cwd =
+    Filename.concat (Filename.get_temp_dir_name ())
+      "concurrently-ocaml-invalid-deno-jsonc-test"
+  in
+  let deno_json = Filename.concat cwd "deno.json" in
+  let cleanup () =
+    match Sys.remove deno_json with
+    | () -> Sys.rmdir cwd
+    | exception _ -> ()
+  in
+  cleanup ();
+  Unix.mkdir cwd 0o700;
+  Out_channel.with_open_text deno_json (fun channel ->
+    output_string channel {|{"tasks":{"task-api":"printf api"}|});
+  let inputs =
+    expand ~cwd:(Some cwd) ~passthrough_arguments:None
+      ~command_texts:[ "deno:task-*" ] ~names:None
+  in
+  cleanup ();
+  assert (inputs = [])
+
+let test_deno_wildcard_ignores_unterminated_jsonc_block_comment () =
+  let cwd =
+    Filename.concat (Filename.get_temp_dir_name ())
+      "concurrently-ocaml-unterminated-deno-jsonc-test"
+  in
+  let deno_jsonc = Filename.concat cwd "deno.jsonc" in
+  let cleanup () =
+    match Sys.remove deno_jsonc with
+    | () -> Sys.rmdir cwd
+    | exception _ -> ()
+  in
+  cleanup ();
+  Unix.mkdir cwd 0o700;
+  Out_channel.with_open_text deno_jsonc (fun channel ->
+    output_string channel {|{"tasks":{"task-api":"printf api"}}/*|});
+  let inputs =
+    expand ~cwd:(Some cwd) ~passthrough_arguments:None
+      ~command_texts:[ "deno:task-*" ] ~names:None
+  in
+  cleanup ();
+  assert (inputs = [])
+
+let test_deno_wildcard_uses_last_duplicate_tasks_field () =
+  let cwd =
+    Filename.concat (Filename.get_temp_dir_name ())
+      "concurrently-ocaml-duplicate-deno-tasks-test"
+  in
+  let deno_json = Filename.concat cwd "deno.json" in
+  let cleanup () =
+    match Sys.remove deno_json with
+    | () -> Sys.rmdir cwd
+    | exception _ -> ()
+  in
+  cleanup ();
+  Unix.mkdir cwd 0o700;
+  Out_channel.with_open_text deno_json (fun channel ->
+    output_string channel
+      {|{"tasks":{"task-old":"printf old"},"tasks":{"task-new":"printf new"}}|});
+  let inputs =
+    expand ~cwd:(Some cwd) ~passthrough_arguments:None
+      ~command_texts:[ "deno:task-*" ] ~names:None
+  in
+  cleanup ();
+  assert (command_texts inputs = [ "deno task task-new" ]);
+  assert (command_names inputs = [ "new" ])
+
 let test_invalid_wildcard_omission_is_error () =
   let cwd =
     Filename.concat (Filename.get_temp_dir_name ())
@@ -241,4 +359,9 @@ let () =
   test_wildcard_finds_embedded_runner_like_upstream ();
   test_wildcard_decodes_json_unicode_script_keys ();
   test_wildcard_ignores_invalid_package_json ();
+  test_deno_wildcard_accepts_jsonc_comments_and_trailing_commas ();
+  test_deno_wildcard_accepts_jsonc_carriage_return_line_comment ();
+  test_deno_wildcard_ignores_invalid_jsonc ();
+  test_deno_wildcard_ignores_unterminated_jsonc_block_comment ();
+  test_deno_wildcard_uses_last_duplicate_tasks_field ();
   test_invalid_wildcard_omission_is_error ()
