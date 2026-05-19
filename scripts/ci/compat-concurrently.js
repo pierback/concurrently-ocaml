@@ -37,6 +37,7 @@ const forceSpacedZeroColorEnv = { NO_COLOR: null, FORCE_COLOR: " 0" };
 const forceNanColorEnv = { NO_COLOR: null, FORCE_COLOR: "NaN" };
 const shortcutFixture = createShortcutFixture();
 const escapedScriptFixture = createEscapedScriptFixture();
+const literalWildcardFixture = createLiteralWildcardFixture();
 const invalidPackageFixture = createInvalidPackageFixture();
 const invalidDenoFixture = createInvalidDenoFixture();
 const killTimeoutFixture = createKillTimeoutFixture();
@@ -608,6 +609,18 @@ const cases = [
     env: forceBasicColorEnv,
   },
   {
+    name: "colored grey alias prefix",
+    upstream: "chalk gray/grey alias",
+    args: ["-c", "grey", "printf one"],
+    env: forceBasicColorEnv,
+  },
+  {
+    name: "colored modifier chain prefix",
+    upstream: "dist/src/logger.js getChalkPath italic.inverse.strikethrough",
+    args: ["-c", "italic.inverse.strikethrough", "printf one"],
+    env: forceTruecolorEnv,
+  },
+  {
     name: "colored background foreground modifier prefix",
     upstream: "dist/src/logger.js getChalkPath bgRed.white.bold",
     args: ["-c", "bgRed.white.bold", "printf one"],
@@ -948,6 +961,13 @@ const cases = [
     args: ["--no-color", "-g", "npm:build-*"],
   },
   {
+    name: "npm wildcard treats regexp special chars literally",
+    upstream: "dist/src/command-parser/expand-wildcard.js escapeRegExp wildcard pattern",
+    cwd: literalWildcardFixture.cwd,
+    args: ["--no-color", "-g", "npm:build.*"],
+    normalizeStdout: normalizeNpmLogPaths,
+  },
+  {
     name: "npm wildcard ignores invalid package json",
     upstream: "dist/src/command-parser/expand-wildcard.js JSON.parse failure fallback",
     cwd: invalidPackageFixture.cwd,
@@ -1152,6 +1172,19 @@ const cases = [
     name: "restart after blank coerces to zero",
     upstream: "dist/src/flow-control/restart-process.js Number('') delay coercion",
     args: ["--no-color", "--restart-tries", "1", "--restart-after", "", "exit 1"],
+  },
+  {
+    name: "restart after exponential retries once",
+    upstream: "dist/src/flow-control/restart-process.js exponentialDelay",
+    args: [
+      "--no-color",
+      "--restart-tries",
+      "1",
+      "--restart-after",
+      "exponential",
+      "exit 1",
+    ],
+    timeoutMs: 7000,
   },
   {
     name: "infinite restart tries retry until success",
@@ -1683,6 +1716,7 @@ const cases = [
   } finally {
     shortcutFixture.cleanup();
     escapedScriptFixture.cleanup();
+    literalWildcardFixture.cleanup();
     invalidPackageFixture.cleanup();
     invalidDenoFixture.cleanup();
     killTimeoutFixture.cleanup();
@@ -1957,6 +1991,29 @@ function createEscapedScriptFixture() {
   writeFileSync(
     resolve(cwd, "package.json"),
     String.raw`{"scripts":{"build-\u0061":"printf a","build-b":"printf b"}}`
+  );
+  return {
+    cwd,
+    cleanup() {
+      rmSync(cwd, { force: true, recursive: true });
+    },
+  };
+}
+
+function createLiteralWildcardFixture() {
+  const cwd = mkdtempSync(resolve(tmpdir(), "concurrently-ocaml-literal-wildcard-"));
+  writeFileSync(
+    resolve(cwd, "package.json"),
+    JSON.stringify(
+      {
+        scripts: {
+          "build.js": "printf js",
+          buildxjs: "printf x",
+        },
+      },
+      null,
+      2
+    )
   );
   return {
     cwd,
