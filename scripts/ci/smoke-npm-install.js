@@ -10,6 +10,7 @@ const {
   statSync,
   writeFileSync,
 } = require("node:fs");
+const { createHash } = require("node:crypto");
 const { tmpdir } = require("node:os");
 const { basename, join, resolve } = require("node:path");
 const { spawnSync } = require("node:child_process");
@@ -42,6 +43,7 @@ const nativeBinaryPath = join(
   "bin",
   nativeBinaryName
 );
+const checksumPath = join(platformPackageDir, "SHA256SUMS");
 
 assertEqual(process.platform, platform, "smoke host platform");
 assertEqual(process.arch, arch, "smoke host architecture");
@@ -53,7 +55,9 @@ assertEqual(platformPackage.name, platformPackageName, "platform package name");
 assertEqual(platformPackage.version, rootPackage.version, "platform package version");
 assertArrayEqual(platformPackage.os, [platform], "platform package os");
 assertArrayEqual(platformPackage.cpu, [arch], "platform package cpu");
+assertArrayEqual(platformPackage.files, ["bin/", "SHA256SUMS"], "platform package files");
 assertExecutable(nativeBinaryPath);
+assertChecksum(checksumPath, `bin/${nativeBinaryName}`, nativeBinaryPath);
 
 const tempDir = mkdtempSync(join(tmpdir(), `concurrently-ml-${target}-`));
 const npmCacheDir = join(tempDir, "npm-cache");
@@ -104,9 +108,15 @@ try {
     "bin",
     nativeBinaryName
   );
+  const installedChecksumPath = join(installedPlatformDir, "SHA256SUMS");
   assertFile(binPath);
   assertFile(concurrentlyBinPath);
   assertFile(installedPlatformBinaryPath);
+  assertChecksum(
+    installedChecksumPath,
+    `bin/${nativeBinaryName}`,
+    installedPlatformBinaryPath
+  );
   assertNoFile(join(installedRootDir, "index.js"));
   assertNoFile(join(installedRootDir, "index.mjs"));
   assertNoFile(join(installedRootDir, "index.d.ts"));
@@ -224,6 +234,17 @@ function assertExecutable(path) {
   if ((mode & 0o111) === 0) {
     throw new Error(`expected executable file mode: ${path}`);
   }
+}
+
+function assertChecksum(checksumPath, expectedRelativePath, binaryPath) {
+  assertFile(checksumPath);
+  const expected = `${sha256File(binaryPath)}  ${expectedRelativePath}\n`;
+  const actual = readFileSync(checksumPath, "utf8");
+  assertEqual(actual, expected, `${checksumPath} contents`);
+}
+
+function sha256File(path) {
+  return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
 
 function assertEqual(actual, expected, label) {

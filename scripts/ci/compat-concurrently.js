@@ -21,6 +21,8 @@ const firstInputEchoCommand =
   "node -e \"process.stdin.once('data',d=>{process.stdout.write('first:'+d);process.exit(0)})\"";
 const secondInputEchoCommand =
   "node -e \"process.stdin.once('data',d=>{process.stdout.write('second:'+d);process.exit(0)})\"";
+const delayedOneCommand =
+  "node -e \"setTimeout(()=>process.stdout.write('one'),1200)\"";
 const forceNoColorEnv = { NO_COLOR: null, FORCE_COLOR: "0" };
 const forceFalseColorEnv = { NO_COLOR: null, FORCE_COLOR: "false" };
 const forceBasicColorEnv = { NO_COLOR: null, FORCE_COLOR: "1" };
@@ -35,6 +37,8 @@ const invalidPackageFixture = createInvalidPackageFixture();
 const invalidDenoFixture = createInvalidDenoFixture();
 const killTimeoutFixture = createKillTimeoutFixture();
 const restartFixture = createRestartFixture();
+const inputReadyDelayMs = 750;
+const secondInputReadyDelayMs = 850;
 
 if (!existsSync(localBinary)) {
   throw new Error(`missing local binary: ${localBinary}; run npm run compile first`);
@@ -1468,15 +1472,15 @@ const cases = [
     upstream: "bin/concurrently.spec.ts --handle-input default target",
     args: ["--no-color", "-i", inputEchoCommand],
     input: "stop\n",
-    inputDelayMs: 250,
+    inputDelayMs: inputReadyDelayMs,
   },
   {
     name: "handle input routes by command index",
     upstream: "bin/concurrently.spec.ts --handle-input specified process",
     args: ["--no-color", "-g", "-i", firstInputEchoCommand, secondInputEchoCommand],
     inputWrites: [
-      { delayMs: 250, input: "1:two\n" },
-      { delayMs: 300, input: "0:one\n" },
+      { delayMs: inputReadyDelayMs, input: "1:two\n" },
+      { delayMs: secondInputReadyDelayMs, input: "0:one\n" },
     ],
   },
   {
@@ -1492,8 +1496,8 @@ const cases = [
       secondInputEchoCommand,
     ],
     inputWrites: [
-      { delayMs: 250, input: "worker:two\n" },
-      { delayMs: 300, input: "api:one\n" },
+      { delayMs: inputReadyDelayMs, input: "worker:two\n" },
+      { delayMs: secondInputReadyDelayMs, input: "api:one\n" },
     ],
   },
   {
@@ -1509,8 +1513,8 @@ const cases = [
       secondInputEchoCommand,
     ],
     inputWrites: [
-      { delayMs: 250, input: "two\n" },
-      { delayMs: 300, input: "0:one\n" },
+      { delayMs: inputReadyDelayMs, input: "two\n" },
+      { delayMs: secondInputReadyDelayMs, input: "0:one\n" },
     ],
   },
   {
@@ -1518,7 +1522,7 @@ const cases = [
     upstream: "dist/bin/concurrently.js defaultInputTarget Number coercion",
     args: ["--no-color", "-i", "--default-input-target", "", inputEchoCommand],
     input: "hello\n",
-    inputDelayMs: 250,
+    inputDelayMs: inputReadyDelayMs,
   },
   {
     name: "env handle input and default target route input",
@@ -1529,8 +1533,8 @@ const cases = [
       CONCURRENTLY_DEFAULT_INPUT_TARGET: "1",
     },
     inputWrites: [
-      { delayMs: 250, input: "two\n" },
-      { delayMs: 300, input: "0:one\n" },
+      { delayMs: inputReadyDelayMs, input: "two\n" },
+      { delayMs: secondInputReadyDelayMs, input: "0:one\n" },
     ],
   },
   {
@@ -1552,10 +1556,10 @@ const cases = [
       "-i",
       "--default-input-target",
       "missing",
-      "printf one",
+      delayedOneCommand,
     ],
     input: "hello\n",
-    inputDelayMs: 250,
+    inputDelayMs: inputReadyDelayMs,
   },
 ];
 
