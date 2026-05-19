@@ -521,8 +521,9 @@ Known divergences tracked as incomplete work:
    platform package into a clean npm project, asserts the lean root package
    surface, asserts that the installed launcher resolves the optional platform
    package's native binary, verifies the platform package checksum manifest,
-   executes `conc`/`concurrently`, and publishes packages on version tags with
-   npm provenance. Windows packaging is withheld until a Windows backend exists.
+   executes both `conc` and `concurrently` through the installed npm bin shims,
+   and publishes packages on version tags with npm provenance. Windows
+   packaging is withheld until a Windows backend exists.
    Remaining distribution work: add musl/static packages only when a real musl
    build target exists, and implement then package Windows runner behavior.
 
