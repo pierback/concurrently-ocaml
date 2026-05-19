@@ -98,6 +98,16 @@ let expand_shortcut command_input =
 let command_prefixes =
   [ "npm run"; "yarn run"; "pnpm run"; "bun run"; "node --run"; "deno task" ]
 
+let wildcard_args command_text script_end =
+  let command_length = String.length command_text in
+  let args_end =
+    match String.index_from_opt command_text script_end '&' with
+    | None -> command_length
+    | Some index -> index
+  in
+  assert (args_end >= script_end);
+  String.sub command_text script_end (args_end - script_end)
+
 let command_script_and_args command_text command =
   let prefix = command ^ " " in
   let prefix_length = String.length prefix in
@@ -115,10 +125,7 @@ let command_script_and_args command_text command =
     let script_glob =
       String.sub command_text script_start (script_end - script_start)
     in
-    let args =
-      String.sub command_text script_end
-        (String.length command_text - script_end)
-    in
+    let args = wildcard_args command_text script_end in
     Some (command, script_glob, args)
 
 let wildcard_command command_text =
