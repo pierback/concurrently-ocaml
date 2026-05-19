@@ -4,7 +4,7 @@ module Runner_input_reader = Concurrentlyocaml.Runner_input_reader
 
 let ok = function Ok value -> value | Error _ -> assert false
 
-let test_routes_lines_and_final_partial_input () =
+let test_routes_read_chunks_without_line_splitting () =
   Eio_main.run @@ fun _env ->
   let commands =
     [
@@ -32,13 +32,8 @@ let test_routes_lines_and_final_partial_input () =
         {
           Input_router.target_index = 0;
           target_label = "api";
-          payload = "reload\n";
-        };
-        {
-          Input_router.target_index = 1;
-          target_label = "worker";
-          payload = "plain";
+          payload = "reload\nplain";
         };
       ])
 
-let () = test_routes_lines_and_final_partial_input ()
+let () = test_routes_read_chunks_without_line_splitting ()
