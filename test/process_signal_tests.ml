@@ -22,6 +22,9 @@ let test_known_signal_numbers_and_labels () =
   assert (
     Process_signal.number (Run_policy.Named_signal "unsupported")
     = Error (`Unsupported_kill_signal "unsupported"));
+  assert (
+    Process_signal.unknown_signal_error_message "SIGFOO"
+    = "TypeError [ERR_UNKNOWN_SIGNAL]: Unknown signal: SIGFOO");
   assert (Process_signal.kill_label Run_policy.Sigterm = "SIGTERM");
   assert (Process_signal.kill_label (Run_policy.Named_signal "term") = "term")
 

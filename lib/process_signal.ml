@@ -67,6 +67,9 @@ let number = function
         | Some supported_signal -> Ok supported_signal.signal
         | None -> Error (`Unsupported_kill_signal signal))
 
+let unknown_signal_error_message signal =
+  Printf.sprintf "TypeError [ERR_UNKNOWN_SIGNAL]: Unknown signal: %s" signal
+
 let kill_label = function
   | Run_policy.Sigterm -> "SIGTERM"
   | Run_policy.Sigkill -> "SIGKILL"

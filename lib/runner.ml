@@ -1130,5 +1130,5 @@ let error_message = function
         (output_event_error_message error)
   | `Run_result_error error -> run_result_error_message error
   | `Unsupported_kill_signal signal ->
-      Printf.sprintf "unsupported kill signal for runner: %s" signal
+      Process_signal.unknown_signal_error_message signal
   | `Unexpected_runner_error message -> message
