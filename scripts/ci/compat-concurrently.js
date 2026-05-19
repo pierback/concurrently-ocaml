@@ -248,6 +248,31 @@ const cases = [
     args: ["--no-color", "--raw=yes", "printf one"],
   },
   {
+    name: "separate false raw value disables raw",
+    upstream: "yargs boolean separate value coercion",
+    args: ["--no-color", "--raw", "false", "printf one"],
+  },
+  {
+    name: "separate true raw value enables raw",
+    upstream: "yargs boolean separate value coercion",
+    args: ["--no-color", "--raw", "true", "printf one"],
+  },
+  {
+    name: "separate false help value does not request help",
+    upstream: "yargs boolean separate value coercion for built-in aliases",
+    args: ["--no-color", "--help", "false", "printf one"],
+  },
+  {
+    name: "separate false after no color remains command",
+    upstream: "yargs no-color separate value parsing",
+    args: ["--no-color", "false"],
+  },
+  {
+    name: "separate false passthrough value disables passthrough",
+    upstream: "yargs boolean separate value coercion before passthrough extraction",
+    args: ["--no-color", "-P", "false", "printf '{1}'", "--", "printf arg"],
+  },
+  {
     name: "hidden command suppresses close notification",
     upstream: "bin/concurrently.spec.ts --hide by index",
     args: ["--no-color", "--hide", "0", "printf hidden"],

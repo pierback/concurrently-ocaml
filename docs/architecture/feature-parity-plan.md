@@ -206,12 +206,14 @@ Currently mirrored deterministic behavior:
 - Published `dist/bin/concurrently.js` and `docs/cli/configuration.md`:
   `CONCURRENTLY_*` environment defaults for deterministic flags and aliases,
   including explicit CLI boolean false overriding env true, non-true inline
-  boolean false coercion, and `--no-flag` negation with last-value-wins
-  behavior, known short boolean alias groups such as `-kg` and `-rg`, mixed
-  unknown/known short-option groups such as `-xg`, `-xr`, and `-rx`, and compact
-  numeric short values such as `-m1` and `-l2`, and short inline string values
-  such as `-p=raw` and `-n=api`, while compact string forms such as `-pcommand`
-  and `-napi,web` do not bind string option values; compact short CLI values
+  boolean false coercion, separate lowercase `true`/`false` boolean value
+  coercion for positive flags, and `--no-flag` negation with last-value-wins
+  behavior while negated flags leave following words as commands, known short
+  boolean alias groups such as `-kg` and `-rg`, mixed unknown/known
+  short-option groups such as `-xg`, `-xr`, and `-rx`, and compact numeric
+  short values such as `-m1` and `-l2`, and short inline string values such as
+  `-p=raw` and `-n=api`, while compact string forms such as `-pcommand` and
+  `-napi,web` do not bind string option values; compact short CLI values
   override `CONCURRENTLY_M`/`CONCURRENTLY_L` defaults, full-name
   `CONCURRENTLY_MAX_PROCESSES` scheduling defaults, full-name env defaults
   winning over alias env defaults when both are present, and input-routing

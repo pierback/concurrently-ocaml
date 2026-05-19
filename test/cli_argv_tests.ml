@@ -10,6 +10,13 @@ let test_requests_help_before_separator () =
   assert (
     not
       (Cli_argv.requests_help_before_separator
+         [| "conc"; "-h"; "false"; "printf ok" |]));
+  assert (
+    Cli_argv.requests_help_before_separator
+      [| "conc"; "-h"; "true"; "printf ok" |]);
+  assert (
+    not
+      (Cli_argv.requests_help_before_separator
          [| "conc"; "--prefix"; "-h"; "echo ok" |]));
   assert (not (Cli_argv.requests_help_before_separator [| "conc"; "--"; "-h" |]))
 
@@ -25,6 +32,8 @@ let test_requests_default_help () =
     Cli_argv.requests_default_help
       [| "conc"; "--no-color"; "--success"; "missing" |]);
   assert (not (Cli_argv.requests_default_help [| "conc"; "--version" |]));
+  let normalized = Cli_argv.normalize [| "conc"; "--version"; "false" |] in
+  assert (Cli_argv.requests_default_help normalized.argv);
   assert (not (Cli_argv.requests_default_help [| "conc"; "printf ok" |]));
   assert (not (Cli_argv.requests_default_help [| "conc"; "--"; "--help" |]))
 
@@ -245,6 +254,58 @@ let test_negated_boolean_options_use_last_value () =
   in
   assert_array_equal [| "conc"; "--raw"; "printf one" |] normalized.argv
 
+let test_positive_boolean_options_consume_separate_true_false_values () =
+  let normalized =
+    Cli_argv.normalize
+      [| "conc"; "--raw"; "false"; "--group"; "true"; "printf one" |]
+  in
+  assert_array_equal [| "conc"; "--group"; "printf one" |] normalized.argv;
+  let normalized =
+    Cli_argv.normalize
+      [| "conc"; "--raw"; "true"; "--group"; "false"; "printf one" |]
+  in
+  assert_array_equal [| "conc"; "--raw"; "printf one" |] normalized.argv;
+  let normalized =
+    Cli_argv.normalize [| "conc"; "-P"; "false"; "printf {1}"; "--"; "arg" |]
+  in
+  assert_array_equal
+    [| "conc"; "printf {1}"; "--"; "arg" |]
+    normalized.argv;
+  assert (normalized.passthrough_arguments = []);
+  let normalized =
+    Cli_argv.normalize [| "conc"; "-P"; "true"; "printf {1}"; "--"; "arg" |]
+  in
+  assert_array_equal
+    [| "conc"; "--passthrough-arguments"; "printf {1}" |]
+    normalized.argv;
+  assert (normalized.passthrough_arguments = [ "arg" ])
+
+let test_no_color_preserves_separate_true_false_commands () =
+  let normalized =
+    Cli_argv.normalize [| "conc"; "--no-color"; "false"; "printf one" |]
+  in
+  assert_array_equal
+    [| "conc"; "--no-color"; "false"; "printf one" |]
+    normalized.argv;
+  let normalized =
+    Cli_argv.normalize [| "conc"; "--no-color"; "true"; "printf one" |]
+  in
+  assert_array_equal
+    [| "conc"; "--no-color"; "true"; "printf one" |]
+    normalized.argv
+
+let test_negated_boolean_options_do_not_consume_separate_true_false_values () =
+  let normalized =
+    Cli_argv.normalize
+      [| "conc"; "--raw"; "--no-raw"; "false"; "printf one" |]
+  in
+  assert_array_equal [| "conc"; "false"; "printf one" |] normalized.argv;
+  let normalized =
+    Cli_argv.normalize
+      [| "conc"; "--group"; "--no-group"; "true"; "printf one" |]
+  in
+  assert_array_equal [| "conc"; "true"; "printf one" |] normalized.argv
+
 let test_help_false_does_not_request_help () =
   assert (
     not
@@ -252,6 +313,18 @@ let test_help_false_does_not_request_help () =
          [| "conc"; "--help=false"; "printf one" |]));
   let normalized =
     Cli_argv.normalize [| "conc"; "--help=false"; "printf one" |]
+  in
+  assert_array_equal [| "conc"; "printf one" |] normalized.argv;
+  let normalized =
+    Cli_argv.normalize [| "conc"; "--help"; "false"; "printf one" |]
+  in
+  assert_array_equal [| "conc"; "printf one" |] normalized.argv;
+  let normalized =
+    Cli_argv.normalize [| "conc"; "-h"; "false"; "printf one" |]
+  in
+  assert_array_equal [| "conc"; "printf one" |] normalized.argv;
+  let normalized =
+    Cli_argv.normalize [| "conc"; "--version"; "false"; "printf one" |]
   in
   assert_array_equal [| "conc"; "printf one" |] normalized.argv
 
@@ -309,6 +382,9 @@ let () =
   test_preserves_single_dash_string_option_values ();
   test_cli_options_override_env_defaults ();
   test_negated_boolean_options_use_last_value ();
+  test_positive_boolean_options_consume_separate_true_false_values ();
+  test_no_color_preserves_separate_true_false_commands ();
+  test_negated_boolean_options_do_not_consume_separate_true_false_values ();
   test_help_false_does_not_request_help ();
   test_short_boolean_groups_before_attached_values_preserve_commands ();
   test_compact_short_value_options_match_yargs_numeric_rules ()
