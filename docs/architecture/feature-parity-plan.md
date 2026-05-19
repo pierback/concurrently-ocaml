@@ -64,7 +64,8 @@ signal, process-tree teardown, and pipe implementations.
   macOS x64/arm64. Each native package job now packs the platform package and
   root package into a clean npm project, verifies that the root tarball did not
   leak OCaml source/build/test files, asserts that the installed launcher
-  resolves the optional platform package's native binary, and runs
+  resolves the optional platform package's native binary, verifies the platform
+  package `SHA256SUMS` manifest against the installed native binary, and runs
   `conc`/`concurrently` from that install. Windows packaging is deliberately
   withheld until a Windows-native runner backend exists.
 
@@ -497,16 +498,17 @@ Known divergences tracked as incomplete work:
    root package is restricted to the JS launcher, package metadata, README, and
    LICENSE, so users do not receive OCaml source, tests, Dune files, local
    development scripts, or a JavaScript programmatic API.
+   Each platform package now ships a `SHA256SUMS` manifest for the native
+   binary, and the npm install smoke test verifies the manifest before running
+   the installed CLI.
    GitHub Actions builds platform packages, smoke-installs the packed root and
    platform package into a clean npm project, asserts the lean root package
    surface, asserts that the installed launcher resolves the optional platform
-   package's native binary, executes `conc`/`concurrently`, and publishes
-   packages on version tags. Windows packaging is withheld until a Windows
-   backend exists.
-   Remaining distribution work: add checksums or
-   SLSA/provenance policy beyond npm provenance, decide whether Linux
-   musl/static builds are required, and implement then package Windows runner
-   behavior.
+   package's native binary, verifies the platform package checksum manifest,
+   executes `conc`/`concurrently`, and publishes packages on version tags with
+   npm provenance. Windows packaging is withheld until a Windows backend exists.
+   Remaining distribution work: decide whether Linux musl/static builds are
+   required, and implement then package Windows runner behavior.
 
 10. Platform backend split
 

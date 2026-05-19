@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 const { copyFileSync, chmodSync, mkdirSync, readFileSync, writeFileSync } = require("node:fs");
+const { createHash } = require("node:crypto");
 const { basename, join, resolve } = require("node:path");
 
 const args = new Map();
@@ -22,10 +23,15 @@ const binaryName = platform === "win32" ? "concurrently-ml.exe" : "concurrently-
 const packageName = `${rootPackage.name}-${target}`;
 const packageDir = resolve("dist", "npm", packageName.replace("/", "__"));
 const binDir = join(packageDir, "bin");
+const packagedBinary = join(binDir, binaryName);
 
 mkdirSync(binDir, { recursive: true });
-copyFileSync(binary, join(binDir, binaryName));
-chmodSync(join(binDir, binaryName), 0o755);
+copyFileSync(binary, packagedBinary);
+chmodSync(packagedBinary, 0o755);
+writeFileSync(
+  join(packageDir, "SHA256SUMS"),
+  `${sha256File(packagedBinary)}  bin/${binaryName}\n`
+);
 
 writeFileSync(
   join(packageDir, "package.json"),
@@ -37,7 +43,7 @@ writeFileSync(
       license: rootPackage.license,
       os: [platform],
       cpu: [arch],
-      files: ["bin/"],
+      files: ["bin/", "SHA256SUMS"],
     },
     null,
     2
@@ -45,6 +51,10 @@ writeFileSync(
 );
 
 console.log(`${packageName} -> ${join(packageDir, "bin", basename(binaryName))}`);
+
+function sha256File(path) {
+  return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
 
 function required(key) {
   const value = args.get(key);
