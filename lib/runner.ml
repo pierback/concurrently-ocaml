@@ -25,7 +25,7 @@ let impossible_output_event context error =
 let impossible_command_result context =
   invalid_arg (Printf.sprintf "Runner.%s: skipped command result" context)
 
-let with_forwarded_termination_signals ~cleanup run =
+let with_parent_termination_signals ~cleanup run =
   let previous_handlers = ref [] in
   let received_signal = ref None in
   let restore_handlers () =
@@ -354,9 +354,9 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
     let signal_running_process_groups signal =
       !running_processes
       |> List.iter (fun running_process ->
-          ignore (running_process.process.signal signal))
+             ignore (running_process.process.signal signal))
     in
-    let signal_process_after_latched_termination command_index process signal =
+    let signal_process_after_parent_termination command_index process signal =
       match process.Runner_backend.signal signal with
       | Ok true ->
           Eio.Mutex.use_rw ~protect:true state_mutex (fun () ->
@@ -369,27 +369,27 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
             record_failure (`Unexpected_runner_error message)
           else ()
     in
-	    let force_kill_after_timeout ~sw ~initial_signal command_indexes =
-	      match (command_indexes, Run_policy.kill_timeout_ms policy) with
-	      | [], _ | _, None | _, Some 0 -> ()
-	      | _, Some timeout_ms when initial_signal = Sys.sigkill -> ()
-	      | _, Some timeout_ms ->
-	          Option.iter (emit_once kill_timeout_warning_emitted)
-	            (Run_policy.kill_timeout_warning policy);
-	          Eio.Fiber.fork_daemon ~sw (fun () ->
-	              (match sleep (float_of_int (max 0 timeout_ms) /. 1000.0) with
+    let force_kill_after_timeout ~sw ~initial_signal command_indexes =
+      match (command_indexes, Run_policy.kill_timeout_ms policy) with
+      | [], _ | _, None | _, Some 0 -> ()
+      | _, Some timeout_ms when initial_signal = Sys.sigkill -> ()
+      | _, Some timeout_ms ->
+          Option.iter (emit_once kill_timeout_warning_emitted)
+            (Run_policy.kill_timeout_warning policy);
+          Eio.Fiber.fork_daemon ~sw (fun () ->
+              (match sleep (float_of_int (max 0 timeout_ms) /. 1000.0) with
               | () ->
-	                  let processes_to_kill =
-	                    Eio.Mutex.use_ro state_mutex (fun () ->
-	                        let exited_command_indexes = !exited_command_indexes in
-	                        !running_processes
-	                        |> List.filter (fun running_process ->
-	                            List.mem running_process.command_index
-	                              command_indexes
-	                            && not
-	                                 (List.mem running_process.command_index
-	                                    exited_command_indexes)))
-	                  in
+                  let processes_to_kill =
+                    Eio.Mutex.use_ro state_mutex (fun () ->
+                        let exited_command_indexes = !exited_command_indexes in
+                        !running_processes
+                        |> List.filter (fun running_process ->
+                               List.mem running_process.command_index
+                                 command_indexes
+                               && not
+                                    (List.mem running_process.command_index
+                                       exited_command_indexes)))
+                  in
                   if processes_to_kill <> [] then
                     Output_event.status_message ~after_command:None
                       ~stream:Output_event.Stdout
@@ -399,30 +399,30 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
                            (List.length processes_to_kill))
                     |> emit_best_effort;
                   List.iter
-	                    (fun running_process ->
-	                      match
-	                        running_process.process.Runner_backend.signal
-	                          Sys.sigkill
-	                      with
-	                      | Ok true ->
-	                          Eio.Mutex.use_rw ~protect:true state_mutex
-	                            (fun () ->
-	                              force_killed_command_indexes :=
-	                                running_process.command_index
-	                                :: !force_killed_command_indexes
-	                                |> List.sort_uniq Int.compare)
-	                      | Ok false -> ()
-	                      | Error message ->
-	                          if
-	                            command_running_after_yields
+                    (fun running_process ->
+                      match
+                        running_process.process.Runner_backend.signal
+                          Sys.sigkill
+                      with
+                      | Ok true ->
+                          Eio.Mutex.use_rw ~protect:true state_mutex
+                            (fun () ->
+                              force_killed_command_indexes :=
+                                running_process.command_index
+                                :: !force_killed_command_indexes
+                                |> List.sort_uniq Int.compare)
+                      | Ok false -> ()
+                      | Error message ->
+                          if
+                            command_running_after_yields
                               running_process.command_index 32
                           then record_failure (`Unexpected_runner_error message)
                           else ())
                     processes_to_kill
-	              | exception _ -> ());
-	              `Stop_daemon)
-	    in
-	    let close_event_completes_command close_event =
+              | exception _ -> ());
+              `Stop_daemon)
+    in
+    let close_event_completes_command close_event =
       Run_policy.close_event_completes_command policy close_event
     in
     let add_close_event ?(collect = true) close_event =
@@ -719,7 +719,7 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
                 (match signal_after_spawn with
                 | None -> ()
                 | Some signal ->
-                    signal_process_after_latched_termination command_index
+                    signal_process_after_parent_termination command_index
                       process signal);
                 let reader_failure, resolve_reader_failure =
                   Eio.Promise.create ()
@@ -804,36 +804,36 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
                     remove_active command_index;
                     `Done
                 | Ok process_status -> (
-	                    let process_ended_at = now () in
-	                    let killed = command_was_killed command_index in
-	                    mark_exited command_index;
-	                    let create_close_action ~ended_at =
-	                      let status =
+                    let process_ended_at = now () in
+                    let killed = command_was_killed command_index in
+                    mark_exited command_index;
+                    let create_close_action ~ended_at =
+                      let status =
                         if killed && command_was_force_killed command_index then
                           Close_event.Signaled
                             (string_of_int (Sys.signal_to_int Sys.sigkill))
-	                        else process_status
-	                      in
-	                      match
-	                        create_close_event ~command ~attempt ~killed
-	                          ~status ~started_at ~ended_at
-	                      with
-	                      | Closed close_event ->
-	                          let next_action =
+                        else process_status
+                      in
+                      match
+                        create_close_event ~command ~attempt ~killed ~status
+                          ~started_at ~ended_at
+                      with
+                      | Closed close_event ->
+                          let next_action =
                             finish_close_event ~sw close_event
                           in
                           `Closed (close_event, next_action)
                       | Skipped -> impossible_command_result "run_process"
-	                      | Failed error ->
-	                          record_failure error;
-	                          `Failed
-	                    in
-	                    let close_action =
-	                      if killed then None
-	                      else Some (create_close_action ~ended_at:process_ended_at)
-	                    in
-	                    let stdout_result = await_reader stdout_reader in
-	                    let stderr_result = await_reader stderr_reader in
+                      | Failed error ->
+                          record_failure error;
+                          `Failed
+                    in
+                    let close_action =
+                      if killed then None
+                      else Some (create_close_action ~ended_at:process_ended_at)
+                    in
+                    let stdout_result = await_reader stdout_reader in
+                    let stderr_result = await_reader stderr_reader in
                     let reader_error =
                       match
                         (forced_reader_error, stdout_result, stderr_result)
@@ -853,14 +853,14 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
                         remove_running command_index;
                         remove_active command_index;
                         `Done
-	                    | None ->
-	                        let close_action =
-	                          match close_action with
-	                          | Some close_action -> close_action
-	                          | None -> create_close_action ~ended_at:(now ())
-	                        in
-	                        let next_action =
-	                          match close_action with
+                    | None ->
+                        let close_action =
+                          match close_action with
+                          | Some close_action -> close_action
+                          | None -> create_close_action ~ended_at:(now ())
+                        in
+                        let next_action =
+                          match close_action with
                           | `Closed (close_event, next_action) -> (
                               emit_lifecycle_with_process_id
                                 ~process_id:process.Runner_backend.process_id
@@ -1053,28 +1053,31 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
       run_teardown_commands ();
       main_result
     in
+    let create_run_result ~spec close_events =
+      match recorded_failure () with
+      | Some error -> Error error
+      | None -> (
+          match
+            Run_result.create ~spec ~close_events
+              ~output_event_count:!output_event_count ~interrupted:false
+          with
+          | Ok result -> Ok result
+          | Error error -> Error (`Run_result_error error))
+    in
     match
-      with_forwarded_termination_signals
+      with_parent_termination_signals
         ~cleanup:(fun signal ->
           if Option.is_none !termination_signal then
             termination_signal := Some signal;
           signal_running_process_groups signal)
         run_main_then_teardown
     with
-    | `Interrupted (signal, _) ->
+    | `Interrupted (_, Error error) -> Error error
+    | `Interrupted (signal, Ok _) ->
         Unix.kill (Unix.getpid ()) signal;
         Error (`Unexpected_runner_error "termination signal was not delivered")
     | `Completed (Error error) -> Error error
-    | `Completed (Ok close_events) -> (
-        match recorded_failure () with
-        | Some error -> Error error
-        | None -> (
-            match
-              Run_result.create ~spec ~close_events
-                ~output_event_count:!output_event_count ~interrupted:false
-            with
-            | Ok result -> Ok result
-            | Error error -> Error (`Run_result_error error)))
+    | `Completed (Ok close_events) -> create_run_result ~spec close_events
     | exception Fatal_runner_error error -> Error error
     | exception exn -> Error (`Unexpected_runner_error (Printexc.to_string exn))
   in
