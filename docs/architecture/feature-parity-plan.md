@@ -242,7 +242,8 @@ Currently mirrored deterministic behavior:
   shortcut expansion (`npm:<script>`, `yarn:<script>`, `pnpm:<script>`,
   `bun:<script>`, `node:<script>`, `deno:<script>`), generated default names,
   explicit name override behavior, mixed shortcut/literal default prefixes, and
-  passthrough expansion before shortcut parsing.
+  passthrough expansion before shortcut parsing; shortcut text with no
+  non-whitespace script after the colon is left as an ordinary shell command.
 - Published `dist/src/command-parser/expand-wildcard.js`: package script
   wildcard expansion for `npm:<glob>`, `yarn:<glob>`, `pnpm:<glob>`,
   `bun:<glob>`, and `node:<glob>`, Deno task wildcard expansion for

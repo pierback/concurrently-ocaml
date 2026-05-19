@@ -721,6 +721,12 @@ const cases = [
     args: ["--no-color", "-P", "npm:{1}", "--", "client build"],
   },
   {
+    name: "shortcut with whitespace after colon is not expanded",
+    upstream: "dist/src/command-parser/expand-shortcut.js requires non-whitespace script",
+    cwd: shortcutFixture.cwd,
+    args: ["--no-color", "npm: print"],
+  },
+  {
     name: "node shortcut default name",
     upstream: "dist/src/command-parser/expand-shortcut.js node:<script>",
     cwd: shortcutFixture.cwd,
