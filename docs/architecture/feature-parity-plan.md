@@ -231,7 +231,9 @@ Currently mirrored deterministic behavior:
   `CONCURRENTLY_PREFIX_COLORS` environment defaults, including upstream's
   `FORCE_COLOR` precedence over `--no-color` and `CONCURRENTLY_NO_COLOR`.
 - `src/command-parser/expand-arguments.spec.ts` and `bin/concurrently.spec.ts`:
-  passthrough placeholder expansion and disabled passthrough behavior.
+  passthrough placeholder expansion, disabled passthrough behavior, and
+  default-help behavior when the passthrough separator appears before any
+  command.
 - Published `dist/src/command-parser/strip-quotes.js`: surrounding command
   quotes are stripped only when they enclose non-empty content, so `""` and
   `''` remain literal shell commands and fail at runtime instead of being

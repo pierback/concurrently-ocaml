@@ -977,6 +977,11 @@ const cases = [
     env: { CONCURRENTLY_PASSTHROUGH_ARGUMENTS: "true" },
   },
   {
+    name: "passthrough separator before commands prints help",
+    upstream: "bin/concurrently.spec.ts --passthrough-arguments command binding",
+    args: ["--no-color", "-P", "--", "--watch"],
+  },
+  {
     name: "passthrough disabled treats arguments as commands",
     upstream: "bin/concurrently.spec.ts --passthrough-arguments disabled",
     args: ["--no-color", "-g", "printf '{1}'", "--", "printf arg"],
