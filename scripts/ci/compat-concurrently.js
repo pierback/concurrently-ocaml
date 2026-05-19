@@ -987,6 +987,11 @@ const cases = [
     args: ["--no-color", "-g", "printf '{1}'", "--", "printf arg"],
   },
   {
+    name: "command separator without passthrough preserves dash command",
+    upstream: "bin/concurrently.spec.ts command separator handling",
+    args: ["--no-color", "--", "--watch"],
+  },
+  {
     name: "finite restart logs restart notification",
     upstream: "bin/concurrently.spec.ts --restart-tries",
     args: ["--no-color", "--restart-tries", "1", "exit 1"],

@@ -3430,7 +3430,7 @@ let test_runner_applies_close_policy_before_descendant_pipe_eof () =
       assert (elapsed < 2.0);
       assert (List.mem "sibling-killed" (output_chunks events)))
 
-let test_runner_passes_dash_prefixed_commands_to_shell () =
+let test_runner_uses_npm_shell_invocation_for_dash_prefixed_commands () =
   let result, _events = run_with_events ~policy:Run_policy.default [ "-foo" ] in
   let result = ok result in
   let close_event =
@@ -3439,7 +3439,7 @@ let test_runner_passes_dash_prefixed_commands_to_shell () =
     | _ -> assert false
   in
   assert (Run_result.exit_code result = 1);
-  assert (Close_event.status close_event = Close_event.Exited 127)
+  assert (Close_event.status close_event = Close_event.Exited 2)
 
 let () =
   test_argument_expander_replaces_passthrough_placeholders ();
@@ -3508,5 +3508,5 @@ let () =
   test_runner_skips_queued_commands_after_failure ();
   test_runner_skips_queued_commands_after_success ();
   test_runner_applies_close_policy_before_descendant_pipe_eof ();
-  test_runner_passes_dash_prefixed_commands_to_shell ();
+  test_runner_uses_npm_shell_invocation_for_dash_prefixed_commands ();
   print_endline "domain tests ok"
