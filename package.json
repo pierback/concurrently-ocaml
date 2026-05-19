@@ -1,28 +1,9 @@
 {
   "name": "@pierback/concurrently-ml",
   "version": "0.0.13",
-  "description": "OCaml 5 command runner targeting feature parity with npm concurrently",
-  "main": "index.js",
-  "types": "index.d.ts",
+  "description": "Native OCaml CLI binary targeting feature parity with npm concurrently",
   "type": "commonjs",
-  "exports": {
-    ".": {
-      "import": {
-        "types": "./index.d.mts",
-        "default": "./index.mjs"
-      },
-      "require": {
-        "types": "./index.d.ts",
-        "default": "./index.js"
-      }
-    },
-    "./package.json": "./package.json"
-  },
   "files": [
-    "index.js",
-    "index.mjs",
-    "index.d.ts",
-    "index.d.mts",
     "npm/bin/",
     "npm/lib/",
     "README.md",
@@ -57,7 +38,6 @@
     "@pierback/concurrently-ml-linux-arm64": "0.0.13",
     "@pierback/concurrently-ml-linux-x64": "0.0.13"
   },
-  "main": "index.js",
   "directories": {
     "doc": "docs",
     "lib": "lib",

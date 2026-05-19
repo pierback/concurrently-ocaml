@@ -71,7 +71,9 @@ let replacement ~additional_arguments = function
        (match List.nth_opt additional_arguments (position - 1) with
         | Some argument -> shell_quote argument
         | None -> "")
-     | Some _ | None -> assert false)
+     | Some _ | None ->
+       invalid_arg
+         ("Argument_expander.replacement: invalid placeholder target " ^ target))
 
 let expand ~additional_arguments command =
   let length = String.length command in

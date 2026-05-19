@@ -32,7 +32,6 @@
   (eio_main
    (>= 1.3))
   (cmdliner
-   (>= 2.0.0))
-  ANSITerminal)
+   (>= 2.0.0)))
  (tags
   ("cli" "process" "concurrency" "ocaml" "eio")))

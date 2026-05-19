@@ -17,9 +17,9 @@ type create_error =
   ]
 
 let create ?name ?cwd ?(env = []) ?prefix_color ?(raw = false) ?(hidden = false)
-    ?(ipc = false) ~index text =
+    ?(ipc = false) ?(allow_empty = false) ~index text =
   if index < 0 then Error `Negative_index
-  else if String.trim text = "" then Error `Empty_command
+  else if (not allow_empty) && String.trim text = "" then Error `Empty_command
   else
     (match cwd with
      | Some cwd when String.trim cwd = "" -> Error `Empty_cwd

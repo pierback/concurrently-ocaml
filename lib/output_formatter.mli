@@ -5,7 +5,7 @@ type color_mode =
 type options =
   { labels : string list option
   ; prefix : string option
-  ; prefix_length : int
+  ; prefix_length : float
   ; pad_prefix : bool
   ; timestamp_format : string
   ; spacious : bool
@@ -23,7 +23,6 @@ type output =
 
 type create_error =
   [ `Label_count_mismatch of int * int
-  | `Negative_prefix_length
   | `Non_positive_command_count
   ]
 

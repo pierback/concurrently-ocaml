@@ -14,6 +14,7 @@ val create :
   ?raw:bool ->
   ?hidden:bool ->
   ?ipc:bool ->
+  ?allow_empty:bool ->
   index:int ->
   string ->
   (t, create_error) result

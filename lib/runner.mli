@@ -3,14 +3,12 @@ type run_error =
   | `Output_event_error of int * Output_event.create_error
   | `Run_result_error of Run_result.create_error
   | `Unsupported_kill_signal of string
-  | `Unexpected_runner_error of string
-  ]
+  | `Unexpected_runner_error of string ]
 
 val run :
   input:Input_router.t option ->
   input_source:Runner_backend.source option ->
   backend:Runner_backend.t ->
-  process_mgr:_ Eio.Process.mgr ->
   now:(unit -> float) ->
   sleep:(float -> unit) ->
   spec:Run_spec.t ->

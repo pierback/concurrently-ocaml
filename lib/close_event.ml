@@ -53,5 +53,5 @@ let timings t = t.timings
 
 let is_success t =
   match t.status with
-  | Exited 0 -> not t.killed
+  | Exited 0 -> true
   | Exited _ | Signaled _ | Spawn_error _ -> false

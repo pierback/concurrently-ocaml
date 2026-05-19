@@ -53,13 +53,6 @@ let spawn_process_group ~sw ~stdin_source ~stdout_sink ~stderr_sink command =
        ; [ Fork_action.execve "/bin/sh" ~argv ~env:(command_env command) ]
        ])
 
-let rec resolved_after_yields promise remaining_yields =
-  if Eio.Promise.is_resolved promise then true
-  else if remaining_yields = 0 then false
-  else (
-    Eio.Fiber.yield ();
-    resolved_after_yields promise (remaining_yields - 1))
-
 let spawn ~sw ~command =
   let stdin_source, stdin_sink = Eio_unix.pipe sw in
   let stdout_source, stdout_sink = Eio_unix.pipe sw in
@@ -77,16 +70,12 @@ let spawn ~sw ~command =
   | process ->
     close_child_sources ();
     close_child_sinks ();
-    let pid = Eio_posix.Low_level.Process.pid process in
-    let exit_status = Eio_posix.Low_level.Process.exit_status process in
-    let signal signal =
-      if Eio.Promise.is_resolved exit_status then Ok false
-      else
-        match Posix_process_group.signal_group ~pid signal with
-        | Ok _ as result -> result
-        | Error _ when resolved_after_yields exit_status 8 -> Ok false
-        | Error _ as error -> error
-    in
+	    let pid = Eio_posix.Low_level.Process.pid process in
+	    let exit_status = Eio_posix.Low_level.Process.exit_status process in
+	    let signal signal =
+	      if Eio.Promise.is_resolved exit_status then Ok false
+	      else Posix_process_group.signal_group ~pid signal
+	    in
     { Runner_backend.process_id = string_of_int pid
     ; write_stdin = (fun input -> Eio.Flow.copy_string input stdin_sink)
     ; close_stdin = (fun () -> Eio.Flow.close stdin_sink)
