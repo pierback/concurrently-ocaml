@@ -274,21 +274,6 @@ let argv_contains_passthrough_flag_before_separator argv =
   in
   loop 1
 
-let has_command_argument_before_separator argv separator_index =
-  let rec loop index =
-    if index >= separator_index then false
-    else
-      let argument = argv.(index) in
-      if option_consumes_value argument then loop (index + 2)
-      else if
-        is_passthrough_flag argument
-        || option_has_inline_value argument
-        || (String.length argument > 0 && argument.[0] = '-')
-      then loop (index + 1)
-      else true
-  in
-  loop 1
-
 let extract_passthrough_arguments argv =
   if not (argv_contains_passthrough_flag_before_separator argv) then
     { normalized_argv = argv; passthrough_arguments = [] }
@@ -298,14 +283,7 @@ let extract_passthrough_arguments argv =
       else if argv.(index) = "--" then Some index
       else find_separator (index + 1)
     in
-    let separator_index =
-      match find_separator 1 with
-      | Some first_separator
-        when not (has_command_argument_before_separator argv first_separator) ->
-          find_separator (first_separator + 1)
-      | first_separator -> first_separator
-    in
-    match separator_index with
+    match find_separator 1 with
     | None -> { normalized_argv = argv; passthrough_arguments = [] }
     | Some separator_index ->
         let additional_count = Array.length argv - separator_index - 1 in

@@ -40,6 +40,25 @@ let test_extracts_passthrough_arguments () =
     normalized.Cli_argv.passthrough_arguments = [ "--watch"; "client build" ]);
   assert (not normalized.Cli_argv.deprecated_name_separator_used)
 
+let test_passthrough_separator_before_commands_leaves_no_commands () =
+  let normalized = Cli_argv.normalize [| "conc"; "-P"; "--"; "--watch" |] in
+  assert_array_equal
+    [| "conc"; "--passthrough-arguments" |]
+    normalized.Cli_argv.argv;
+  assert (normalized.Cli_argv.passthrough_arguments = [ "--watch" ]);
+  assert (Cli_argv.requests_default_help normalized.Cli_argv.argv);
+  let normalized =
+    Cli_argv.normalize
+      [| "conc"; "-P"; "--"; "echo {1}"; "--"; "--watch" |]
+  in
+  assert_array_equal
+    [| "conc"; "--passthrough-arguments" |]
+    normalized.Cli_argv.argv;
+  assert (
+    normalized.Cli_argv.passthrough_arguments
+    = [ "echo {1}"; "--"; "--watch" ]);
+  assert (Cli_argv.requests_default_help normalized.Cli_argv.argv)
+
 let test_tracks_deprecated_name_separator () =
   let normalized =
     Cli_argv.normalize [| "conc"; "--name-separator"; "|"; "echo ok" |]
@@ -280,6 +299,7 @@ let () =
   test_normalized_builtin_help_value ();
   test_requests_default_help ();
   test_extracts_passthrough_arguments ();
+  test_passthrough_separator_before_commands_leaves_no_commands ();
   test_tracks_deprecated_name_separator ();
   test_normalizes_negative_option_values ();
   test_drops_dangling_value_options_before_unknown_options ();
