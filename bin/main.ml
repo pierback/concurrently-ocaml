@@ -25,6 +25,11 @@ let print_deprecation_warnings deprecated_name_separator_used =
       "[concurrently] name-separator is deprecated. Use commas as name \
        separators instead."
 
+let print_runner_error error =
+  match error with
+  | `Unsupported_kill_signal _ -> prerr_endline (Runner.error_message error)
+  | _ -> Printf.eprintf "Error: %s\n" (Runner.error_message error)
+
 let parse_force_color_int value =
   let length = String.length value in
   let rec skip_whitespace index =
@@ -221,7 +226,7 @@ let run_config env config =
         with
         | Ok result -> Concurrentlyocaml.Run_result.exit_code result
         | Error error ->
-            Printf.eprintf "Error: %s\n" (Runner.error_message error);
+            print_runner_error error;
             1)
 
 let run ~passthrough_argv_arguments ~deprecated_name_separator_used

@@ -2006,10 +2006,7 @@ function normalizeInvalidWildcardOmissionStderr(stderr) {
 }
 
 function normalizeUnknownSignalStderr(stderr) {
-  if (
-    stderr.includes("ERR_UNKNOWN_SIGNAL") ||
-    stderr.includes("unsupported kill signal for runner:")
-  ) {
+  if (stderr.includes("ERR_UNKNOWN_SIGNAL")) {
     return "<unknown signal>\n";
   }
   return stderr;
