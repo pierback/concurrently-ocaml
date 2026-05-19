@@ -141,10 +141,10 @@ let prefix_color_at palette index =
   else palette.last_color
 
 let kill_signal_of_string signal =
-  match String.uppercase_ascii (String.trim signal) with
+  match String.trim signal with
   | "" -> Run_policy.Sigterm
-  | "SIGTERM" | "TERM" -> Run_policy.Sigterm
-  | "SIGKILL" | "KILL" -> Run_policy.Sigkill
+  | "SIGTERM" -> Run_policy.Sigterm
+  | "SIGKILL" -> Run_policy.Sigkill
   | named_signal -> Run_policy.Named_signal named_signal
 
 let kill_conditions ~kill_others ~kill_others_on_fail =

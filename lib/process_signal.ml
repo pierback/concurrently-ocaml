@@ -37,8 +37,11 @@ let supported_signals =
 
 let normalize_signal_name signal = String.uppercase_ascii (String.trim signal)
 
-let signal_name_matches normalized_signal supported_signal =
-  List.mem normalized_signal supported_signal.aliases
+let signal_name_matches signal supported_signal =
+  List.mem signal supported_signal.aliases
+
+let signal_name_is_full signal =
+  String.length signal >= 3 && String.sub signal 0 3 = "SIG"
 
 let signal_number_matches signal_number supported_signal =
   supported_signal.signal = signal_number
@@ -56,19 +59,21 @@ let number = function
   | Run_policy.Sigterm -> Ok Sys.sigterm
   | Run_policy.Sigkill -> Ok Sys.sigkill
   | Run_policy.Named_signal signal -> (
-      let signal = normalize_signal_name signal in
-      match List.find_opt (signal_name_matches signal) supported_signals with
-      | Some supported_signal -> Ok supported_signal.signal
-      | None -> Error (`Unsupported_kill_signal signal))
+      let signal = String.trim signal in
+      if not (signal_name_is_full signal) then
+        Error (`Unsupported_kill_signal signal)
+      else
+        match List.find_opt (signal_name_matches signal) supported_signals with
+        | Some supported_signal -> Ok supported_signal.signal
+        | None -> Error (`Unsupported_kill_signal signal))
 
 let kill_label = function
   | Run_policy.Sigterm -> "SIGTERM"
   | Run_policy.Sigkill -> "SIGKILL"
   | Run_policy.Named_signal signal ->
-      let signal = signal |> String.trim |> String.uppercase_ascii in
+      let signal = String.trim signal in
       assert (signal <> "");
-      if String.length signal >= 3 && String.sub signal 0 3 = "SIG" then signal
-      else "SIG" ^ signal
+      signal
 
 let label signal =
   match int_of_string_opt (String.trim signal) with

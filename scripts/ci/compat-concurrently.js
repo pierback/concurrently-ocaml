@@ -990,6 +990,42 @@ const cases = [
     args: ["--no-color", "-k", "--kill-signal", "SIGFOO", "printf ok"],
   },
   {
+    name: "bare term kill signal fails when used",
+    upstream: "dist/src/flow-control/kill-others.js configured killSignal",
+    args: ["--no-color", "-k", "--kill-signal", "TERM", "sleep 1", "printf ok"],
+    normalizeStderr: normalizeUnknownSignalStderr,
+  },
+  {
+    name: "lowercase bare term kill signal fails when used",
+    upstream: "dist/src/flow-control/kill-others.js configured killSignal",
+    args: ["--no-color", "-k", "--kill-signal", "term", "sleep 1", "printf ok"],
+    normalizeStderr: normalizeUnknownSignalStderr,
+  },
+  {
+    name: "bare hup kill signal fails when used",
+    upstream: "dist/src/flow-control/kill-others.js configured killSignal",
+    args: ["--no-color", "-k", "--kill-signal", "HUP", "sleep 1", "printf ok"],
+    normalizeStderr: normalizeUnknownSignalStderr,
+  },
+  {
+    name: "unsupported sig-prefixed kill signal fails when used",
+    upstream: "dist/src/flow-control/kill-others.js configured killSignal",
+    args: ["--no-color", "-k", "--kill-signal", "SIGFOO", "sleep 1", "printf ok"],
+    normalizeStderr: normalizeUnknownSignalStderr,
+  },
+  {
+    name: "lowercase sig-prefixed kill signal fails when used",
+    upstream: "dist/src/flow-control/kill-others.js configured killSignal",
+    args: ["--no-color", "-k", "--kill-signal", "sigusr1", "sleep 1", "printf ok"],
+    normalizeStderr: normalizeUnknownSignalStderr,
+  },
+  {
+    name: "numeric kill signal fails when used",
+    upstream: "dist/src/flow-control/kill-others.js configured killSignal",
+    args: ["--no-color", "-k", "--kill-signal", "0", "sleep 1", "printf ok"],
+    normalizeStderr: normalizeUnknownSignalStderr,
+  },
+  {
     name: "empty kill signal defaults to sigterm when unused",
     upstream: "dist/bin/concurrently.js yargs string coercion",
     args: ["--no-color", "--kill-signal", "", "printf ok"],
@@ -1650,6 +1686,16 @@ function normalizeInvalidWildcardOmissionStderr(stderr) {
   }
   if (stderr.includes("invalid wildcard omission regular expression: [")) {
     return "<invalid wildcard omission>\n";
+  }
+  return stderr;
+}
+
+function normalizeUnknownSignalStderr(stderr) {
+  if (
+    stderr.includes("ERR_UNKNOWN_SIGNAL") ||
+    stderr.includes("unsupported kill signal for runner:")
+  ) {
+    return "<unknown signal>\n";
   }
   return stderr;
 }

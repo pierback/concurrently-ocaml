@@ -1613,34 +1613,42 @@ let test_cli_config_validation () =
   let invalid_restart_policy =
     Cli_config.policy (ok (restart_tries_config "bogus"))
   in
-	  assert (Run_policy.restart_tries invalid_restart_policy = 0);
-	  assert (Run_policy.drop_failed_close_events_for_success invalid_restart_policy);
-		  let empty_kill_signal_policy =
-		    Cli_config.policy
-		      (ok
-	         (Cli_config.create ~passthrough_arguments:None ~cwd:None
-	            ~command_texts:[ "printf ok" ] ~names_csv:None ~name_separator:","
-	            ~spacious:false ~timings:false ~group:false ~raw:false
-	            ~hide_csv:None ~no_color:false ~prefix:None ~prefix_colors_csv:None
-	            ~prefix_length:10.0 ~pad_prefix:false
-	            ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS" ~handle_input:false
-	            ~default_input_target:"0" ~success:"all" ~kill_others:false
-	            ~kill_others_on_fail:false ~kill_signal:"" ~kill_timeout_ms:None
-	            ~max_processes:None ~restart_tries:"0" ~restart_after:"0"
-	            ~teardown_texts:[]))
-		  in
-		  assert (Run_policy.kill_signal empty_kill_signal_policy = Run_policy.Sigterm);
-		  let infinite_restart_policy =
-		    Cli_config.policy (ok (restart_tries_config "Infinity"))
-		  in
-	  assert (Run_policy.restart_tries infinite_restart_policy = -1);
-	  assert (
-	    not
-	      (Run_policy.drop_failed_close_events_for_success
-	         infinite_restart_policy));
-	  let invalid_restart_after_policy =
-	    Cli_config.policy
-	      (ok
+  assert (Run_policy.restart_tries invalid_restart_policy = 0);
+  assert (Run_policy.drop_failed_close_events_for_success invalid_restart_policy);
+  let kill_signal_policy kill_signal =
+    Cli_config.policy
+      (ok
+         (Cli_config.create ~passthrough_arguments:None ~cwd:None
+            ~command_texts:[ "printf ok" ] ~names_csv:None ~name_separator:","
+            ~spacious:false ~timings:false ~group:false ~raw:false
+            ~hide_csv:None ~no_color:false ~prefix:None ~prefix_colors_csv:None
+            ~prefix_length:10.0 ~pad_prefix:false
+            ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS" ~handle_input:false
+            ~default_input_target:"0" ~success:"all" ~kill_others:false
+            ~kill_others_on_fail:false ~kill_signal ~kill_timeout_ms:None
+            ~max_processes:None ~restart_tries:"0" ~restart_after:"0"
+            ~teardown_texts:[]))
+  in
+  let empty_kill_signal_policy = kill_signal_policy "" in
+  assert (Run_policy.kill_signal empty_kill_signal_policy = Run_policy.Sigterm);
+  let bare_term_kill_signal_policy = kill_signal_policy "TERM" in
+  assert (
+    Run_policy.kill_signal bare_term_kill_signal_policy
+    = Run_policy.Named_signal "TERM");
+  let lowercase_term_kill_signal_policy = kill_signal_policy "term" in
+  assert (
+    Run_policy.kill_signal lowercase_term_kill_signal_policy
+    = Run_policy.Named_signal "term");
+  let infinite_restart_policy =
+    Cli_config.policy (ok (restart_tries_config "Infinity"))
+  in
+  assert (Run_policy.restart_tries infinite_restart_policy = -1);
+  assert (
+    not
+      (Run_policy.drop_failed_close_events_for_success infinite_restart_policy));
+  let invalid_restart_after_policy =
+    Cli_config.policy
+      (ok
          (Cli_config.create ~passthrough_arguments:None ~cwd:None
             ~command_texts:[ "exit 1" ] ~names_csv:None ~name_separator:","
             ~spacious:false ~timings:false ~group:false ~raw:false

@@ -259,8 +259,10 @@ Currently mirrored deterministic behavior:
   `CONCURRENTLY_KILL_SIGNAL`/`CONCURRENTLY_KS` environment defaults for
   deterministic sibling cancellation, plus lazy signal resolution where an
   unsupported `--kill-signal` value is accepted when no sibling signal is ever
-  sent, and yargs-style empty `--kill-signal ''` values fall back to the
-  default `SIGTERM` signal.
+  sent, yargs-style empty `--kill-signal ''` values fall back to the default
+  `SIGTERM` signal, and used invalid values such as `TERM`, `term`, `HUP`,
+  `SIGFOO`, `sigusr1`, and `0` preserve npm's configured signal text in the
+  shutdown status line before failing.
 - Published `dist/src/flow-control/kill-others.js` and
   `dist/bin/concurrently.js`: deterministic `--kill-timeout` numeric coercion
   for sub-millisecond fractional and fractional escalation delays, invalid
@@ -289,7 +291,7 @@ Known divergences tracked as incomplete work:
 | --- | --- | --- |
 | Timing table row order for runtime-dependent signal durations | npm sorts the timing table by measured duration. When one command is killed after another exits, relative durations can legitimately differ by runtime and platform. | Deterministic kill-on-fail signal timing matches npm under normalized timestamps/durations. Success-triggered kill timing is not pinned byte-for-byte because duration-sorted row order depends on process scheduling and signal latency. |
 | SIGHUP shell job-control diagnostics | For shell commands such as `trap 'exit 129' HUP; sleep 1`, npm's process-tree kill path can surface an extra shell diagnostic like `Hangup: 1` before the command close notification. | The native POSIX backend signals the command process group directly, so the deterministic close status matches but that shell-emitted diagnostic is not reproduced. This remains tracked as process-tree parity work, not formatter output to fake. |
-| Unsupported kill-signal values when used | Upstream forwards the exact `--kill-signal` string to Node/tree-kill. Bare aliases such as `TERM`/`HUP`, and unsupported names such as `SIGFOO`, print a partial shutdown log and then throw Node's `ERR_UNKNOWN_SIGNAL` stack when used. | The native CLI accepts unused signal values like npm, supports deterministic OCaml/POSIX `SIG*` values when cancellation actually sends a signal, and returns a typed native error instead of reproducing Node's stack trace for unsupported values that are used. |
+| Unsupported kill-signal stderr when used | Upstream forwards the exact `--kill-signal` string to Node/tree-kill. Bare aliases such as `TERM`/`HUP`, and unsupported names such as `SIGFOO`, print a partial shutdown log and then throw Node's `ERR_UNKNOWN_SIGNAL` stack when used. | The native CLI now matches the exit status and shutdown status line text for deterministic unsupported values, but returns a typed native error instead of reproducing Node's stack trace. |
 | JavaScript programmatic API | Upstream `concurrently()` can be imported from JavaScript. | Explicit non-goal for this project. CLI parity for `concurrently`/`conc` in package scripts is the product surface; npm package JavaScript remains launcher and install glue only. |
 | Windows backend | Upstream supports Windows process semantics. | Windows npm packages are withheld until a Windows-native runner backend exists. |
 
