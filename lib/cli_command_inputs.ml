@@ -64,7 +64,11 @@ let expand_shortcut_text command_text =
       | Some runner ->
           let script_start = separator_index + 1 in
           let command_length = String.length command_text in
-          if script_start = command_length then input command_text
+          let missing_script =
+            script_start = command_length
+            || is_whitespace command_text.[script_start]
+          in
+          if missing_script then input command_text
           else
             let script_end =
               match find_first_whitespace_from command_text script_start with
