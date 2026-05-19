@@ -213,8 +213,10 @@ Currently mirrored deterministic behavior:
   such as `-p=raw` and `-n=api`, while compact string forms such as `-pcommand`
   and `-napi,web` do not bind string option values; compact short CLI values
   override `CONCURRENTLY_M`/`CONCURRENTLY_L` defaults, full-name
-  `CONCURRENTLY_MAX_PROCESSES` scheduling defaults, and input-routing defaults
-  from `CONCURRENTLY_HANDLE_INPUT` plus `CONCURRENTLY_DEFAULT_INPUT_TARGET`;
+  `CONCURRENTLY_MAX_PROCESSES` scheduling defaults, full-name env defaults
+  winning over alias env defaults when both are present, and input-routing
+  defaults from `CONCURRENTLY_HANDLE_INPUT` plus
+  `CONCURRENTLY_DEFAULT_INPUT_TARGET`;
   yargs-style missing separate option values before boolean flags are dropped
   before command binding.
 - Published `dist/src/logger.js`/`dist/src/defaults.js` color behavior:

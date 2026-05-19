@@ -292,6 +292,16 @@ const cases = [
     env: { CONCURRENTLY_NAMES: "api", CONCURRENTLY_PREFIX: "name" },
   },
   {
+    name: "env full name prefix overrides alias prefix",
+    upstream: "dist/bin/concurrently.js yargs .env('CONCURRENTLY') env key precedence",
+    args: ["--no-color", "printf api"],
+    env: {
+      CONCURRENTLY_NAMES: "api",
+      CONCURRENTLY_PREFIX: "index",
+      CONCURRENTLY_P: "name",
+    },
+  },
+  {
     name: "deprecated name separator warning",
     upstream: "bin/concurrently.spec.ts --name-separator deprecation warning",
     args: [
@@ -1344,6 +1354,16 @@ const cases = [
       "printf fast",
     ],
     env: { CONCURRENTLY_MAX_PROCESSES: "1" },
+  },
+  {
+    name: "env full name max processes overrides alias",
+    upstream: "dist/bin/concurrently.js yargs .env('CONCURRENTLY') env key precedence",
+    args: [
+      "--no-color",
+      "sh -c \"sleep 0.05; printf slow\"",
+      "printf fast",
+    ],
+    env: { CONCURRENTLY_MAX_PROCESSES: "1", CONCURRENTLY_M: "2" },
   },
   {
     name: "max processes zero uses command count",
