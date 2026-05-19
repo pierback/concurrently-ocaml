@@ -1986,8 +1986,8 @@ let test_cli_config_validation () =
       assert (
         List.map Command.text (Cli_config.commands suffix_wildcard_config)
         = [
-            "npm run build-css -- --url='a&b' && echo done";
-            "npm run build-js -- --url='a&b' && echo done";
+            "npm run build-css -- --url='a";
+            "npm run build-js -- --url='a";
           ]);
       let cwd_wildcard_config =
         ok

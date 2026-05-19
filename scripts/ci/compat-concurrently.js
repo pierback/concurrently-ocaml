@@ -730,6 +730,12 @@ const cases = [
     normalizeStdout: normalizeNpmLogPaths,
   },
   {
+    name: "npm wildcard shortcut drops shell conjunction suffix",
+    upstream: "dist/src/command-parser/expand-wildcard.js args capture stops at &",
+    cwd: shortcutFixture.cwd,
+    args: ["--no-color", "-g", "npm:build-* && printf after"],
+  },
+  {
     name: "npm wildcard omission matches full script name",
     upstream: "dist/src/command-parser/expand-wildcard.js omission filter",
     cwd: shortcutFixture.cwd,

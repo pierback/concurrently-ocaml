@@ -235,9 +235,10 @@ Currently mirrored deterministic behavior:
   wildcard expansion for `npm:<glob>`, `yarn:<glob>`, `pnpm:<glob>`,
   `bun:<glob>`, and `node:<glob>`, Deno task wildcard expansion for
   `deno:<glob>`, wildcard-generated names, explicit name prefixes, verbatim
-  expansion of spaced script names, and omission filters against full script
-  names for deterministic package-script cases, plus no-match wildcard
-  expansion as a clean no-output no-op.
+  expansion of spaced script names, npm-compatible dropping of shell
+  conjunction suffixes after `&`, and omission filters against full script names
+  for deterministic package-script cases, plus no-match wildcard expansion as a
+  clean no-output no-op.
 - `bin/concurrently.spec.ts`, published `dist/bin/concurrently.js`, and
   `dist/src/flow-control/restart-process.js`: finite `--restart-tries` restart
   notifications, negative `--restart-tries` retry-forever behavior until a
@@ -426,16 +427,15 @@ Known divergences tracked as incomplete work:
   for reset defaults, `red.bold`, `bgRed.white.bold`, `gray.dim`, `hidden`,
   short/full truecolor hex, and invalid-color fallback, shortcut expansion
   across npm/yarn/pnpm/bun/node/deno runners, package-script and Deno-task
-  wildcard expansion,
-   kill-others exit projection, raw kill output, kill-on-fail behavior,
-   max-process serialization including restart-exhaustion queueing, npm-style
-   max-process numeric coercion for zero, invalid, fractional, and negative
-   values, fractional/invalid restart-count coercion, deterministic
-   restart-after and kill-timeout warning/coercion behavior, queued-command suppression after
-   kill-on-success/failure, input forwarding, explicit index and command-name
-   input routing, version and help flag aliases, and default input target
-   routing. The Ubuntu CI build
-   runs this harness after
+  wildcard expansion, wildcard suffix truncation at `&`, kill-others exit
+  projection, raw kill output, kill-on-fail behavior, max-process serialization
+  including restart-exhaustion queueing, npm-style max-process numeric coercion
+  for zero, invalid, fractional, and negative values,
+  fractional/invalid restart-count coercion, deterministic restart-after and
+  kill-timeout warning/coercion behavior, queued-command suppression after
+  kill-on-success/failure, input forwarding, explicit index and command-name
+  input routing, version and help flag aliases, and default input target
+  routing. The Ubuntu CI build runs this harness after
    `dune build @install @runtest`. Remaining compatibility work: translate more
    upstream behavior tests for duration-order-sensitive
    timing signal cases, broader wildcard and shortcut edge cases, deeper package
