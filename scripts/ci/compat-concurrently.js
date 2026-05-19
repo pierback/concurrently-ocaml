@@ -1754,6 +1754,20 @@ function runAsync(command, args, testCase) {
     child.stderr.on("data", (chunk) => {
       stderr += chunk;
     });
+    child.stdin.on("error", (error) => {
+      if (error.code === "EPIPE") {
+        // Delayed test input can race with a child that already closed stdin.
+        // The process close event still carries the behavior under comparison.
+        return;
+      }
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      inputTimers.forEach(clearTimeout);
+      rejectPromise(new Error(`${testCase.name}: stdin ${error.message}`));
+    });
     child.on("error", (error) => {
       if (settled) {
         return;

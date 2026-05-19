@@ -42,7 +42,9 @@ signal, process-tree teardown, and pipe implementations.
 - `lib/runner_backend.ml` defines the backend contract. `lib/posix_runner_backend.ml`
   owns POSIX shell selection, Eio POSIX process spawning, stdout/stderr pipe
   creation, process-group signalling, process identity exposure, and POSIX
-  close-status mapping.
+  close-status mapping. POSIX backend conformance tests now cover cwd/env
+  propagation, stdout/stderr pipes, stdin writes and close, process identity,
+  post-exit signal no-ops, process-group signalling, and close-status mapping.
 - The blocking `Unix.open_process_full` / `Unix.fork` / `Unix.waitpid`
   orchestration has been removed from the executable.
 - Output now flows through structured `Output_event.t` callbacks as lines are
@@ -375,8 +377,9 @@ Known divergences tracked as incomplete work:
    queueing rule; retry waits stop early when cancellation closes the command.
    Teardown commands run after the main run drains, emit raw output, and do not
    alter the main exit code.
-   Remaining Runner work: stronger process-level parity tests and backend
-   conformance tests.
+   POSIX backend conformance tests now directly exercise the backend contract
+   below the Runner. Remaining Runner work: stronger process-level parity tests
+   for scheduler and cancellation edge cases.
 
 5. Output formatter parity
 
@@ -504,15 +507,18 @@ Known divergences tracked as incomplete work:
 
    Introduce a `Runner_backend` interface so the OS-neutral `Runner` can
    orchestrate policy, retries, and events while platform backends own spawn,
-   signal, process-tree teardown, pipe capture, and platform error mapping.
+   signal, process-tree teardown, stdio pipe capture, stdin writes, and platform
+   error mapping.
 
    Status: partial implementation complete. `Runner.run` now takes an explicit
    `Runner_backend.t`, and the CLI/test harness selects
    `Posix_runner_backend.backend`. The POSIX backend owns `/bin/sh`, Eio POSIX
-   spawning, process-group signalling, pipe creation, process identity, and
-   process close-status mapping. Remaining backend work: add a Windows backend
-   with native shell and process-tree semantics, move stdin/input routing
-   through the same seam, and add backend conformance tests.
+   spawning, process-group signalling, pipe creation, stdin writes, process
+   identity, and process close-status mapping. POSIX backend conformance tests
+   cover the current backend contract without depending on npm availability.
+   Remaining backend work: add a Windows backend with native shell and
+   process-tree semantics, plus broader backend conformance for spawn failures
+   and platform-specific signal labels.
 
 ## Test Strategy
 

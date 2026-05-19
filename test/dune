@@ -40,3 +40,8 @@
  (name runner_output_reader_tests)
  (modules runner_output_reader_tests)
  (libraries eio concurrentlyocaml))
+
+(test
+ (name posix_runner_backend_tests)
+ (modules posix_runner_backend_tests)
+ (libraries eio_main eio unix concurrentlyocaml))
