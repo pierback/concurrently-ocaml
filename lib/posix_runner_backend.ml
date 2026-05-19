@@ -1,7 +1,7 @@
 [@@@alert "-unstable"]
 
 let shell_args command =
-  [ "/bin/sh"; "-c"; "--"; Command.text command ]
+  [ "/bin/sh"; "-c"; Command.text command ]
 
 let close_status = function
   | Unix.WEXITED code -> Close_event.Exited code
