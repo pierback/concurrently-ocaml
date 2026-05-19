@@ -24,6 +24,7 @@ const secondInputEchoCommand =
 const forceBasicColorEnv = { NO_COLOR: null, FORCE_COLOR: "1" };
 const forceTruecolorEnv = { NO_COLOR: null, FORCE_COLOR: "3" };
 const shortcutFixture = createShortcutFixture();
+const escapedScriptFixture = createEscapedScriptFixture();
 const restartFixture = createRestartFixture();
 
 if (!existsSync(localBinary)) {
@@ -736,6 +737,12 @@ const cases = [
     args: ["--no-color", "-g", "npm:build-* && printf after"],
   },
   {
+    name: "npm wildcard shortcut decodes escaped package script keys",
+    upstream: "dist/src/command-parser/expand-wildcard.js JSON.parse package scripts",
+    cwd: escapedScriptFixture.cwd,
+    args: ["--no-color", "-g", "npm:build-*"],
+  },
+  {
     name: "npm wildcard omission matches full script name",
     upstream: "dist/src/command-parser/expand-wildcard.js omission filter",
     cwd: shortcutFixture.cwd,
@@ -1354,6 +1361,7 @@ const cases = [
     }
   } finally {
     shortcutFixture.cleanup();
+    escapedScriptFixture.cleanup();
     restartFixture.cleanup();
   }
 })().catch((error) => {
@@ -1599,6 +1607,20 @@ function createShortcutFixture() {
     fakeRunnerEnv: {
       PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
     },
+    cleanup() {
+      rmSync(cwd, { force: true, recursive: true });
+    },
+  };
+}
+
+function createEscapedScriptFixture() {
+  const cwd = mkdtempSync(resolve(tmpdir(), "concurrently-ocaml-escaped-"));
+  writeFileSync(
+    resolve(cwd, "package.json"),
+    String.raw`{"scripts":{"build-\u0061":"printf a","build-b":"printf b"}}`
+  );
+  return {
+    cwd,
     cleanup() {
       rmSync(cwd, { force: true, recursive: true });
     },

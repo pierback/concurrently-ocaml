@@ -57,6 +57,70 @@ let skip_whitespace text index =
   in
   loop index
 
+let hex_digit_value = function
+  | '0' .. '9' as digit -> Some (Char.code digit - Char.code '0')
+  | 'a' .. 'f' as digit -> Some (10 + Char.code digit - Char.code 'a')
+  | 'A' .. 'F' as digit -> Some (10 + Char.code digit - Char.code 'A')
+  | _ -> None
+
+let decode_hex4 text index =
+  let length = String.length text in
+  if index + 4 > length then None
+  else
+    let rec loop offset code =
+      if offset = 4 then Some (index + 4, code)
+      else
+        match hex_digit_value text.[index + offset] with
+        | None -> None
+        | Some value -> loop (offset + 1) ((code lsl 4) + value)
+    in
+    loop 0 0
+
+let high_surrogate code = code >= 0xD800 && code <= 0xDBFF
+let low_surrogate code = code >= 0xDC00 && code <= 0xDFFF
+
+let unicode_replacement_character = 0xFFFD
+
+let scalar_of_unicode_escape text index =
+  match decode_hex4 text index with
+  | None -> None
+  | Some (after_high, high) ->
+      if high_surrogate high then
+        let length = String.length text in
+        if
+          after_high + 6 <= length
+          && text.[after_high] = '\\'
+          && text.[after_high + 1] = 'u'
+        then
+          match decode_hex4 text (after_high + 2) with
+          | Some (after_low, low) when low_surrogate low ->
+              let code =
+                0x10000 + ((high - 0xD800) lsl 10) + (low - 0xDC00)
+              in
+              Some (after_low, code)
+          | Some _ | None -> Some (after_high, unicode_replacement_character)
+        else Some (after_high, unicode_replacement_character)
+      else if low_surrogate high then
+        Some (after_high, unicode_replacement_character)
+      else Some (after_high, high)
+
+let add_utf8_scalar buffer code =
+  assert (code >= 0);
+  assert (code <= 0x10FFFF);
+  if code <= 0x7F then Buffer.add_char buffer (Char.chr code)
+  else if code <= 0x7FF then (
+    Buffer.add_char buffer (Char.chr (0xC0 lor (code lsr 6)));
+    Buffer.add_char buffer (Char.chr (0x80 lor (code land 0x3F))))
+  else if code <= 0xFFFF then (
+    Buffer.add_char buffer (Char.chr (0xE0 lor (code lsr 12)));
+    Buffer.add_char buffer (Char.chr (0x80 lor ((code lsr 6) land 0x3F)));
+    Buffer.add_char buffer (Char.chr (0x80 lor (code land 0x3F))))
+  else (
+    Buffer.add_char buffer (Char.chr (0xF0 lor (code lsr 18)));
+    Buffer.add_char buffer (Char.chr (0x80 lor ((code lsr 12) land 0x3F)));
+    Buffer.add_char buffer (Char.chr (0x80 lor ((code lsr 6) land 0x3F)));
+    Buffer.add_char buffer (Char.chr (0x80 lor (code land 0x3F))))
+
 let decode_json_string text start =
   let length = String.length text in
   assert (start >= 0);
@@ -70,18 +134,34 @@ let decode_json_string text start =
       | '"' -> Some (index + 1, Buffer.contents buffer)
       | '\\' when index + 1 < length ->
         let escaped = text.[index + 1] in
-        let decoded =
-          match escaped with
-          | '"' | '\\' | '/' -> escaped
-          | 'b' -> '\b'
-          | 'f' -> '\012'
-          | 'n' -> '\n'
-          | 'r' -> '\r'
-          | 't' -> '\t'
-          | _ -> escaped
-        in
-        Buffer.add_char buffer decoded;
-        loop (index + 2)
+        (match escaped with
+         | '"' | '\\' | '/' ->
+             Buffer.add_char buffer escaped;
+             loop (index + 2)
+         | 'b' ->
+             Buffer.add_char buffer '\b';
+             loop (index + 2)
+         | 'f' ->
+             Buffer.add_char buffer '\012';
+             loop (index + 2)
+         | 'n' ->
+             Buffer.add_char buffer '\n';
+             loop (index + 2)
+         | 'r' ->
+             Buffer.add_char buffer '\r';
+             loop (index + 2)
+         | 't' ->
+             Buffer.add_char buffer '\t';
+             loop (index + 2)
+         | 'u' -> (
+             match scalar_of_unicode_escape text (index + 2) with
+             | None -> None
+             | Some (after_escape, code) ->
+                 add_utf8_scalar buffer code;
+                 loop after_escape)
+         | _ ->
+             Buffer.add_char buffer escaped;
+             loop (index + 2))
       | character ->
         Buffer.add_char buffer character;
         loop (index + 1)
