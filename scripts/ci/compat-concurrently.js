@@ -1185,6 +1185,18 @@ const cases = [
     args: ["--no-color", "--teardown", "printf bye", "printf hey"],
   },
   {
+    name: "env teardown logs start and exit status",
+    upstream: "dist/bin/concurrently.js yargs .env('CONCURRENTLY') teardown default",
+    args: ["--no-color", "printf hey"],
+    env: { CONCURRENTLY_TEARDOWN: "printf bye" },
+  },
+  {
+    name: "cli teardown overrides env teardown",
+    upstream: "dist/bin/concurrently.js yargs CLI option precedence over env",
+    args: ["--no-color", "--teardown", "printf cli", "printf hey"],
+    env: { CONCURRENTLY_TEARDOWN: "printf env" },
+  },
+  {
     name: "empty teardown command exits cleanly",
     upstream: "bin/concurrently.spec.ts --teardown accepts shell-empty command",
     args: ["--no-color", "--teardown", "", "printf hey"],

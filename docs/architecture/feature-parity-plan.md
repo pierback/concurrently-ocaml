@@ -288,8 +288,9 @@ Currently mirrored deterministic behavior:
   negative/fractional retry delays, and invalid-delay timer warning text in
   formatted and raw modes.
 - `bin/concurrently.spec.ts` and `src/flow-control/teardown.spec.ts`:
-  teardown status messages, empty teardown commands, raw teardown output, and
-  raw-mode suppression of global teardown status messages.
+  teardown status messages, `CONCURRENTLY_TEARDOWN` env defaults, CLI teardown
+  precedence over env teardown, empty teardown commands, raw teardown output,
+  and raw-mode suppression of global teardown status messages.
 - `src/flow-control/kill-others.spec.ts` and `bin/concurrently.spec.ts`:
   `--kill-others`, `--kill-others-on-fail`, cancellation status messages, signal
   close output, success projection, configured `SIGINT` and `SIGUSR1` kill
@@ -464,6 +465,7 @@ Known divergences tracked as incomplete work:
    prefixes, template prefixes, no-prefix mode, prefix padding, grouped
    passthrough placeholders, disabled passthrough behavior, finite restart
    logging, negative restart retry-forever success, teardown status lines,
+   `CONCURRENTLY_TEARDOWN` defaults, CLI teardown precedence over env teardown,
    raw teardown behavior, PID prefix and template interpolation,
    npm-compatible unknown-option parsing, timing lifecycle
    messages and timing table shape for success, failure, names, hidden output,
