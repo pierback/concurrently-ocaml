@@ -243,8 +243,11 @@ Currently mirrored deterministic behavior:
   wildcard expansion for `npm:<glob>`, `yarn:<glob>`, `pnpm:<glob>`,
   `bun:<glob>`, and `node:<glob>`, Deno task wildcard expansion for
   `deno:<glob>` including JSONC comments/trailing commas and invalid-config
-  fallback to no tasks, wildcard-generated names, explicit name prefixes,
-  verbatim expansion of spaced script names, npm-compatible dropping of shell
+  fallback to no tasks, JavaScript `Object.keys` catalog projection for object
+  containers including duplicate-key collapse and integer-index ordering, array,
+  and non-empty string `scripts`/`tasks` values, wildcard-generated names,
+  explicit name prefixes, verbatim expansion of spaced script names,
+  npm-compatible dropping of shell
   conjunction suffixes after `&`, unanchored literal runner matches such as
   `printf pre && npm run build-*`, JSON-style escaped package-script keys, and
   invalid-`package.json` fallback to no scripts, and omission filters against
@@ -440,10 +443,11 @@ Known divergences tracked as incomplete work:
    short/full truecolor hex, and invalid-color fallback, shortcut expansion
    across npm/yarn/pnpm/bun/node/deno runners, package-script and Deno-task
    wildcard expansion, Deno JSONC trailing-comma and invalid-config fallback,
-   wildcard suffix truncation at `&`, embedded literal runner wildcard matching,
-   escaped script key decoding, invalid package JSON fallback, kill-others exit
-   projection, raw kill output, kill-on-fail behavior, max-process serialization
-   including restart-exhaustion queueing, npm-style
+   JavaScript `Object.keys` catalog projection for object and non-object
+   script/task containers, wildcard suffix truncation at `&`, embedded literal
+   runner wildcard matching, escaped script key decoding, invalid package JSON
+   fallback, kill-others exit projection, raw kill output, kill-on-fail behavior,
+   max-process serialization including restart-exhaustion queueing, npm-style
    max-process numeric coercion for zero, invalid, fractional, and negative values,
    fractional/invalid restart-count coercion, deterministic restart-after and
    kill-timeout warning/coercion behavior, queued-command suppression after

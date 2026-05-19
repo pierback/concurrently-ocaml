@@ -1,3 +1,5 @@
+module StringSet = Set.Make (String)
+
 let read_file path =
   match In_channel.with_open_text path In_channel.input_all with
   | contents -> Some contents
@@ -401,9 +403,71 @@ let skip_json_value text index =
       | '}' | ']' when depth > 0 -> loop (depth - 1) (index + 1)
       | ',' when depth = 0 -> index
       | '}' when depth = 0 -> index
+      | ']' when depth = 0 -> index
       | _ -> loop depth (index + 1)
   in
   loop 0 index
+
+let json_string_utf16_length text start =
+  let length = String.length text in
+  assert (start >= 0);
+  assert (start < length);
+  assert (text.[start] = '"');
+  let utf8_advance_and_width index =
+    let byte = Char.code text.[index] in
+    if byte < 0x80 then (index + 1, 1)
+    else if byte land 0xE0 = 0xC0 && index + 1 < length then (index + 2, 1)
+    else if byte land 0xF0 = 0xE0 && index + 2 < length then (index + 3, 1)
+    else if byte land 0xF8 = 0xF0 && index + 3 < length then (index + 4, 2)
+    else (index + 1, 1)
+  in
+  let rec loop index units =
+    if index = length then None
+    else
+      match text.[index] with
+      | '"' -> Some units
+      | '\\' when index + 1 < length && text.[index + 1] = 'u' -> (
+          match decode_hex4 text (index + 2) with
+          | Some (after_high, high)
+            when high_surrogate high
+                 && after_high + 6 <= length
+                 && text.[after_high] = '\\'
+                 && text.[after_high + 1] = 'u' -> (
+              match decode_hex4 text (after_high + 2) with
+              | Some (after_low, low) when low_surrogate low ->
+                  loop after_low (units + 2)
+              | Some _ | None -> loop after_high (units + 1))
+          | Some (after_escape, _) -> loop after_escape (units + 1)
+          | None -> None)
+      | '\\' when index + 1 < length -> loop (index + 2) (units + 1)
+      | '\\' -> None
+      | _ ->
+          let index, width = utf8_advance_and_width index in
+          loop index (units + width)
+  in
+  loop (start + 1) 0
+
+let decimal_indices count =
+  assert (count >= 0);
+  List.init count string_of_int
+
+let array_indices text array_start =
+  let length = String.length text in
+  assert (array_start >= 0);
+  assert (array_start < length);
+  assert (text.[array_start] = '[');
+  let rec loop index count =
+    let index = skip_whitespace text index in
+    if index >= length || text.[index] = ']' then decimal_indices count
+    else
+      let after_value = skip_json_value text index in
+      let next_index =
+        if after_value < length && text.[after_value] = ',' then after_value + 1
+        else after_value
+      in
+      loop next_index (count + 1)
+  in
+  loop (array_start + 1) 0
 
 let find_top_level_object_field text field_name =
   let length = String.length text in
@@ -431,30 +495,65 @@ let find_top_level_object_field text field_name =
           in
           let found =
             if String.equal key field_name then
-              if value_start < length && text.[value_start] = '{' then
-                Some value_start
-              else None
+              Some value_start
             else found
           in
           loop next_index found
     in
     loop (root_start + 1) None
 
+let javascript_array_index_max = 4_294_967_294
+
+let javascript_array_index key =
+  let length = String.length key in
+  if length = 0 then None
+  else if String.equal key "0" then Some 0
+  else if key.[0] = '0' then None
+  else
+    let rec loop index value =
+      if index = length then Some value
+      else
+        let character = key.[index] in
+        if character < '0' || character > '9' then None
+        else
+          let digit = Char.code character - Char.code '0' in
+          let limit = javascript_array_index_max in
+          if value > (limit - digit) / 10 then None
+          else loop (index + 1) ((value * 10) + digit)
+    in
+    loop 0 0
+
+type object_key = {
+  name : string;
+  array_index : int option;
+  insertion_index : int;
+}
+
+let compare_object_keys left right =
+  match (left.array_index, right.array_index) with
+  | Some left_index, Some right_index -> compare left_index right_index
+  | Some _, None -> -1
+  | None, Some _ -> 1
+  | None, None -> compare left.insertion_index right.insertion_index
+
+let object_key_names keys =
+  keys |> List.sort compare_object_keys |> List.map (fun key -> key.name)
+
 let object_keys text object_start =
   let length = String.length text in
   assert (object_start >= 0);
   assert (object_start < length);
   assert (text.[object_start] = '{');
-  let rec loop index keys =
+  let rec loop index seen insertion_index keys =
     let index = skip_whitespace text index in
-    if index >= length || text.[index] = '}' then List.rev keys
-    else if text.[index] <> '"' then List.rev keys
+    if index >= length || text.[index] = '}' then object_key_names keys
+    else if text.[index] <> '"' then object_key_names keys
     else
       match decode_json_string text index with
-      | None -> List.rev keys
+      | None -> object_key_names keys
       | Some (after_key, key) ->
         let after_key = skip_whitespace text after_key in
-        if after_key >= length || text.[after_key] <> ':' then List.rev keys
+        if after_key >= length || text.[after_key] <> ':' then object_key_names keys
         else
           let after_value =
             skip_json_value text (skip_whitespace text (after_key + 1))
@@ -463,14 +562,33 @@ let object_keys text object_start =
             if after_value < length && text.[after_value] = ',' then after_value + 1
             else after_value
           in
-          loop next_index (key :: keys)
+          if StringSet.mem key seen then loop next_index seen insertion_index keys
+          else
+            let object_key =
+              {
+                name = key;
+                array_index = javascript_array_index key;
+                insertion_index;
+              }
+            in
+            loop next_index (StringSet.add key seen) (insertion_index + 1)
+              (object_key :: keys)
   in
-  loop (object_start + 1) []
+  loop (object_start + 1) StringSet.empty 0 []
 
 let object_field_keys field_name text =
   match find_top_level_object_field text field_name with
   | None -> []
-  | Some object_start -> object_keys text object_start
+  | Some value_start -> (
+      match text.[value_start] with
+      | '{' -> object_keys text value_start
+      | '[' -> array_indices text value_start
+      | '"' -> (
+          match json_string_utf16_length text value_start with
+          | None -> []
+          | Some 0 -> []
+          | Some length -> decimal_indices length)
+      | _ -> [])
 
 let package_scripts ~cwd =
   match read_file (Filename.concat cwd "package.json") with
