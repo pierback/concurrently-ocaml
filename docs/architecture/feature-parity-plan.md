@@ -68,6 +68,12 @@ signal, process-tree teardown, and pipe implementations.
   package `SHA256SUMS` manifest against the installed native binary, and runs
   `conc`/`concurrently` from that install. Windows packaging is deliberately
   withheld until a Windows-native runner backend exists.
+- `npm run perf:concurrently` provides repeatable native-vs-pinned-npm timing
+  evidence for startup/version output, many short commands, and streaming
+  output. The harness validates both CLIs on the same bounded workloads and
+  reports median, mean, minimum, and median speedup without enforcing a fragile
+  host-dependent threshold. Current sample results are tracked in
+  `docs/architecture/performance-evidence.md`.
 
 ## Deepening Opportunities
 
@@ -557,6 +563,24 @@ stays capped at `command_count`.
 `max_processes` must bound process fan-out. Finite restart policy must bound
 attempts; infinite restart policy must still bound retained memory. Input
 routing must not accumulate unbounded pending writes to a dead command.
+
+`npm run perf:concurrently -- --iterations N --commands N --lines N` is the
+repeatable evidence harness for this sketch. It compares the local native binary
+against pinned `concurrently@9.2.1` on three bounded workloads:
+
+- `--version`, which captures launcher/startup overhead without child process
+  fan-out.
+- `N` raw short shell commands, which stresses scheduler and process startup
+  overhead while checking exact output byte counts.
+- `N` raw streamed lines from one command, which stresses stdout throughput and
+  formatter bypass overhead while checking exact output byte counts.
+
+The benchmark prints median, mean, and minimum durations for both
+implementations plus median speedup. It intentionally does not fail on timing
+thresholds because host load, CPU frequency policy, shell startup cost, and npm
+installation layout affect absolute numbers; release review should compare the
+reported ratios on the target build hosts. Recorded sample runs live in
+`docs/architecture/performance-evidence.md`.
 
 ## Open Questions
 
