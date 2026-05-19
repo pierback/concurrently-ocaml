@@ -21,11 +21,13 @@ const firstInputEchoCommand =
   "node -e \"process.stdin.once('data',d=>{process.stdout.write('first:'+d);process.exit(0)})\"";
 const secondInputEchoCommand =
   "node -e \"process.stdin.once('data',d=>{process.stdout.write('second:'+d);process.exit(0)})\"";
+const delayedOkCommand = "sh -c 'sleep 0.05; printf ok'";
 const forceBasicColorEnv = { NO_COLOR: null, FORCE_COLOR: "1" };
 const forceTruecolorEnv = { NO_COLOR: null, FORCE_COLOR: "3" };
 const shortcutFixture = createShortcutFixture();
 const escapedScriptFixture = createEscapedScriptFixture();
 const invalidPackageFixture = createInvalidPackageFixture();
+const invalidDenoFixture = createInvalidDenoFixture();
 const restartFixture = createRestartFixture();
 
 if (!existsSync(localBinary)) {
@@ -777,6 +779,41 @@ const cases = [
     args: ["--no-color", "-g", "npm:build-*"],
   },
   {
+    name: "deno wildcard accepts jsonc trailing commas",
+    upstream: "dist/src/jsonc.js trailing comma parser",
+    cwd: invalidDenoFixture.validCwd,
+    args: ["--no-color", "-g", "deno:task-*"],
+    env: invalidDenoFixture.fakeRunnerEnv,
+  },
+  {
+    name: "deno wildcard accepts carriage return line comment",
+    upstream: "dist/src/jsonc.js JavaScript line comment regex",
+    cwd: invalidDenoFixture.carriageReturnCwd,
+    args: ["--no-color", "-g", "deno:task-*"],
+    env: invalidDenoFixture.fakeRunnerEnv,
+  },
+  {
+    name: "deno wildcard ignores invalid jsonc",
+    upstream: "dist/src/command-parser/expand-wildcard.js JSONC parse failure fallback",
+    cwd: invalidDenoFixture.invalidCwd,
+    args: ["--no-color", "-g", "deno:task-*"],
+    env: invalidDenoFixture.fakeRunnerEnv,
+  },
+  {
+    name: "deno wildcard ignores unterminated jsonc block comment",
+    upstream: "dist/src/jsonc.js requires closed block comments",
+    cwd: invalidDenoFixture.unterminatedCommentCwd,
+    args: ["--no-color", "-g", "deno:task-*"],
+    env: invalidDenoFixture.fakeRunnerEnv,
+  },
+  {
+    name: "deno wildcard uses last duplicate tasks field",
+    upstream: "JSON.parse duplicate object field semantics",
+    cwd: invalidDenoFixture.duplicateCwd,
+    args: ["--no-color", "-g", "deno:task-*"],
+    env: invalidDenoFixture.fakeRunnerEnv,
+  },
+  {
     name: "npm wildcard omission matches full script name",
     upstream: "dist/src/command-parser/expand-wildcard.js omission filter",
     cwd: shortcutFixture.cwd,
@@ -1118,7 +1155,7 @@ const cases = [
       "1.5",
       "-k",
       "trap '' TERM; sleep 1",
-      "printf ok",
+      delayedOkCommand,
     ],
   },
   {
@@ -1130,7 +1167,7 @@ const cases = [
       "0.5",
       "-k",
       "trap '' TERM; sleep 1",
-      "printf ok",
+      delayedOkCommand,
     ],
   },
   {
@@ -1142,7 +1179,7 @@ const cases = [
       "-1.5",
       "-k",
       "trap '' TERM; sleep 1",
-      "printf ok",
+      delayedOkCommand,
     ],
     normalizeStderr: normalizeNodeTimerWarningPid,
   },
@@ -1156,7 +1193,7 @@ const cases = [
       "-1",
       "-k",
       "trap '' TERM; sleep 1",
-      "printf ok",
+      delayedOkCommand,
     ],
     normalizeStderr: normalizeNodeTimerWarningPid,
   },
@@ -1175,7 +1212,7 @@ const cases = [
       "bogus",
       "-k",
       "trap '' TERM; sleep 1",
-      "printf ok",
+      delayedOkCommand,
     ],
   },
   {
@@ -1397,6 +1434,7 @@ const cases = [
     shortcutFixture.cleanup();
     escapedScriptFixture.cleanup();
     invalidPackageFixture.cleanup();
+    invalidDenoFixture.cleanup();
     restartFixture.cleanup();
   }
 })().catch((error) => {
@@ -1673,6 +1711,58 @@ function createInvalidPackageFixture() {
     cwd,
     cleanup() {
       rmSync(cwd, { force: true, recursive: true });
+    },
+  };
+}
+
+function createInvalidDenoFixture() {
+  const root = mkdtempSync(resolve(tmpdir(), "concurrently-ocaml-deno-jsonc-"));
+  const bin = resolve(root, "bin");
+  const validCwd = resolve(root, "valid");
+  const carriageReturnCwd = resolve(root, "carriage-return");
+  const invalidCwd = resolve(root, "invalid");
+  const unterminatedCommentCwd = resolve(root, "unterminated-comment");
+  const duplicateCwd = resolve(root, "duplicate");
+  mkdirSync(bin);
+  mkdirSync(validCwd);
+  mkdirSync(carriageReturnCwd);
+  mkdirSync(invalidCwd);
+  mkdirSync(unterminatedCommentCwd);
+  mkdirSync(duplicateCwd);
+  const deno = resolve(bin, "deno");
+  writeFileSync(deno, `#!/bin/sh\nprintf 'deno:%s:%s' "$1" "$2"\n`);
+  chmodSync(deno, 0o700);
+  writeFileSync(
+    resolve(validCwd, "deno.jsonc"),
+    `{// comment\n"tasks":{"task-a":"printf a",},}\n`
+  );
+  writeFileSync(
+    resolve(carriageReturnCwd, "deno.jsonc"),
+    `{// comment\r"tasks":{"task-a":"printf a"}}`
+  );
+  writeFileSync(
+    resolve(invalidCwd, "deno.json"),
+    `{"tasks":{"task-a":"printf a"}`
+  );
+  writeFileSync(
+    resolve(unterminatedCommentCwd, "deno.jsonc"),
+    `{"tasks":{"task-a":"printf a"}}/*`
+  );
+  writeFileSync(
+    resolve(duplicateCwd, "deno.json"),
+    `{"tasks":{"task-old":"printf old"},"tasks":{"task-new":"printf new"}}`
+  );
+  return {
+    validCwd,
+    carriageReturnCwd,
+    invalidCwd,
+    unterminatedCommentCwd,
+    duplicateCwd,
+    fakeRunnerEnv: {
+      PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
+    },
+    cleanup() {
+      rmSync(root, { force: true, recursive: true });
     },
   };
 }
