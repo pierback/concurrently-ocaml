@@ -1,4 +1,8 @@
-type color_mode = Always | Never
+type color_mode =
+  | Ansi16
+  | Ansi256
+  | Truecolor
+  | Never
 
 type options = {
   labels : string list option;
@@ -144,7 +148,7 @@ let ansi_sequence codes = "\027[" ^ ansi_code_text codes ^ "m"
 let ansi_colorize t (styles : Output_color.style list) text =
   match (t.options.color_mode, styles) with
   | Never, _ | _, [] -> text
-  | Always, _ ->
+  | Ansi16, _ | Ansi256, _ | Truecolor, _ ->
       let opens =
         styles
         |> List.map (fun style -> ansi_sequence style.Output_color.open_codes)
@@ -159,18 +163,29 @@ let ansi_colorize t (styles : Output_color.style list) text =
 
 let reset_colorize t text = ansi_colorize t [ Output_color.reset_style ] text
 
+let color_level = function
+  | Ansi16 -> 1
+  | Ansi256 -> 2
+  | Truecolor -> 3
+  | Never -> 0
+
 let prefix_label t command tag =
   let plain_label =
     if Output_prefix.brackets_label t.prefix_mode then Printf.sprintf "[%s]" tag
     else tag
   in
-  match Command.prefix_color command with
-  | Some prefix_color -> (
+  match (t.options.color_mode, Command.prefix_color command) with
+  | Never, _ -> plain_label
+  | _, Some prefix_color -> (
       let command_index = Command.index command in
-      match Output_color.prefix_styles ~command_index prefix_color with
+      match
+        Output_color.prefix_styles
+          ~color_level:(color_level t.options.color_mode)
+          ~command_index prefix_color
+      with
       | Ok styles -> ansi_colorize t styles plain_label
       | Error _ -> reset_colorize t plain_label)
-  | None -> reset_colorize t plain_label
+  | _, None -> reset_colorize t plain_label
 
 let format_lines t ~wall_time ~command ~process_id ~chunks =
   match chunks with

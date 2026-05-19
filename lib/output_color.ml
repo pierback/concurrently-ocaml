@@ -18,7 +18,42 @@ let hex_nibble_byte value offset =
   | Some nibble -> Some ((nibble * 16) + nibble)
   | None -> None
 
-let hex_color_codes value =
+let round_positive value =
+  assert (value >= 0.0);
+  int_of_float (floor (value +. 0.5))
+
+let ansi16_code red green blue =
+  let value =
+    [ red; green; blue ] |> List.fold_left max 0 |> float_of_int
+    |> fun channel -> (channel /. 255.0) *. 100.0
+  in
+  let value = round_positive (value /. 50.0) in
+  if value = 0 then 30
+  else
+    let bit channel = round_positive (float_of_int channel /. 255.0) in
+    let code = 30 + ((bit blue lsl 2) lor (bit green lsl 1) lor bit red) in
+    if value = 2 then code + 60 else code
+
+let ansi256_code red green blue =
+  if red = green && green = blue then
+    if red < 8 then 16
+    else if red > 248 then 231
+    else round_positive ((float_of_int (red - 8) /. 247.0) *. 24.0) + 232
+  else
+    16
+    + (36 * round_positive ((float_of_int red /. 255.0) *. 5.0))
+    + (6 * round_positive ((float_of_int green /. 255.0) *. 5.0))
+    + round_positive ((float_of_int blue /. 255.0) *. 5.0)
+
+let foreground_color_codes ~color_level red green blue =
+  assert (color_level >= 1);
+  assert (color_level <= 3);
+  match color_level with
+  | 1 -> [ ansi16_code red green blue ]
+  | 2 -> [ 38; 5; ansi256_code red green blue ]
+  | _ -> [ 38; 2; red; green; blue ]
+
+let hex_color_codes ~color_level value =
   match String.length value with
   | 4 when value.[0] = '#' -> (
       match
@@ -26,11 +61,13 @@ let hex_color_codes value =
           hex_nibble_byte value 2,
           hex_nibble_byte value 3 )
       with
-      | Some red, Some green, Some blue -> Some [ 38; 2; red; green; blue ]
+      | Some red, Some green, Some blue ->
+          Some (foreground_color_codes ~color_level red green blue)
       | _ -> None)
   | 7 when value.[0] = '#' -> (
       match (hex_byte value 1, hex_byte value 3, hex_byte value 5) with
-      | Some red, Some green, Some blue -> Some [ 38; 2; red; green; blue ]
+      | Some red, Some green, Some blue ->
+          Some (foreground_color_codes ~color_level red green blue)
       | _ -> None)
   | _ -> None
 
@@ -95,7 +132,7 @@ let foreground_style codes = { open_codes = codes; close_codes = [ 39 ] }
 let background_style codes = { open_codes = codes; close_codes = [ 49 ] }
 let reset_style = { open_codes = [ 0 ]; close_codes = [ 0 ] }
 
-let prefix_part_styles ~command_index part =
+let prefix_part_styles ~color_level ~command_index part =
   let part = lowercase_trim part in
   if part = "" || part = "reset" then Ok [ reset_style ]
   else if part = "auto" then
@@ -113,11 +150,13 @@ let prefix_part_styles ~command_index part =
                 match modifier_style part with
                 | Some style -> Ok [ style ]
                 | None -> (
-                    match hex_color_codes part with
+                    match hex_color_codes ~color_level part with
                     | Some codes -> Ok [ foreground_style codes ]
                     | None -> Error part))))
 
-let prefix_styles ~command_index prefix_color =
+let prefix_styles ~color_level ~command_index prefix_color =
+  assert (color_level >= 1);
+  assert (color_level <= 3);
   assert (command_index >= 0);
   prefix_color |> String.split_on_char '.'
   |> List.fold_left
@@ -125,7 +164,7 @@ let prefix_styles ~command_index prefix_color =
          match result with
          | Error _ as error -> error
          | Ok styles -> (
-             match prefix_part_styles ~command_index part with
+             match prefix_part_styles ~color_level ~command_index part with
              | Ok part_styles -> Ok (styles @ part_styles)
              | Error _ as error -> error))
        (Ok [])

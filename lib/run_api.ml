@@ -61,7 +61,7 @@ let create ?cwd ?(policy = Run_policy.default) ?labels ?prefix
     ?(prefix_length = 10.0) ?(pad_prefix = false)
     ?(timestamp_format = "yyyy-MM-dd HH:mm:ss.SSS") ?(spacious = false)
     ?(timings = false) ?(group = false) ?(raw = false)
-    ?(color_mode = Output_formatter.Always) ?(handle_input = false)
+    ?(color_mode = Output_formatter.Truecolor) ?(handle_input = false)
     ?(default_input_target = "0") inputs =
   match create_commands ~cwd ~global_raw:raw inputs with
   | Error _ as error -> error

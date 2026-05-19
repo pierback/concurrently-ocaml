@@ -734,7 +734,7 @@ let test_output_formatter_prefix_colors () =
   in
   let formatter =
     ok
-      (create_formatter ~color_mode:Output_formatter.Always
+      (create_formatter ~color_mode:Output_formatter.Truecolor
          [ api; worker; reset; invalid; short_hex ])
   in
   assert (output api formatter = [ "\027[31m\027[1m[0]\027[22m\027[39m ready" ]);

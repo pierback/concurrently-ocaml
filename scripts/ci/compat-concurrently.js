@@ -21,8 +21,14 @@ const firstInputEchoCommand =
   "node -e \"process.stdin.once('data',d=>{process.stdout.write('first:'+d);process.exit(0)})\"";
 const secondInputEchoCommand =
   "node -e \"process.stdin.once('data',d=>{process.stdout.write('second:'+d);process.exit(0)})\"";
+const forceNoColorEnv = { NO_COLOR: null, FORCE_COLOR: "0" };
+const forceFalseColorEnv = { NO_COLOR: null, FORCE_COLOR: "false" };
 const forceBasicColorEnv = { NO_COLOR: null, FORCE_COLOR: "1" };
+const forceAnsi256ColorEnv = { NO_COLOR: null, FORCE_COLOR: "2" };
+const forceAnsi256SuffixColorEnv = { NO_COLOR: null, FORCE_COLOR: "2foo" };
 const forceTruecolorEnv = { NO_COLOR: null, FORCE_COLOR: "3" };
+const forceSpacedZeroColorEnv = { NO_COLOR: null, FORCE_COLOR: " 0" };
+const forceNanColorEnv = { NO_COLOR: null, FORCE_COLOR: "NaN" };
 const shortcutFixture = createShortcutFixture();
 const escapedScriptFixture = createEscapedScriptFixture();
 const invalidPackageFixture = createInvalidPackageFixture();
@@ -424,6 +430,60 @@ const cases = [
     upstream: "dist/src/logger.js chalk.hex",
     args: ["-c", "#336699", "printf one"],
     env: forceTruecolorEnv,
+  },
+  {
+    name: "colored hex prefix basic color level",
+    upstream: "chalk.hex with supports-color level 1",
+    args: ["-c", "#23de43", "printf one"],
+    env: forceBasicColorEnv,
+  },
+  {
+    name: "colored hex prefix ansi256 color level",
+    upstream: "chalk.hex with supports-color level 2",
+    args: ["-c", "#23de43", "printf one"],
+    env: forceAnsi256ColorEnv,
+  },
+  {
+    name: "colored hex prefix parse-int ansi256 color level",
+    upstream: "supports-color FORCE_COLOR parseInt coercion",
+    args: ["-c", "#23de43", "printf one"],
+    env: forceAnsi256SuffixColorEnv,
+  },
+  {
+    name: "colored hex prefix force color zero disables color",
+    upstream: "chalk FORCE_COLOR=0 disables color",
+    args: ["-c", "#23de43", "printf one"],
+    env: forceNoColorEnv,
+  },
+  {
+    name: "colored hex prefix spaced zero disables color",
+    upstream: "supports-color FORCE_COLOR parseInt whitespace coercion",
+    args: ["-c", "#23de43", "printf one"],
+    env: forceSpacedZeroColorEnv,
+  },
+  {
+    name: "colored hex prefix nan disables color",
+    upstream: "chalk with invalid FORCE_COLOR value",
+    args: ["-c", "#23de43", "printf one"],
+    env: forceNanColorEnv,
+  },
+  {
+    name: "colored hex prefix force color false disables color",
+    upstream: "supports-color FORCE_COLOR=false disables color",
+    args: ["-c", "#23de43", "printf one"],
+    env: forceFalseColorEnv,
+  },
+  {
+    name: "force color overrides no color flag",
+    upstream: "supports-color FORCE_COLOR env overrides --no-color flag",
+    args: ["--no-color", "-c", "red", "printf one"],
+    env: forceBasicColorEnv,
+  },
+  {
+    name: "force color overrides no color env default",
+    upstream: "supports-color FORCE_COLOR env overrides yargs no-color default",
+    args: ["-c", "red", "printf one"],
+    env: { ...forceBasicColorEnv, CONCURRENTLY_NO_COLOR: "true" },
   },
   {
     name: "colored short hex prefix truecolor",

@@ -25,6 +25,52 @@ let print_deprecation_warnings deprecated_name_separator_used =
       "[concurrently] name-separator is deprecated. Use commas as name \
        separators instead."
 
+let parse_force_color_int value =
+  let length = String.length value in
+  let rec skip_whitespace index =
+    if index >= length then index
+    else
+      match value.[index] with
+      | ' ' | '\t' | '\n' | '\r' -> skip_whitespace (index + 1)
+      | _ -> index
+  in
+  let start = skip_whitespace 0 in
+  if start >= length then None
+  else
+    let sign, digit_start =
+      match value.[start] with
+      | '-' -> (-1, start + 1)
+      | '+' -> (1, start + 1)
+      | _ -> (1, start)
+    in
+    let rec parse_digits index acc saw_digit =
+      if index >= length then if saw_digit then Some (sign * acc) else None
+      else
+        match value.[index] with
+        | '0' .. '9' as digit ->
+            let digit_value = Char.code digit - Char.code '0' in
+            let next_acc = min 4 ((acc * 10) + digit_value) in
+            parse_digits (index + 1) next_acc true
+        | _ -> if saw_digit then Some (sign * acc) else None
+    in
+    parse_digits digit_start 0 false
+
+let color_mode_of_force_color = function
+  | "false" | "0" -> Output_formatter.Never
+  | "true" | "" -> Output_formatter.Ansi16
+  | value -> (
+      match parse_force_color_int value with
+      | Some level when level <= 0 -> Output_formatter.Never
+      | Some 1 -> Output_formatter.Ansi16
+      | Some 2 -> Output_formatter.Ansi256
+      | Some _ -> Output_formatter.Truecolor
+      | None -> Output_formatter.Never)
+
+let color_mode ~no_color =
+  match Sys.getenv_opt "FORCE_COLOR" with
+  | Some value -> color_mode_of_force_color value
+  | None -> if no_color then Output_formatter.Never else Output_formatter.Truecolor
+
 let npm_compatible_help =
   {help|concurrently [options] <command ...>
 
@@ -150,9 +196,7 @@ let run_config env config =
         timings = display.Cli_config.timings;
         group = display.Cli_config.group;
         raw = display.Cli_config.raw;
-        color_mode =
-          (if display.Cli_config.no_color then Output_formatter.Never
-           else Output_formatter.Always);
+        color_mode = color_mode ~no_color:display.Cli_config.no_color;
       }
     in
     let clock = Eio.Stdenv.clock env in
