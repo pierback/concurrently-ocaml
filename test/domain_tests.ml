@@ -56,7 +56,8 @@ let test_command_validation () =
   assert (Command.raw command);
   assert (Command.hidden command);
   assert (Command.ipc command);
-  expect_error `Empty_command (Command.create ~index:0 " ");
+  assert (Result.is_ok (Command.create ~index:0 " "));
+  expect_error `Empty_command (Command.create ~index:0 "");
   assert (Result.is_ok (Command.create ~allow_empty:true ~index:0 ""));
   expect_error `Empty_cwd (Command.create ~index:0 ~cwd:" " "echo no");
   expect_error `Negative_index (Command.create ~index:(-1) "echo no")
@@ -294,7 +295,7 @@ let test_run_api_global_raw_can_be_overridden_per_command () =
 let test_run_api_validation () =
   expect_error
     (`Command_error (0, `Empty_command))
-    (Run_api.create [ Run_api.command " " ]);
+    (Run_api.create [ Run_api.command "" ]);
   expect_error (`Run_spec_error `Empty_command_list) (Run_api.create []);
   assert (
     Result.is_ok
