@@ -237,7 +237,8 @@ Currently mirrored deterministic behavior:
   before command binding.
 - Published `dist/src/logger.js`/`dist/src/defaults.js` color behavior:
   byte-compatible ANSI output for default reset-colored prefixes, `red.bold`,
-  `bgRed.white.bold`, `bgBlueBright.white`, `gray.dim`, `auto`, `hidden`,
+  `bgRed.white.bold`, `bgBlueBright.white`, `gray.dim`, `grey`, `auto`,
+  `hidden`, chained modifiers such as `italic.inverse.strikethrough`,
   short/full truecolor hex prefixes, invalid-color fallback, and
   published-package function-style fallback for `rgb(...)` and `ansi256(...)`
   values under deterministic `FORCE_COLOR` settings, including hex-color
@@ -275,7 +276,8 @@ Currently mirrored deterministic behavior:
   explicit name prefixes, verbatim expansion of spaced script names,
   npm-compatible dropping of shell
   conjunction suffixes after `&`, unanchored literal runner matches such as
-  `printf pre && npm run build-*`, JSON-style escaped package-script keys, and
+  `printf pre && npm run build-*`, regex-special glob characters treated as
+  literal text around the first `*`, JSON-style escaped package-script keys,
   invalid-`package.json` fallback to no scripts, and omission filters against
   full script names for deterministic package-script cases, plus no-match
   wildcard expansion as a clean no-output no-op.
@@ -285,8 +287,8 @@ Currently mirrored deterministic behavior:
   later attempt succeeds, `Infinity` retry-forever behavior, fractional and
   invalid `--restart-tries` completion status projection, and deterministic
   `--restart-after` coercion for unused invalid values, blank-as-zero values,
-  negative/fractional retry delays, and invalid-delay timer warning text in
-  formatted and raw modes.
+  negative/fractional retry delays, exponential retry delay for finite retries,
+  and invalid-delay timer warning text in formatted and raw modes.
 - `bin/concurrently.spec.ts` and `src/flow-control/teardown.spec.ts`:
   teardown status messages, `CONCURRENTLY_TEARDOWN` env defaults, CLI teardown
   precedence over env teardown, empty teardown commands, raw teardown output,
@@ -474,8 +476,9 @@ Known divergences tracked as incomplete work:
    whitespace-only command execution, finite restart attempts, custom
    timestamp formats, and deterministic kill-on-fail signalling with runtime
    timestamps/durations normalized, published-package ANSI prefix color output
-   for reset defaults, `red.bold`, `bgRed.white.bold`, `gray.dim`, `hidden`,
-   short/full truecolor hex, hex downsampling at basic and 256-color levels,
+   for reset defaults, `red.bold`, `bgRed.white.bold`, `gray.dim`, `grey`,
+   `hidden`, chained modifiers, short/full truecolor hex, hex downsampling at
+   basic and 256-color levels,
    parse-int-style `FORCE_COLOR` numeric coercion, invalid `FORCE_COLOR`
    suppression, `FORCE_COLOR=0`/`false` suppression, `FORCE_COLOR`
    precedence over `--no-color`/`CONCURRENTLY_NO_COLOR`, and invalid-color fallback, shortcut expansion
@@ -483,14 +486,16 @@ Known divergences tracked as incomplete work:
    wildcard expansion, Deno JSONC trailing-comma and invalid-config fallback,
    JavaScript `Object.keys` catalog projection for object and non-object
    script/task containers, wildcard suffix truncation at `&`, embedded literal
-   runner wildcard matching, escaped script key decoding, invalid package JSON
-   fallback, kill-others exit projection, raw kill output, kill-on-fail behavior,
+   runner wildcard matching, literal regexp-special glob characters, escaped
+   script key decoding, invalid package JSON fallback, kill-others exit
+   projection, raw kill output, kill-on-fail behavior,
    serialized success-condition exit projection for `first`, `last`, selected
    command index/name, and negated command-name selectors,
    max-process serialization including restart-exhaustion queueing, npm-style
    max-process numeric coercion for zero, invalid, fractional, and negative values,
-   fractional/invalid restart-count coercion, deterministic restart-after and
-   kill-timeout warning/coercion behavior, queued-command suppression after
+   fractional/invalid restart-count coercion, deterministic restart-after
+   coercion including exponential finite retry delay, kill-timeout
+   warning/coercion behavior, queued-command suppression after
    kill-on-success/failure, input forwarding, explicit index and command-name
    input routing, whole-stdin-chunk input routing, version and help flag aliases,
    and default input target routing. The Ubuntu CI build runs this harness after
