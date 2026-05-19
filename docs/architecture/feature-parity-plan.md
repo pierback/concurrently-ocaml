@@ -45,6 +45,8 @@ signal, process-tree teardown, and pipe implementations.
   close-status mapping. POSIX backend conformance tests now cover cwd/env
   propagation, stdout/stderr pipes, stdin writes and close, process identity,
   post-exit signal no-ops, process-group signalling, and close-status mapping.
+  Runner backend-boundary tests cover spawn exceptions, retry after spawn
+  failure, and teardown spawn failure isolation.
 - The blocking `Unix.open_process_full` / `Unix.fork` / `Unix.waitpid`
   orchestration has been removed from the executable.
 - Output now flows through structured `Output_event.t` callbacks as lines are
@@ -378,8 +380,11 @@ Known divergences tracked as incomplete work:
    Teardown commands run after the main run drains, emit raw output, and do not
    alter the main exit code.
    POSIX backend conformance tests now directly exercise the backend contract
-   below the Runner. Remaining Runner work: stronger process-level parity tests
-   for scheduler and cancellation edge cases.
+   below the Runner. Runner backend-boundary tests now prove spawn exceptions
+   become close events, retry through the same close-event path, and teardown
+   spawn failures remain isolated from main command exit projection. Remaining
+   Runner work: stronger process-level parity tests for scheduler and
+   cancellation edge cases.
 
 5. Output formatter parity
 
@@ -515,10 +520,11 @@ Known divergences tracked as incomplete work:
    `Posix_runner_backend.backend`. The POSIX backend owns `/bin/sh`, Eio POSIX
    spawning, process-group signalling, pipe creation, stdin writes, process
    identity, and process close-status mapping. POSIX backend conformance tests
-   cover the current backend contract without depending on npm availability.
-   Remaining backend work: add a Windows backend with native shell and
-   process-tree semantics, plus broader backend conformance for spawn failures
-   and platform-specific signal labels.
+   cover the current backend contract without depending on npm availability,
+   while Runner backend-boundary tests cover spawn-failure projection above the
+   backend seam. Remaining backend work: add a Windows backend with native shell
+   and process-tree semantics, plus broader conformance for platform-specific
+   signal labels.
 
 ## Test Strategy
 

@@ -2668,6 +2668,102 @@ let test_runner_executes_teardown_after_empty_expansion () =
         "--> Teardown command \"cleanup\" exited with code 0";
       ])
 
+let test_runner_records_spawn_failure_as_close_event () =
+  let backend =
+    {
+      Runner_backend.spawn =
+        (fun ~sw:_ ~command:_ -> failwith "spawn boom");
+    }
+  in
+  let result, _events =
+    run_commands_with_backend_events ~backend ~policy:Run_policy.default
+      [ command 0 "boom" ]
+  in
+  let result = ok result in
+  let expected_message = Printexc.to_string (Failure "spawn boom") in
+  assert (Run_result.exit_code result = 1);
+  match Run_result.close_events result with
+  | [ close_event ] ->
+      assert (Close_event.attempt close_event = 0);
+      assert (not (Close_event.killed close_event));
+      assert (
+        Close_event.status close_event
+        = Close_event.Spawn_error expected_message)
+  | _ -> assert false
+
+let test_runner_retries_spawn_failure () =
+  let spawn_count = ref 0 in
+  let backend =
+    {
+      Runner_backend.spawn =
+        (fun ~sw:_ ~command:_ ->
+          let attempt = !spawn_count in
+          incr spawn_count;
+          if attempt = 0 then failwith "spawn once"
+          else
+            backend_process
+              ~stdout:(Eio.Flow.string_source "retry-output\n")
+              ~await:(fun () -> Close_event.Exited 0)
+              ());
+    }
+  in
+  let policy = ok (Run_policy.create ~restart_tries:1 ()) in
+  let result, events =
+    run_commands_with_backend_events ~backend ~policy [ command 0 "retry" ]
+  in
+  let result = ok result in
+  let expected_message = Printexc.to_string (Failure "spawn once") in
+  let close_events = Run_result.close_events result in
+  assert (!spawn_count = 2);
+  assert (Run_result.exit_code result = 0);
+  assert (List.length close_events = 2);
+  assert (List.mem "retry-output" (output_chunks events));
+  assert (
+    List.exists
+      (fun close_event ->
+        Close_event.attempt close_event = 0
+        && Close_event.status close_event
+           = Close_event.Spawn_error expected_message)
+      close_events);
+  assert (
+    List.exists
+      (fun close_event ->
+        Close_event.attempt close_event = 1
+        && Close_event.status close_event = Close_event.Exited 0)
+      close_events)
+
+let test_runner_reports_teardown_spawn_failure_without_affecting_exit_code () =
+  let main_command = command 0 "main" in
+  let teardown_command = ok (Command.create ~index:1 ~raw:true "cleanup") in
+  let policy = ok (Run_policy.create ~teardown:[ teardown_command ] ()) in
+  let backend =
+    {
+      Runner_backend.spawn =
+        (fun ~sw:_ ~command ->
+          match Command.text command with
+          | "main" ->
+              backend_process
+                ~stdout:(Eio.Flow.string_source "main-output\n")
+                ~await:(fun () -> Close_event.Exited 0)
+                ()
+          | "cleanup" -> failwith "cleanup spawn boom"
+          | _ -> assert false);
+    }
+  in
+  let result, events =
+    run_commands_with_backend_events ~backend ~policy [ main_command ]
+  in
+  let result = ok result in
+  let expected_error =
+    "teardown command failed to spawn: "
+    ^ Printexc.to_string (Failure "cleanup spawn boom")
+  in
+  assert (Run_result.exit_code result = 0);
+  assert (List.length (Run_result.close_events result) = 1);
+  assert (output_chunks events = [ "main-output"; expected_error ]);
+  assert (
+    status_messages events = [ "--> Running teardown command \"cleanup\"" ])
+
 let test_runner_reports_output_reader_failure () =
   let backend =
     {
@@ -3484,6 +3580,9 @@ let () =
   test_runner_uses_backend_boundary ();
   test_runner_executes_teardown_without_affecting_exit_code ();
   test_runner_executes_teardown_after_empty_expansion ();
+  test_runner_records_spawn_failure_as_close_event ();
+  test_runner_retries_spawn_failure ();
+  test_runner_reports_teardown_spawn_failure_without_affecting_exit_code ();
   test_runner_reports_output_reader_failure ();
   test_runner_signals_process_when_output_emit_fails ();
   test_runner_keeps_retry_during_output_drain ();
