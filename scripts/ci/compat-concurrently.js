@@ -136,6 +136,26 @@ const cases = [
     args: ["--no-color", "sh -c 'exit 3'"],
   },
   {
+    name: "empty double quoted command is not stripped",
+    upstream: "dist/src/command-parser/strip-quotes.js requires quoted content",
+    args: ["--no-color", "\"\""],
+  },
+  {
+    name: "empty single quoted command is not stripped",
+    upstream: "dist/src/command-parser/strip-quotes.js requires quoted content",
+    args: ["--no-color", "''"],
+  },
+  {
+    name: "whitespace command runs as shell no-op",
+    upstream: "dist/src/concurrently.js command assertion only rejects empty strings",
+    args: ["--no-color", " "],
+  },
+  {
+    name: "quoted whitespace command strips then runs as shell no-op",
+    upstream: "dist/src/command-parser/strip-quotes.js strips non-empty quoted content",
+    args: ["--no-color", "\" \""],
+  },
+  {
     name: "formatted stderr is emitted on stdout",
     upstream: "src/logger.spec.ts output stream routing",
     args: ["--no-color", "definitely-not-a-command-xyz"],

@@ -28,6 +28,14 @@ let test_preserves_explicit_shortcut_name () =
   assert (command_texts inputs = [ "npm run print" ]);
   assert (command_names inputs = [ "custom" ])
 
+let test_preserves_empty_quoted_commands () =
+  let inputs =
+    expand ~cwd:None ~passthrough_arguments:None
+      ~command_texts:[ "\"\""; "''"; "\" \"" ] ~names:None
+  in
+  assert (command_texts inputs = [ "\"\""; "''"; " " ]);
+  assert (command_names inputs = [ ""; ""; "" ])
+
 let test_expands_passthrough_after_shortcuts () =
   let inputs =
     expand ~cwd:None
@@ -202,6 +210,7 @@ let test_invalid_wildcard_omission_is_error () =
 let () =
   test_expands_shortcuts_and_effective_names ();
   test_preserves_explicit_shortcut_name ();
+  test_preserves_empty_quoted_commands ();
   test_expands_passthrough_after_shortcuts ();
   test_expands_non_npm_shortcuts ();
   test_wildcard_scripts_are_not_shell_quoted ();

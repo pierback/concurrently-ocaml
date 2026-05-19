@@ -226,6 +226,14 @@ Currently mirrored deterministic behavior:
   `CONCURRENTLY_PREFIX_COLORS` environment defaults.
 - `src/command-parser/expand-arguments.spec.ts` and `bin/concurrently.spec.ts`:
   passthrough placeholder expansion and disabled passthrough behavior.
+- Published `dist/src/command-parser/strip-quotes.js`: surrounding command
+  quotes are stripped only when they enclose non-empty content, so `""` and
+  `''` remain literal shell commands and fail at runtime instead of being
+  rejected during native validation, while quoted whitespace strips to a
+  whitespace-only shell no-op.
+- Published `dist/src/concurrently.js`: command validation rejects empty string
+  commands but accepts whitespace-only commands, leaving shell execution to
+  determine the final status.
 - Published `dist/src/command-parser/expand-shortcut.js`: simple command
   shortcut expansion (`npm:<script>`, `yarn:<script>`, `pnpm:<script>`,
   `bun:<script>`, `node:<script>`, `deno:<script>`), generated default names,
@@ -422,15 +430,16 @@ Known divergences tracked as incomplete work:
    raw teardown behavior, PID prefix and template interpolation,
    npm-compatible unknown-option parsing, timing lifecycle
    messages and timing table shape for success, failure, names, hidden output,
-  raw suppression, grouped sorted output, finite restart attempts, custom
-  timestamp formats, and deterministic kill-on-fail signalling with runtime
-  timestamps/durations normalized, published-package ANSI prefix color output
-  for reset defaults, `red.bold`, `bgRed.white.bold`, `gray.dim`, `hidden`,
-  short/full truecolor hex, and invalid-color fallback, shortcut expansion
-  across npm/yarn/pnpm/bun/node/deno runners, package-script and Deno-task
-  wildcard expansion, wildcard suffix truncation at `&`, embedded literal
-  runner wildcard matching, escaped script key decoding, kill-others exit
-  projection, raw kill output, kill-on-fail behavior, max-process serialization
+   raw suppression, grouped sorted output, empty quoted command preservation,
+   whitespace-only command execution, finite restart attempts, custom
+   timestamp formats, and deterministic kill-on-fail signalling with runtime
+   timestamps/durations normalized, published-package ANSI prefix color output
+   for reset defaults, `red.bold`, `bgRed.white.bold`, `gray.dim`, `hidden`,
+   short/full truecolor hex, and invalid-color fallback, shortcut expansion
+   across npm/yarn/pnpm/bun/node/deno runners, package-script and Deno-task
+   wildcard expansion, wildcard suffix truncation at `&`, embedded literal
+   runner wildcard matching, escaped script key decoding, kill-others exit
+   projection, raw kill output, kill-on-fail behavior, max-process serialization
   including restart-exhaustion queueing, npm-style max-process numeric coercion
   for zero, invalid, fractional, and negative values,
   fractional/invalid restart-count coercion, deterministic restart-after and
