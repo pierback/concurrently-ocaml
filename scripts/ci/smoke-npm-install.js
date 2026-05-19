@@ -4,6 +4,7 @@ const {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  realpathSync,
   readFileSync,
   rmSync,
   statSync,
@@ -35,10 +36,11 @@ const platformPackageDir = resolve(
   platformPackageName.replace("/", "__")
 );
 const platformPackageJsonPath = join(platformPackageDir, "package.json");
+const nativeBinaryName = platform === "win32" ? "concurrently-ml.exe" : "concurrently-ml";
 const nativeBinaryPath = join(
   platformPackageDir,
   "bin",
-  platform === "win32" ? "concurrently-ml.exe" : "concurrently-ml"
+  nativeBinaryName
 );
 
 assertEqual(process.platform, platform, "smoke host platform");
@@ -92,14 +94,32 @@ try {
     "@pierback",
     "concurrently-ml"
   );
+  const installedPlatformDir = join(
+    projectDir,
+    "node_modules",
+    ...platformPackageName.split("/")
+  );
+  const installedPlatformBinaryPath = join(
+    installedPlatformDir,
+    "bin",
+    nativeBinaryName
+  );
   assertFile(binPath);
   assertFile(concurrentlyBinPath);
+  assertFile(installedPlatformBinaryPath);
   assertNoFile(join(installedRootDir, "index.js"));
   assertNoFile(join(installedRootDir, "index.mjs"));
   assertNoFile(join(installedRootDir, "index.d.ts"));
   assertNoFile(join(installedRootDir, "index.d.mts"));
   assertFile(join(installedRootDir, "npm", "lib", "native.js"));
   assertNoPackedSourceTree(installedRootDir);
+
+  const native = require(join(installedRootDir, "npm", "lib", "native.js"));
+  assertEqual(
+    realpathSync(native.resolveBinaryPath()),
+    realpathSync(installedPlatformBinaryPath),
+    "native resolver binary path"
+  );
 
   const smoke = spawnSync(binPath, ["--no-color", "printf smoke"], {
     cwd: projectDir,
@@ -264,24 +284,6 @@ function npmRun(args, cwd) {
   if (result.status !== 0) {
     throw new Error(
       `npm ${args.join(" ")} exited ${result.status}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`
-    );
-  }
-  return result;
-}
-
-function nodeRun(args, cwd, label, options = {}) {
-  const result = spawnSync(process.execPath, args, {
-    cwd,
-    encoding: "utf8",
-    input: options.input,
-    stdio: ["pipe", "pipe", "pipe"],
-  });
-  if (result.error) {
-    throw result.error;
-  }
-  if (result.status !== 0) {
-    throw new Error(
-      `${label} exited ${result.status}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`
     );
   }
   return result;
