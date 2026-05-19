@@ -21,13 +21,13 @@ const firstInputEchoCommand =
   "node -e \"process.stdin.once('data',d=>{process.stdout.write('first:'+d);process.exit(0)})\"";
 const secondInputEchoCommand =
   "node -e \"process.stdin.once('data',d=>{process.stdout.write('second:'+d);process.exit(0)})\"";
-const delayedOkCommand = "sh -c 'sleep 0.05; printf ok'";
 const forceBasicColorEnv = { NO_COLOR: null, FORCE_COLOR: "1" };
 const forceTruecolorEnv = { NO_COLOR: null, FORCE_COLOR: "3" };
 const shortcutFixture = createShortcutFixture();
 const escapedScriptFixture = createEscapedScriptFixture();
 const invalidPackageFixture = createInvalidPackageFixture();
 const invalidDenoFixture = createInvalidDenoFixture();
+const killTimeoutFixture = createKillTimeoutFixture();
 const restartFixture = createRestartFixture();
 
 if (!existsSync(localBinary)) {
@@ -814,6 +814,34 @@ const cases = [
     env: invalidDenoFixture.fakeRunnerEnv,
   },
   {
+    name: "deno wildcard uses Object.keys object key order",
+    upstream: "dist/src/command-parser/expand-wildcard.js Object.keys(readDeno().tasks || {})",
+    cwd: invalidDenoFixture.objectKeyOrderCwd,
+    args: ["--no-color", "-g", "deno:*"],
+    env: invalidDenoFixture.fakeRunnerEnv,
+  },
+  {
+    name: "deno wildcard uses Object.keys array task indices",
+    upstream: "dist/src/command-parser/expand-wildcard.js Object.keys(readDeno().tasks || {})",
+    cwd: invalidDenoFixture.arrayTasksCwd,
+    args: ["--no-color", "-g", "deno:*"],
+    env: invalidDenoFixture.fakeRunnerEnv,
+  },
+  {
+    name: "deno wildcard uses Object.keys string task indices",
+    upstream: "dist/src/command-parser/expand-wildcard.js Object.keys(readDeno().tasks || {})",
+    cwd: invalidDenoFixture.stringTasksCwd,
+    args: ["--no-color", "-g", "deno:*"],
+    env: invalidDenoFixture.fakeRunnerEnv,
+  },
+  {
+    name: "deno wildcard uses Object.keys package script fallback",
+    upstream: "dist/src/command-parser/expand-wildcard.js Object.keys(readPackage().scripts || {})",
+    cwd: invalidDenoFixture.stringPackageScriptsCwd,
+    args: ["--no-color", "-g", "deno:*"],
+    env: invalidDenoFixture.fakeRunnerEnv,
+  },
+  {
     name: "npm wildcard omission matches full script name",
     upstream: "dist/src/command-parser/expand-wildcard.js omission filter",
     cwd: shortcutFixture.cwd,
@@ -1154,8 +1182,8 @@ const cases = [
       "--kill-timeout",
       "1.5",
       "-k",
-      "trap '' TERM; sleep 1",
-      delayedOkCommand,
+      killTimeoutFixture.trapCommand("fractional"),
+      killTimeoutFixture.successCommand("fractional"),
     ],
   },
   {
@@ -1166,8 +1194,8 @@ const cases = [
       "--kill-timeout",
       "0.5",
       "-k",
-      "trap '' TERM; sleep 1",
-      delayedOkCommand,
+      killTimeoutFixture.trapCommand("submillisecond"),
+      killTimeoutFixture.successCommand("submillisecond"),
     ],
   },
   {
@@ -1178,8 +1206,8 @@ const cases = [
       "--kill-timeout",
       "-1.5",
       "-k",
-      "trap '' TERM; sleep 1",
-      delayedOkCommand,
+      killTimeoutFixture.trapCommand("negative"),
+      killTimeoutFixture.successCommand("negative"),
     ],
     normalizeStderr: normalizeNodeTimerWarningPid,
   },
@@ -1192,8 +1220,8 @@ const cases = [
       "--kill-timeout",
       "-1",
       "-k",
-      "trap '' TERM; sleep 1",
-      delayedOkCommand,
+      killTimeoutFixture.trapCommand("negative-raw"),
+      killTimeoutFixture.successCommand("negative-raw"),
     ],
     normalizeStderr: normalizeNodeTimerWarningPid,
   },
@@ -1211,8 +1239,8 @@ const cases = [
       "--kill-timeout",
       "bogus",
       "-k",
-      "trap '' TERM; sleep 1",
-      delayedOkCommand,
+      killTimeoutFixture.finiteTrapCommand("invalid"),
+      killTimeoutFixture.successCommand("invalid"),
     ],
   },
   {
@@ -1435,6 +1463,7 @@ const cases = [
     escapedScriptFixture.cleanup();
     invalidPackageFixture.cleanup();
     invalidDenoFixture.cleanup();
+    killTimeoutFixture.cleanup();
     restartFixture.cleanup();
   }
 })().catch((error) => {
@@ -1723,12 +1752,20 @@ function createInvalidDenoFixture() {
   const invalidCwd = resolve(root, "invalid");
   const unterminatedCommentCwd = resolve(root, "unterminated-comment");
   const duplicateCwd = resolve(root, "duplicate");
+  const objectKeyOrderCwd = resolve(root, "object-key-order");
+  const arrayTasksCwd = resolve(root, "array-tasks");
+  const stringTasksCwd = resolve(root, "string-tasks");
+  const stringPackageScriptsCwd = resolve(root, "string-package-scripts");
   mkdirSync(bin);
   mkdirSync(validCwd);
   mkdirSync(carriageReturnCwd);
   mkdirSync(invalidCwd);
   mkdirSync(unterminatedCommentCwd);
   mkdirSync(duplicateCwd);
+  mkdirSync(objectKeyOrderCwd);
+  mkdirSync(arrayTasksCwd);
+  mkdirSync(stringTasksCwd);
+  mkdirSync(stringPackageScriptsCwd);
   const deno = resolve(bin, "deno");
   writeFileSync(deno, `#!/bin/sh\nprintf 'deno:%s:%s' "$1" "$2"\n`);
   chmodSync(deno, 0o700);
@@ -1752,14 +1789,55 @@ function createInvalidDenoFixture() {
     resolve(duplicateCwd, "deno.json"),
     `{"tasks":{"task-old":"printf old"},"tasks":{"task-new":"printf new"}}`
   );
+  writeFileSync(
+    resolve(objectKeyOrderCwd, "deno.json"),
+    `{"tasks":{"b":"printf b","2":"printf two","1":"printf one","a":"printf a","2":"printf overwrite","01":"printf leading"}}`
+  );
+  writeFileSync(
+    resolve(arrayTasksCwd, "deno.json"),
+    `{"tasks":["printf zero","printf one"]}`
+  );
+  writeFileSync(
+    resolve(stringTasksCwd, "deno.json"),
+    `{"tasks":"ab"}`
+  );
+  writeFileSync(
+    resolve(stringPackageScriptsCwd, "package.json"),
+    `{"scripts":"ab"}`
+  );
   return {
     validCwd,
     carriageReturnCwd,
     invalidCwd,
     unterminatedCommentCwd,
     duplicateCwd,
+    objectKeyOrderCwd,
+    arrayTasksCwd,
+    stringTasksCwd,
+    stringPackageScriptsCwd,
     fakeRunnerEnv: {
       PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
+    },
+    cleanup() {
+      rmSync(root, { force: true, recursive: true });
+    },
+  };
+}
+
+function createKillTimeoutFixture() {
+  const root = mkdtempSync(resolve(tmpdir(), "concurrently-ocaml-kill-timeout-"));
+  return {
+    trapCommand(name) {
+      const marker = shellQuote(resolve(root, `${name}.ready`));
+      return `sh -c "trap '' TERM; while :; do : > ${marker}; sleep 0.01; done"`;
+    },
+    finiteTrapCommand(name) {
+      const marker = shellQuote(resolve(root, `${name}.ready`));
+      return `sh -c "trap '' TERM; i=0; while [ \\$i -lt 100 ]; do : > ${marker}; i=\\$((i + 1)); sleep 0.01; done"`;
+    },
+    successCommand(name) {
+      const marker = shellQuote(resolve(root, `${name}.ready`));
+      return `sh -c "rm -f ${marker}; while [ ! -f ${marker} ]; do sleep 0.01; done; printf ok"`;
     },
     cleanup() {
       rmSync(root, { force: true, recursive: true });
@@ -1783,6 +1861,10 @@ function createRestartFixture() {
       rmSync(cwd, { force: true, recursive: true });
     },
   };
+}
+
+function shellQuote(value) {
+  return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 function environmentFor(testCase) {

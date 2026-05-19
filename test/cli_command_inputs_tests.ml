@@ -207,6 +207,85 @@ let test_wildcard_ignores_invalid_package_json () =
   cleanup ();
   assert (inputs = [])
 
+let test_wildcard_uses_javascript_object_keys_for_package_scripts () =
+  let cwd =
+    Filename.concat (Filename.get_temp_dir_name ())
+      "concurrently-ocaml-package-object-keys-test"
+  in
+  let package_json = Filename.concat cwd "package.json" in
+  let cleanup () =
+    match Sys.remove package_json with
+    | () -> Sys.rmdir cwd
+    | exception _ -> ()
+  in
+  cleanup ();
+  Unix.mkdir cwd 0o700;
+  Out_channel.with_open_text package_json (fun channel ->
+    output_string channel {|{"scripts":"ab"}|});
+  let inputs =
+    expand ~cwd:(Some cwd) ~passthrough_arguments:None
+      ~command_texts:[ "deno:*" ] ~names:None
+  in
+  cleanup ();
+  assert (command_texts inputs = [ "deno task 0"; "deno task 1" ]);
+  assert (command_names inputs = [ "0"; "1" ])
+
+let test_wildcard_uses_last_duplicate_package_scripts_field () =
+  let cwd =
+    Filename.concat (Filename.get_temp_dir_name ())
+      "concurrently-ocaml-duplicate-package-scripts-test"
+  in
+  let package_json = Filename.concat cwd "package.json" in
+  let cleanup () =
+    match Sys.remove package_json with
+    | () -> Sys.rmdir cwd
+    | exception _ -> ()
+  in
+  cleanup ();
+  Unix.mkdir cwd 0o700;
+  Out_channel.with_open_text package_json (fun channel ->
+    output_string channel
+      {|{"scripts":{"task-old":"printf old"},"scripts":["printf new"]}|});
+  let inputs =
+    expand ~cwd:(Some cwd) ~passthrough_arguments:None
+      ~command_texts:[ "deno:*" ] ~names:None
+  in
+  cleanup ();
+  assert (command_texts inputs = [ "deno task 0" ]);
+  assert (command_names inputs = [ "0" ])
+
+let test_wildcard_uses_javascript_object_key_order_for_package_scripts () =
+  let cwd =
+    Filename.concat (Filename.get_temp_dir_name ())
+      "concurrently-ocaml-object-key-order-test"
+  in
+  let package_json = Filename.concat cwd "package.json" in
+  let cleanup () =
+    match Sys.remove package_json with
+    | () -> Sys.rmdir cwd
+    | exception _ -> ()
+  in
+  cleanup ();
+  Unix.mkdir cwd 0o700;
+  Out_channel.with_open_text package_json (fun channel ->
+    output_string channel
+      {|{"scripts":{"b":"printf b","2":"printf two","1":"printf one","a":"printf a","2":"printf overwrite","01":"printf leading"}}|});
+  let inputs =
+    expand ~cwd:(Some cwd) ~passthrough_arguments:None ~command_texts:[ "npm:*" ]
+      ~names:None
+  in
+  cleanup ();
+  assert (
+    command_texts inputs
+    = [
+        "npm run 1";
+        "npm run 2";
+        "npm run b";
+        "npm run a";
+        "npm run 01";
+      ]);
+  assert (command_names inputs = [ "1"; "2"; "b"; "a"; "01" ])
+
 let test_deno_wildcard_accepts_jsonc_comments_and_trailing_commas () =
   let cwd =
     Filename.concat (Filename.get_temp_dir_name ())
@@ -325,6 +404,52 @@ let test_deno_wildcard_uses_last_duplicate_tasks_field () =
   assert (command_texts inputs = [ "deno task task-new" ]);
   assert (command_names inputs = [ "new" ])
 
+let test_deno_wildcard_uses_javascript_object_keys_for_task_values () =
+  let cwd =
+    Filename.concat (Filename.get_temp_dir_name ())
+      "concurrently-ocaml-deno-object-keys-test"
+  in
+  let deno_json = Filename.concat cwd "deno.json" in
+  let cleanup () =
+    match Sys.remove deno_json with
+    | () -> Sys.rmdir cwd
+    | exception _ -> ()
+  in
+  cleanup ();
+  Unix.mkdir cwd 0o700;
+  Out_channel.with_open_text deno_json (fun channel ->
+    output_string channel {|{"tasks":["printf old","printf new"]}|});
+  let inputs =
+    expand ~cwd:(Some cwd) ~passthrough_arguments:None
+      ~command_texts:[ "deno:*" ] ~names:None
+  in
+  cleanup ();
+  assert (command_texts inputs = [ "deno task 0"; "deno task 1" ]);
+  assert (command_names inputs = [ "0"; "1" ])
+
+let test_deno_wildcard_uses_utf16_indices_for_string_tasks () =
+  let cwd =
+    Filename.concat (Filename.get_temp_dir_name ())
+      "concurrently-ocaml-deno-string-task-indices-test"
+  in
+  let deno_json = Filename.concat cwd "deno.json" in
+  let cleanup () =
+    match Sys.remove deno_json with
+    | () -> Sys.rmdir cwd
+    | exception _ -> ()
+  in
+  cleanup ();
+  Unix.mkdir cwd 0o700;
+  Out_channel.with_open_text deno_json (fun channel ->
+    output_string channel {|{"tasks":"a\uD83D\uDE00"}|});
+  let inputs =
+    expand ~cwd:(Some cwd) ~passthrough_arguments:None
+      ~command_texts:[ "deno:*" ] ~names:None
+  in
+  cleanup ();
+  assert (command_texts inputs = [ "deno task 0"; "deno task 1"; "deno task 2" ]);
+  assert (command_names inputs = [ "0"; "1"; "2" ])
+
 let test_invalid_wildcard_omission_is_error () =
   let cwd =
     Filename.concat (Filename.get_temp_dir_name ())
@@ -359,9 +484,14 @@ let () =
   test_wildcard_finds_embedded_runner_like_upstream ();
   test_wildcard_decodes_json_unicode_script_keys ();
   test_wildcard_ignores_invalid_package_json ();
+  test_wildcard_uses_javascript_object_keys_for_package_scripts ();
+  test_wildcard_uses_last_duplicate_package_scripts_field ();
+  test_wildcard_uses_javascript_object_key_order_for_package_scripts ();
   test_deno_wildcard_accepts_jsonc_comments_and_trailing_commas ();
   test_deno_wildcard_accepts_jsonc_carriage_return_line_comment ();
   test_deno_wildcard_ignores_invalid_jsonc ();
   test_deno_wildcard_ignores_unterminated_jsonc_block_comment ();
   test_deno_wildcard_uses_last_duplicate_tasks_field ();
+  test_deno_wildcard_uses_javascript_object_keys_for_task_values ();
+  test_deno_wildcard_uses_utf16_indices_for_string_tasks ();
   test_invalid_wildcard_omission_is_error ()
