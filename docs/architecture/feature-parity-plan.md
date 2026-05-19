@@ -246,8 +246,9 @@ Currently mirrored deterministic behavior:
   expansion of spaced script names, npm-compatible dropping of shell
   conjunction suffixes after `&`, unanchored literal runner matches such as
   `printf pre && npm run build-*`, JSON-style escaped package-script keys, and
-  omission filters against full script names for deterministic package-script
-  cases, plus no-match wildcard expansion as a clean no-output no-op.
+  invalid-`package.json` fallback to no scripts, and omission filters against
+  full script names for deterministic package-script cases, plus no-match
+  wildcard expansion as a clean no-output no-op.
 - `bin/concurrently.spec.ts`, published `dist/bin/concurrently.js`, and
   `dist/src/flow-control/restart-process.js`: finite `--restart-tries` restart
   notifications, negative `--restart-tries` retry-forever behavior until a
@@ -438,10 +439,10 @@ Known divergences tracked as incomplete work:
    short/full truecolor hex, and invalid-color fallback, shortcut expansion
    across npm/yarn/pnpm/bun/node/deno runners, package-script and Deno-task
    wildcard expansion, wildcard suffix truncation at `&`, embedded literal
-   runner wildcard matching, escaped script key decoding, kill-others exit
-   projection, raw kill output, kill-on-fail behavior, max-process serialization
-  including restart-exhaustion queueing, npm-style max-process numeric coercion
-  for zero, invalid, fractional, and negative values,
+   runner wildcard matching, escaped script key decoding, invalid package JSON
+   fallback, kill-others exit projection, raw kill output, kill-on-fail behavior,
+   max-process serialization including restart-exhaustion queueing, npm-style
+   max-process numeric coercion for zero, invalid, fractional, and negative values,
   fractional/invalid restart-count coercion, deterministic restart-after and
   kill-timeout warning/coercion behavior, queued-command suppression after
   kill-on-success/failure, input forwarding, explicit index and command-name

@@ -168,6 +168,175 @@ let decode_json_string text start =
   in
   loop (start + 1)
 
+let skip_json_string_strict text start =
+  let length = String.length text in
+  assert (start >= 0);
+  assert (start < length);
+  assert (text.[start] = '"');
+  let rec loop index =
+    if index = length then None
+    else
+      match text.[index] with
+      | '"' -> Some (index + 1)
+      | character when Char.code character < 0x20 -> None
+      | '\\' when index + 1 < length -> (
+          match text.[index + 1] with
+          | '"' | '\\' | '/' | 'b' | 'f' | 'n' | 'r' | 't' -> loop (index + 2)
+          | 'u' -> (
+              match decode_hex4 text (index + 2) with
+              | None -> None
+              | Some (after_escape, _) -> loop after_escape)
+          | _ -> None)
+      | '\\' -> None
+      | _ -> loop (index + 1)
+  in
+  loop (start + 1)
+
+let skip_json_number_strict text start =
+  let length = String.length text in
+  assert (start >= 0);
+  assert (start < length);
+  let digit index =
+    index < length
+    &&
+    match text.[index] with
+    | '0' .. '9' -> true
+    | _ -> false
+  in
+  let nonzero_digit index =
+    index < length
+    &&
+    match text.[index] with
+    | '1' .. '9' -> true
+    | _ -> false
+  in
+  let rec digits index =
+    if digit index then digits (index + 1) else index
+  in
+  let index = if text.[start] = '-' then start + 1 else start in
+  if index >= length then None
+  else
+    let after_integer =
+      if text.[index] = '0' then Some (index + 1)
+      else if nonzero_digit index then Some (digits (index + 1))
+      else None
+    in
+    match after_integer with
+    | None -> None
+    | Some index ->
+        let after_fraction =
+          if index < length && text.[index] = '.' then
+            if digit (index + 1) then Some (digits (index + 2)) else None
+          else Some index
+        in
+        (match after_fraction with
+         | None -> None
+         | Some index ->
+             if
+               index < length && (text.[index] = 'e' || text.[index] = 'E')
+             then
+               let exponent_start =
+                 if
+                   index + 1 < length
+                   && (text.[index + 1] = '+' || text.[index + 1] = '-')
+                 then index + 2
+                 else index + 1
+               in
+               if digit exponent_start then Some (digits (exponent_start + 1))
+               else None
+             else Some index)
+
+let skip_json_literal text index literal =
+  let length = String.length text in
+  let literal_length = String.length literal in
+  if index + literal_length > length then None
+  else if String.sub text index literal_length = literal then
+    Some (index + literal_length)
+  else None
+
+let json_nesting_limit = 1024
+
+let rec skip_json_value_strict text depth index =
+  assert (depth >= 0);
+  let index = skip_whitespace text index in
+  let length = String.length text in
+  if index >= length then None
+  else
+    match text.[index] with
+    | '"' -> skip_json_string_strict text index
+    | '{' -> skip_json_object_strict text depth index
+    | '[' -> skip_json_array_strict text depth index
+    | 't' -> skip_json_literal text index "true"
+    | 'f' -> skip_json_literal text index "false"
+    | 'n' -> skip_json_literal text index "null"
+    | '-' | '0' .. '9' -> skip_json_number_strict text index
+    | _ -> None
+
+and skip_json_object_strict text depth start =
+  let length = String.length text in
+  assert (start >= 0);
+  assert (start < length);
+  assert (text.[start] = '{');
+  if depth >= json_nesting_limit then None
+  else
+    let value_depth = depth + 1 in
+    let rec fields index =
+      let index = skip_whitespace text index in
+      if index >= length then None
+      else if text.[index] = '}' then Some (index + 1)
+      else if text.[index] <> '"' then None
+      else
+        match skip_json_string_strict text index with
+        | None -> None
+        | Some after_key ->
+            let after_key = skip_whitespace text after_key in
+            if after_key >= length || text.[after_key] <> ':' then None
+            else
+              (match skip_json_value_strict text value_depth (after_key + 1) with
+               | None -> None
+               | Some after_value ->
+                   let after_value = skip_whitespace text after_value in
+                   if after_value >= length then None
+                   else if text.[after_value] = '}' then Some (after_value + 1)
+                   else if text.[after_value] = ',' then
+                     let next = skip_whitespace text (after_value + 1) in
+                     if next < length && text.[next] = '}' then None
+                     else fields next
+                   else None)
+    in
+    fields (start + 1)
+
+and skip_json_array_strict text depth start =
+  let length = String.length text in
+  assert (start >= 0);
+  assert (start < length);
+  assert (text.[start] = '[');
+  if depth >= json_nesting_limit then None
+  else
+    let value_depth = depth + 1 in
+    let rec values index =
+      let index = skip_whitespace text index in
+      if index >= length then None
+      else if text.[index] = ']' then Some (index + 1)
+      else
+        match skip_json_value_strict text value_depth index with
+        | None -> None
+        | Some after_value ->
+            let after_value = skip_whitespace text after_value in
+            if after_value >= length then None
+            else if text.[after_value] = ']' then Some (after_value + 1)
+            else if text.[after_value] = ',' then
+              let next = skip_whitespace text (after_value + 1) in
+              if next < length && text.[next] = ']' then None else values next
+            else None
+    in
+    values (start + 1)
+
+let valid_json text =
+  match skip_json_value_strict text 0 0 with
+  | None -> false
+  | Some after_value -> skip_whitespace text after_value = String.length text
+
 let skip_json_value text index =
   let length = String.length text in
   let rec loop depth index =
@@ -253,7 +422,8 @@ let object_field_keys field_name text =
 let package_scripts ~cwd =
   match read_file (Filename.concat cwd "package.json") with
   | None -> []
-  | Some text -> object_field_keys "scripts" text
+  | Some text ->
+      if valid_json text then object_field_keys "scripts" text else []
 
 let deno_tasks ~cwd =
   let deno_text =
