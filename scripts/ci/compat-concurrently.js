@@ -9,7 +9,7 @@ const {
   writeFileSync,
 } = require("node:fs");
 const { tmpdir } = require("node:os");
-const { delimiter, resolve, sep } = require("node:path");
+const { delimiter, dirname, resolve, sep } = require("node:path");
 const { spawn, spawnSync } = require("node:child_process");
 
 const npmConcurrentlyVersion = "9.2.1";
@@ -25,6 +25,7 @@ const forceBasicColorEnv = { NO_COLOR: null, FORCE_COLOR: "1" };
 const forceTruecolorEnv = { NO_COLOR: null, FORCE_COLOR: "3" };
 const shortcutFixture = createShortcutFixture();
 const escapedScriptFixture = createEscapedScriptFixture();
+const invalidPackageFixture = createInvalidPackageFixture();
 const restartFixture = createRestartFixture();
 
 if (!existsSync(localBinary)) {
@@ -769,6 +770,13 @@ const cases = [
     args: ["--no-color", "-g", "npm:build-*"],
   },
   {
+    name: "npm wildcard ignores invalid package json",
+    upstream: "dist/src/command-parser/expand-wildcard.js JSON.parse failure fallback",
+    cwd: invalidPackageFixture.cwd,
+    bypassVoltaNodeShim: true,
+    args: ["--no-color", "-g", "npm:build-*"],
+  },
+  {
     name: "npm wildcard omission matches full script name",
     upstream: "dist/src/command-parser/expand-wildcard.js omission filter",
     cwd: shortcutFixture.cwd,
@@ -1388,6 +1396,7 @@ const cases = [
   } finally {
     shortcutFixture.cleanup();
     escapedScriptFixture.cleanup();
+    invalidPackageFixture.cleanup();
     restartFixture.cleanup();
   }
 })().catch((error) => {
@@ -1442,8 +1451,9 @@ function resolveNpmConcurrentlyBinary() {
 function resolveLocalPinnedConcurrentlyBinary() {
   const configured = process.env.CONCURRENTLY_BIN;
   if (configured) {
-    assertPinnedConcurrentlyVersion(configured);
-    return configured;
+    const configuredBinary = resolveVoltaShim(configured);
+    assertPinnedConcurrentlyVersion(configuredBinary);
+    return configuredBinary;
   }
 
   const which = spawnSync("which", ["concurrently"], {
@@ -1653,6 +1663,20 @@ function createEscapedScriptFixture() {
   };
 }
 
+function createInvalidPackageFixture() {
+  const cwd = mkdtempSync(resolve(tmpdir(), "concurrently-ocaml-invalid-json-"));
+  writeFileSync(
+    resolve(cwd, "package.json"),
+    `{"scripts":{"build-a":"printf a",}}`
+  );
+  return {
+    cwd,
+    cleanup() {
+      rmSync(cwd, { force: true, recursive: true });
+    },
+  };
+}
+
 function createRestartFixture() {
   const cwd = mkdtempSync(resolve(tmpdir(), "concurrently-ocaml-restart-"));
   const marker = resolve(cwd, "attempt.state");
@@ -1681,6 +1705,11 @@ function environmentFor(testCase) {
         env[key] = value;
       }
     }
+  }
+  if (testCase.bypassVoltaNodeShim) {
+    // Volta parses package.json in cwd before Node starts; this fixture needs
+    // upstream concurrently to observe the invalid manifest itself.
+    env.PATH = `${dirname(process.execPath)}${delimiter}${env.PATH ?? ""}`;
   }
   return env;
 }

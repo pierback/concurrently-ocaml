@@ -185,6 +185,28 @@ let test_wildcard_decodes_json_unicode_script_keys () =
   assert (command_texts inputs = [ "npm run build-a"; "npm run emoji-" ^ emoji ]);
   assert (command_names inputs = [ "build-a"; "emoji-" ^ emoji ])
 
+let test_wildcard_ignores_invalid_package_json () =
+  let cwd =
+    Filename.concat (Filename.get_temp_dir_name ())
+      "concurrently-ocaml-invalid-package-json-test"
+  in
+  let package_json = Filename.concat cwd "package.json" in
+  let cleanup () =
+    match Sys.remove package_json with
+    | () -> Sys.rmdir cwd
+    | exception _ -> ()
+  in
+  cleanup ();
+  Unix.mkdir cwd 0o700;
+  Out_channel.with_open_text package_json (fun channel ->
+    output_string channel {|{"scripts":{"build-js":"printf js",}}|});
+  let inputs =
+    expand ~cwd:(Some cwd) ~passthrough_arguments:None
+      ~command_texts:[ "npm:build-*" ] ~names:None
+  in
+  cleanup ();
+  assert (inputs = [])
+
 let test_invalid_wildcard_omission_is_error () =
   let cwd =
     Filename.concat (Filename.get_temp_dir_name ())
@@ -218,4 +240,5 @@ let () =
   test_wildcard_args_stop_at_ampersand ();
   test_wildcard_finds_embedded_runner_like_upstream ();
   test_wildcard_decodes_json_unicode_script_keys ();
+  test_wildcard_ignores_invalid_package_json ();
   test_invalid_wildcard_omission_is_error ()
