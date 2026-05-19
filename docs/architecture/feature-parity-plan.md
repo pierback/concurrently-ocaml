@@ -59,9 +59,10 @@ signal, process-tree teardown, and pipe implementations.
 - GitHub Actions now includes a native package matrix for Linux x64/arm64 and
   macOS x64/arm64. Each native package job now packs the platform package and
   root package into a clean npm project, verifies that the root tarball did not
-  leak OCaml source/build/test files, and runs `conc`/`concurrently` from that
-  install. Windows packaging is deliberately withheld until a Windows-native
-  runner backend exists.
+  leak OCaml source/build/test files, asserts that the installed launcher
+  resolves the optional platform package's native binary, and runs
+  `conc`/`concurrently` from that install. Windows packaging is deliberately
+  withheld until a Windows-native runner backend exists.
 
 ## Deepening Opportunities
 
@@ -490,8 +491,10 @@ Known divergences tracked as incomplete work:
    development scripts, or a JavaScript programmatic API.
    GitHub Actions builds platform packages, smoke-installs the packed root and
    platform package into a clean npm project, asserts the lean root package
-   surface, executes `conc`/`concurrently`, and publishes packages on version
-   tags. Windows packaging is withheld until a Windows backend exists.
+   surface, asserts that the installed launcher resolves the optional platform
+   package's native binary, executes `conc`/`concurrently`, and publishes
+   packages on version tags. Windows packaging is withheld until a Windows
+   backend exists.
    Remaining distribution work: add checksums or
    SLSA/provenance policy beyond npm provenance, decide whether Linux
    musl/static builds are required, and implement then package Windows runner
