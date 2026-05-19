@@ -126,6 +126,32 @@ let test_wildcard_args_stop_at_ampersand () =
   assert (command_texts inputs = [ "npm run build-css "; "npm run build-js " ]);
   assert (command_names inputs = [ "css"; "js" ])
 
+let test_wildcard_finds_embedded_runner_like_upstream () =
+  let cwd =
+    Filename.concat (Filename.get_temp_dir_name ())
+      "concurrently-ocaml-embedded-wildcard-test"
+  in
+  let package_json = Filename.concat cwd "package.json" in
+  let cleanup () =
+    match Sys.remove package_json with
+    | () -> Sys.rmdir cwd
+    | exception _ -> ()
+  in
+  cleanup ();
+  Unix.mkdir cwd 0o700;
+  Out_channel.with_open_text package_json (fun channel ->
+    output_string channel
+      {|{"scripts":{"build-css":"printf css","build-js":"printf js"}}|});
+  let inputs =
+    expand ~cwd:(Some cwd) ~passthrough_arguments:None
+      ~command_texts:[ "printf pre && npm run build-* -- --flag" ] ~names:None
+  in
+  cleanup ();
+  assert (
+    command_texts inputs
+    = [ "npm run build-css -- --flag"; "npm run build-js -- --flag" ]);
+  assert (command_names inputs = [ "css"; "js" ])
+
 let test_wildcard_decodes_json_unicode_script_keys () =
   let cwd =
     Filename.concat (Filename.get_temp_dir_name ())
@@ -181,5 +207,6 @@ let () =
   test_wildcard_scripts_are_not_shell_quoted ();
   test_wildcard_omission_matches_full_script_name ();
   test_wildcard_args_stop_at_ampersand ();
+  test_wildcard_finds_embedded_runner_like_upstream ();
   test_wildcard_decodes_json_unicode_script_keys ();
   test_invalid_wildcard_omission_is_error ()

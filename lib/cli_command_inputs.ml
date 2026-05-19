@@ -108,28 +108,55 @@ let wildcard_args command_text script_end =
   assert (args_end >= script_end);
   String.sub command_text script_end (args_end - script_end)
 
-let command_script_and_args command_text command =
+let starts_with_at value start prefix =
+  let value_length = String.length value in
+  let prefix_length = String.length prefix in
+  assert (start >= 0);
+  assert (start <= value_length);
+  if start + prefix_length > value_length then false
+  else
+    let rec loop offset =
+      if offset = prefix_length then true
+      else if value.[start + offset] <> prefix.[offset] then false
+      else loop (offset + 1)
+    in
+    loop 0
+
+let command_script_and_args_at command_text command match_start =
   let prefix = command ^ " " in
   let prefix_length = String.length prefix in
-  if
-    String.length command_text <= prefix_length
-    || String.sub command_text 0 prefix_length <> prefix
-  then None
+  if not (starts_with_at command_text match_start prefix) then None
   else
-    let script_start = prefix_length in
-    let script_end =
-      match find_first_whitespace_from command_text script_start with
-      | None -> String.length command_text
-      | Some index -> index
-    in
-    let script_glob =
-      String.sub command_text script_start (script_end - script_start)
-    in
-    let args = wildcard_args command_text script_end in
-    Some (command, script_glob, args)
+    let script_start = match_start + prefix_length in
+    let command_length = String.length command_text in
+    if script_start = command_length || is_whitespace command_text.[script_start]
+    then None
+    else
+      let script_end =
+        match find_first_whitespace_from command_text script_start with
+        | None -> command_length
+        | Some index -> index
+      in
+      let script_glob =
+        String.sub command_text script_start (script_end - script_start)
+      in
+      let args = wildcard_args command_text script_end in
+      Some (command, script_glob, args)
 
 let wildcard_command command_text =
-  List.find_map (command_script_and_args command_text) command_prefixes
+  let command_length = String.length command_text in
+  let rec loop index =
+    if index = command_length then None
+    else
+      match
+        List.find_map
+          (fun command -> command_script_and_args_at command_text command index)
+          command_prefixes
+      with
+      | Some _ as result -> result
+      | None -> loop (index + 1)
+  in
+  loop 0
 
 let omission script_glob =
   match String.index_opt script_glob '(' with

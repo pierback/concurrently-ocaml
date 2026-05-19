@@ -737,6 +737,12 @@ const cases = [
     args: ["--no-color", "-g", "npm:build-* && printf after"],
   },
   {
+    name: "npm wildcard literal command finds embedded runner",
+    upstream: "dist/src/command-parser/expand-wildcard.js unanchored runner regex",
+    cwd: shortcutFixture.cwd,
+    args: ["--no-color", "-g", "printf pre && npm run build-*"],
+  },
+  {
     name: "npm wildcard shortcut decodes escaped package script keys",
     upstream: "dist/src/command-parser/expand-wildcard.js JSON.parse package scripts",
     cwd: escapedScriptFixture.cwd,
