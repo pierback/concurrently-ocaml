@@ -57,6 +57,21 @@ let test_env_aliases_match_yargs_aliases () =
     |]
     actual
 
+let test_env_full_names_override_aliases () =
+  let actual =
+    add
+      [
+        ("CONCURRENTLY_MAX_PROCESSES", "1");
+        ("CONCURRENTLY_M", "2");
+        ("CONCURRENTLY_PREFIX", "index");
+        ("CONCURRENTLY_P", "name");
+      ]
+      [| "conc"; "printf one" |]
+  in
+  assert_array_equal
+    [| "conc"; "--max-processes=1"; "--prefix=index"; "printf one" |]
+    actual
+
 let test_env_boolean_values_match_yargs_true_only_coercion () =
   let actual =
     add
@@ -81,5 +96,6 @@ let () =
   test_adds_missing_env_arguments_after_program_name ();
   test_cli_options_override_env_arguments ();
   test_env_aliases_match_yargs_aliases ();
+  test_env_full_names_override_aliases ();
   test_env_boolean_values_match_yargs_true_only_coercion ();
   test_empty_argv_receives_env_arguments ()
