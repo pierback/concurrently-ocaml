@@ -1,5 +1,7 @@
 type color_mode =
-  | Always
+  | Ansi16
+  | Ansi256
+  | Truecolor
   | Never
 
 type options =

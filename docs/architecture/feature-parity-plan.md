@@ -222,8 +222,12 @@ Currently mirrored deterministic behavior:
   `bgRed.white.bold`, `bgBlueBright.white`, `gray.dim`, `auto`, `hidden`,
   short/full truecolor hex prefixes, invalid-color fallback, and
   published-package function-style fallback for `rgb(...)` and `ansi256(...)`
-  values under deterministic `FORCE_COLOR` settings, including full-name
-  `CONCURRENTLY_PREFIX_COLORS` environment defaults.
+  values under deterministic `FORCE_COLOR` settings, including hex-color
+  downsampling for basic, 256-color, and truecolor terminals plus
+  parse-int-style `FORCE_COLOR` numeric coercion, invalid `FORCE_COLOR`
+  suppression, `FORCE_COLOR=0`/`false` color suppression, and full-name
+  `CONCURRENTLY_PREFIX_COLORS` environment defaults, including upstream's
+  `FORCE_COLOR` precedence over `--no-color` and `CONCURRENTLY_NO_COLOR`.
 - `src/command-parser/expand-arguments.spec.ts` and `bin/concurrently.spec.ts`:
   passthrough placeholder expansion and disabled passthrough behavior.
 - Published `dist/src/command-parser/strip-quotes.js`: surrounding command
@@ -440,7 +444,10 @@ Known divergences tracked as incomplete work:
    timestamp formats, and deterministic kill-on-fail signalling with runtime
    timestamps/durations normalized, published-package ANSI prefix color output
    for reset defaults, `red.bold`, `bgRed.white.bold`, `gray.dim`, `hidden`,
-   short/full truecolor hex, and invalid-color fallback, shortcut expansion
+   short/full truecolor hex, hex downsampling at basic and 256-color levels,
+   parse-int-style `FORCE_COLOR` numeric coercion, invalid `FORCE_COLOR`
+   suppression, `FORCE_COLOR=0`/`false` suppression, `FORCE_COLOR`
+   precedence over `--no-color`/`CONCURRENTLY_NO_COLOR`, and invalid-color fallback, shortcut expansion
    across npm/yarn/pnpm/bun/node/deno runners, package-script and Deno-task
    wildcard expansion, Deno JSONC trailing-comma and invalid-config fallback,
    JavaScript `Object.keys` catalog projection for object and non-object
