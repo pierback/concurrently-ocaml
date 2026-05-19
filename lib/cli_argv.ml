@@ -82,6 +82,18 @@ let boolean_inline_value argument option_name =
   let value_start = String.length option_name + 1 in
   String.sub argument value_start (String.length argument - value_start)
 
+let separate_boolean_value = function
+  | "true" -> Some true
+  | "false" -> Some false
+  | _ -> None
+
+let consumes_separate_boolean_value option_name =
+  (* npm's --no-color spelling is a positive yargs option name but parses like
+     a negated boolean for separate values: the following word remains a
+     command. Inline --no-color=true/false still follows normal boolean
+     coercion. *)
+  not (String.equal option_name "--no-color")
+
 let set_boolean_state states (option : Cli_options.boolean_option) enabled =
   (option.emitted_boolean_option, enabled)
   :: List.remove_assoc option.emitted_boolean_option states
@@ -115,12 +127,23 @@ let normalize_boolean_options_argv argv =
       let option_name = option_name_without_inline_value argument in
       match boolean_option_for_name option_name with
       | Some option ->
-          let enabled =
+          let enabled, next_index =
             if option_has_inline_value argument then
-              String.equal (boolean_inline_value argument option_name) "true"
-            else true
+              ( String.equal (boolean_inline_value argument option_name) "true",
+                index + 1 )
+            else
+              match
+                if
+                  consumes_separate_boolean_value option_name
+                  && index + 1 < Array.length argv
+                then
+                  separate_boolean_value argv.(index + 1)
+                else None
+              with
+              | Some enabled -> (enabled, index + 2)
+              | None -> (true, index + 1)
           in
-          loop (index + 1) (set_boolean_state states option enabled) arguments
+          loop next_index (set_boolean_state states option enabled) arguments
       | None -> (
           match boolean_option_for_negated_name option_name with
           | Some option ->
@@ -219,21 +242,35 @@ let requests_help_before_separator argv =
     if index >= Array.length argv || argv.(index) = "--" then false
     else
       let argument = argv.(index) in
-      if
-        argument = "-h" || argument = "--help"
-        || String.equal argument "--help=true"
-      then true
+      if argument = "-h" || argument = "--help" then
+        if
+          index + 1 < Array.length argv
+          && String.equal argv.(index + 1) "false"
+        then false
+        else true
+      else if String.equal argument "--help=true" then true
       else if option_consumes_value argument then loop (index + 2)
       else loop (index + 1)
   in
   loop 1
+
+let positive_builtin_exit_argument argv index argument =
+  if
+    argument = "--help" || argument = "--version"
+    || argument = "-h" || argument = "-v" || argument = "-V"
+  then
+    not
+      (index + 1 < Array.length argv && String.equal argv.(index + 1) "false")
+  else
+    String.equal argument "--help=true"
+    || String.equal argument "--version=true"
 
 let requests_builtin_exit_before_separator argv =
   let rec loop index =
     if index >= Array.length argv || argv.(index) = "--" then false
     else
       let argument = argv.(index) in
-      if argument = "--help" || argument = "--version" then true
+      if positive_builtin_exit_argument argv index argument then true
       else if option_consumes_value argument then loop (index + 2)
       else loop (index + 1)
   in
