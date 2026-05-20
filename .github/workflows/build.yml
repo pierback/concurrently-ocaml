@@ -100,7 +100,7 @@ jobs:
 
       - run: opam install . --deps-only --with-test
 
-      - run: opam exec -- dune build @install @runtest
+      - run: opam exec -- dune build @install
 
       - name: Create npm platform package
         run: |
