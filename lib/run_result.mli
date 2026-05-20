@@ -20,6 +20,13 @@ val create :
   interrupted:bool ->
   (t, create_error) result
 
+val create_interrupted_by_signal :
+  signal:int ->
+  spec:Run_spec.t ->
+  close_events:Close_event.t list ->
+  output_event_count:int ->
+  (t, create_error) result
+
 val spec : t -> Run_spec.t
 val close_events : t -> Close_event.t list
 val output_event_count : t -> int

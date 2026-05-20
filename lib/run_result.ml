@@ -3,6 +3,7 @@ type t =
   ; close_events : Close_event.t list
   ; output_event_count : int
   ; interrupted : bool
+  ; interrupted_signal : int option
   }
 
 type create_error =
@@ -129,11 +130,15 @@ let validate_complete_close_events ~command_count ~policy close_events =
   in
   validate 0
 
-let create ~spec ~close_events ~output_event_count ~interrupted =
+let create_internal ~interrupted_signal ~spec ~close_events ~output_event_count
+    ~interrupted =
   let close_event_count = List.length close_events in
   let commands = Array.of_list (Run_spec.commands spec) in
   let command_count = Array.length commands in
   let policy = Run_spec.policy spec in
+  let interrupted_signal =
+    if interrupted then interrupted_signal else None
+  in
   if output_event_count < 0 then Error `Negative_output_event_count
   else if close_event_count > Run_spec.close_event_capacity spec then
     Error `Too_many_close_events
@@ -151,13 +156,35 @@ let create ~spec ~close_events ~output_event_count ~interrupted =
           ~policy
           close_events
         |> Result.map (fun () ->
-          { spec; close_events; output_event_count; interrupted })
-      else Ok { spec; close_events; output_event_count; interrupted }
+          {
+            spec;
+            close_events;
+            output_event_count;
+            interrupted;
+            interrupted_signal;
+          })
+      else
+        Ok
+          {
+            spec;
+            close_events;
+            output_event_count;
+            interrupted;
+            interrupted_signal;
+          }
 
 let spec t = t.spec
 let close_events t = t.close_events
 let output_event_count t = t.output_event_count
 let interrupted t = t.interrupted
+
+let create ~spec ~close_events ~output_event_count ~interrupted =
+  create_internal ~interrupted_signal:None ~spec ~close_events
+    ~output_event_count ~interrupted
+
+let create_interrupted_by_signal ~signal ~spec ~close_events ~output_event_count =
+  create_internal ~interrupted_signal:(Some signal) ~spec ~close_events
+    ~output_event_count ~interrupted:true
 
 let close_events_for_exit t =
   let policy = Run_spec.policy t.spec in
@@ -175,7 +202,17 @@ let close_events_for_exit t =
       t.close_events
 
 let exit_code t =
-  if t.interrupted then 1
+  if t.interrupted then
+    match t.interrupted_signal with
+    | Some signal when signal = Sys.sigint -> 0
+    | Some _ ->
+        if
+          Run_policy.run_succeeded
+            (Run_spec.policy t.spec)
+            (close_events_for_exit t)
+        then 0
+        else 1
+    | None -> 1
   else if
     Run_policy.run_succeeded
       (Run_spec.policy t.spec)

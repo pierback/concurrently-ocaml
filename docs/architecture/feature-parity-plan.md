@@ -174,7 +174,7 @@ signal, process-tree teardown, and pipe implementations.
 | Cwd per run and per command | Run API, Runner | CLI `--cwd` is not exposed by pinned `concurrently@9.2.1`; structured OCaml `Run_api` commands can still provide cwd values before they reach the Runner |
 | Env per command | Run API, Runner | Structured `Run_api` commands support per-command env merged by `Runner`; CLI env flags are not an npm surface |
 | Kill others on success/failure | Run policy, Runner | Implemented for POSIX process groups |
-| Signal choice and kill timeout | Run policy, Runner | Implemented for OCaml/POSIX-supported signal names and aliases through `--kill-signal`, npm alias `--ks`, and `CONCURRENTLY_KILL_SIGNAL`/`CONCURRENTLY_KS`, including deterministic `SIGINT` and `SIGUSR1` parity; `--kill-timeout` accepts npm-style numeric coercion for invalid, sub-millisecond fractional, fractional, and negative values, emits npm-compatible Node timer warning text for negative values when used, emits force-kill status after the timeout window, and force-kills still-running POSIX process groups with `SIGKILL` |
+| Signal choice and kill timeout | Run policy, Runner | Implemented for OCaml/POSIX-supported signal names and aliases through `--kill-signal`, npm alias `--ks`, and `CONCURRENTLY_KILL_SIGNAL`/`CONCURRENTLY_KS`, including deterministic `SIGINT` and `SIGUSR1` sibling cancellation parity plus parent `SIGINT`/`SIGTERM`/`SIGHUP` forwarding and exit projection; `--kill-timeout` accepts npm-style numeric coercion for invalid, sub-millisecond fractional, fractional, and negative values, emits npm-compatible Node timer warning text for negative values when used, emits force-kill status after the timeout window, and force-kills still-running POSIX process groups with `SIGKILL` |
 | Max running processes | CLI config, Run policy, Runner | Implemented via `-m`/`--max-processes` for exact counts, compact numeric `-mN` values, and percent-of-detected-CPU values |
 | Passthrough arguments | CLI config, Argument expander | Implemented via `-P`/`--passthrough-arguments` for `{1}`, `{@}`, and `{*}` placeholders |
 | Command shortcuts and script wildcards | CLI config, Script catalog | Implemented shortcut expansion for `npm:`, `yarn:`, `pnpm:`, `bun:`, `node:`, and `deno:` with npm-compatible default names, package-script wildcards, verbatim wildcard command construction, omission filters against full script names, and deno task/package-script lookup |
@@ -307,6 +307,13 @@ Currently mirrored deterministic behavior:
   `SIGTERM` signal, and used invalid values such as `TERM`, `term`, `HUP`,
   `SIGFOO`, `sigusr1`, and `0` preserve npm's configured signal text in the
   shutdown status line before failing.
+- Published `dist/src/flow-control/kill-on-signal.js`: parent `SIGINT`,
+  `SIGTERM`, and `SIGHUP` are forwarded to active child process groups while
+  preserving npm's own process exit projection: `SIGINT` forces parent exit 0,
+  while `SIGTERM`/`SIGHUP` continue to evaluate the child close result, with no
+  parent signal termination reported to callers; queued commands that never
+  started are skipped rather than projected as synthetic signal failures, and
+  non-`SIGINT` signals preserve restart-policy completion.
 - Published `dist/src/flow-control/kill-others.js` and
   `dist/bin/concurrently.js`: deterministic `--kill-timeout` numeric coercion
   for sub-millisecond fractional and fractional escalation delays, invalid
@@ -438,8 +445,14 @@ Known divergences tracked as incomplete work:
    `--success all`, while never-started queued commands are closed internally
    without synthetic killed output after a cancellation condition fires. Retry
    delays remain live after sibling success/failure, matching npm's command
-   lifecycle semantics. Remaining run policy work: broader cancellation parity
-   around platform-specific signals and Windows process-tree behavior.
+   lifecycle semantics. Parent `SIGINT`, `SIGTERM`, and `SIGHUP` are forwarded
+   to active child process groups while the native parent exits with npm's
+   observed status projection, including non-`SIGINT` children that trap a
+   signal and exit successfully, and queued commands that never started are
+   skipped under bounded `max_processes`. Non-`SIGINT` parent signals preserve
+   restart-policy completion; parent `SIGINT` suppresses retries. Remaining run
+   policy work: broader cancellation parity around platform-specific signals and
+   Windows process-tree behavior.
 
 7. Input and teardown
 
@@ -496,9 +509,11 @@ Known divergences tracked as incomplete work:
    fractional/invalid restart-count coercion, deterministic restart-after
    coercion including exponential finite retry delay, kill-timeout
    warning/coercion behavior, queued-command suppression after
-   kill-on-success/failure, input forwarding, explicit index and command-name
-   input routing, whole-stdin-chunk input routing, version and help flag aliases,
-   and default input target routing. The Ubuntu CI build runs this harness after
+   kill-on-success/failure, parent `SIGINT`/`SIGTERM`/`SIGHUP` forwarding and
+   parent exit projection including skipped queued commands and restart-policy
+   projection, input forwarding, explicit index and command-name input routing,
+   whole-stdin-chunk input routing, version and help flag aliases, and default
+   input target routing. The Ubuntu CI build runs this harness after
    `dune build @install @runtest`. Remaining compatibility work: translate more
    upstream behavior tests for broader wildcard and shortcut edge cases, deeper
    package CLI behavior tests, and add backend conformance tests that do not

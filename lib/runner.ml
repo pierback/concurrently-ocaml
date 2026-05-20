@@ -142,6 +142,10 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
       | Some value -> max 1 (min value command_count)
     in
     let output_event_count = ref 0 in
+    let parent_signal = ref None in
+    let parent_signal_skipped_command_indexes = ref [] in
+    let parent_signal_pending_starting_commands = ref [] in
+    let parent_signal_forwarded_command_attempts = ref [] in
     let termination_signal = ref None in
     let termination_cancelled = ref false in
     let running_processes = ref [] in
@@ -225,6 +229,25 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
           exited_command_indexes :=
             command_index :: !exited_command_indexes
             |> List.sort_uniq Int.compare)
+    in
+    let remove_pending_parent_signal command_index =
+      parent_signal_pending_starting_commands :=
+        List.filter
+          (fun (pending_command_index, _) ->
+            pending_command_index <> command_index)
+          !parent_signal_pending_starting_commands
+    in
+    let take_parent_signal_skipped_command command_index =
+      let skipped =
+        List.mem command_index !parent_signal_skipped_command_indexes
+      in
+      if skipped then
+        parent_signal_skipped_command_indexes :=
+          List.filter
+            (fun skipped_command_index ->
+              skipped_command_index <> command_index)
+            !parent_signal_skipped_command_indexes;
+      skipped
     in
     let mark_command_starting_attempt command_index attempt =
       Eio.Mutex.use_rw ~protect:true state_mutex (fun () ->
@@ -353,13 +376,19 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
     in
     let signal_running_process_groups signal =
       !running_processes
-      |> List.iter (fun running_process ->
-             ignore (running_process.process.signal signal))
+      |> List.filter_map (fun running_process ->
+             match running_process.process.signal signal with
+             | Ok true -> Some running_process.command_index
+             | Ok false | Error _ -> None)
     in
     let signal_process_after_parent_termination command_index process signal =
       match process.Runner_backend.signal signal with
       | Ok true ->
           Eio.Mutex.use_rw ~protect:true state_mutex (fun () ->
+              parent_signal_forwarded_command_attempts :=
+                (command_index, current_attempts.(command_index))
+                :: !parent_signal_forwarded_command_attempts
+                |> List.sort_uniq Stdlib.compare;
               killed_command_indexes :=
                 command_index :: !killed_command_indexes
                 |> List.sort_uniq Int.compare)
@@ -425,9 +454,9 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
     let close_event_completes_command close_event =
       Run_policy.close_event_completes_command policy close_event
     in
-    let add_close_event ?(collect = true) close_event =
+    let add_close_event ?(collect = true) ?(complete = true) close_event =
       let command_index = Command.index (Close_event.command close_event) in
-      if close_event_completes_command close_event then
+      if complete && close_event_completes_command close_event then
         Eio.Mutex.use_rw ~protect:true state_mutex (fun () ->
             closed_command_indexes :=
               command_index :: !closed_command_indexes
@@ -444,20 +473,51 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
       | Skipped -> Eio.Stream.add close_events Skipped
       | Failed error -> record_failure error
     in
+    let parent_signal_skippable_commands () =
+      let running_indexes =
+        List.map
+          (fun running_process -> running_process.command_index)
+          !running_processes
+      in
+      let active_indexes = !active_command_indexes in
+      let starting_indexes = !starting_command_indexes in
+      let retry_pending_indexes = !retry_pending_command_indexes in
+      commands
+      |> List.filter (fun command ->
+             let command_index = Command.index command in
+             (not (List.mem command_index !closed_command_indexes))
+             && (not (List.mem command_index running_indexes))
+             && (not (List.mem command_index active_indexes))
+             && (not (List.mem command_index starting_indexes))
+             && not (List.mem command_index retry_pending_indexes))
+    in
     let cancel_non_running_commands signal =
-      let commands_to_cancel =
+      let commands_to_skip, commands_to_cancel =
         Eio.Mutex.use_rw ~protect:true state_mutex (fun () ->
             let running_indexes =
               List.map
                 (fun running_process -> running_process.command_index)
                 !running_processes
             in
-            let commands_to_cancel =
+            let active_indexes = !active_command_indexes in
+            let starting_indexes = !starting_command_indexes in
+            let non_running_commands =
               commands
               |> List.filter (fun command ->
                   let command_index = Command.index command in
                   (not (List.mem command_index !closed_command_indexes))
                   && not (List.mem command_index running_indexes))
+            in
+            let commands_to_skip, commands_to_cancel =
+              List.partition
+                (fun command ->
+                  let command_index = Command.index command in
+                  (not (List.mem command_index active_indexes))
+                  && not (List.mem command_index starting_indexes))
+                non_running_commands
+            in
+            let skipped_command_indexes =
+              List.map Command.index commands_to_skip
             in
             let cancelled_command_indexes =
               List.map Command.index commands_to_cancel
@@ -467,11 +527,15 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
               |> List.rev_append !killed_command_indexes
               |> List.sort_uniq Int.compare;
             closed_command_indexes :=
-              cancelled_command_indexes
+              skipped_command_indexes
+              |> List.rev_append cancelled_command_indexes
               |> List.rev_append !closed_command_indexes
               |> List.sort_uniq Int.compare;
-            commands_to_cancel)
+            (commands_to_skip, commands_to_cancel))
       in
+      List.iter
+        (fun _command -> Eio.Stream.add close_events Skipped)
+        commands_to_skip;
       commands_to_cancel
       |> List.map (fun command ->
           let attempt =
@@ -615,28 +679,64 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
               in
               Ok cancelled_stop_events
     in
-    let should_retry close_event = Run_policy.should_retry policy close_event in
+    let close_event_can_retry_after_parent_signal close_event =
+      (not (Close_event.is_success close_event))
+      &&
+      match Run_policy.restart_limit policy with
+      | Run_policy.Infinite_restarts -> true
+      | Run_policy.Finite_restarts restart_tries ->
+          Close_event.attempt close_event < restart_tries
+    in
+    let close_event_was_parent_signaled close_event =
+      let command_index = Command.index (Close_event.command close_event) in
+      let attempt = Close_event.attempt close_event in
+      Eio.Mutex.use_ro state_mutex (fun () ->
+          List.mem
+            (command_index, attempt)
+            !parent_signal_forwarded_command_attempts)
+    in
+    let should_retry close_event =
+      Option.is_none !termination_signal
+      &&
+      if close_event_was_parent_signaled close_event then
+        close_event_can_retry_after_parent_signal close_event
+      else Run_policy.should_retry policy close_event
+    in
+    let close_event_finishes_collection close_event =
+      close_event_completes_command close_event && not (should_retry close_event)
+    in
     let set_current_attempt command_index attempt =
       Eio.Mutex.use_rw ~protect:true state_mutex (fun () ->
           current_attempts.(command_index) <- attempt)
     in
+    let clear_kill_marks_for_retry command_index =
+      Eio.Mutex.use_rw ~protect:true state_mutex (fun () ->
+          killed_command_indexes :=
+            List.filter
+              (fun killed_command_index ->
+                killed_command_index <> command_index)
+              !killed_command_indexes;
+          force_killed_command_indexes :=
+            List.filter
+              (fun force_killed_command_index ->
+                force_killed_command_index <> command_index)
+              !force_killed_command_indexes)
+    in
     let finish_close_event ~sw close_event =
       if should_retry close_event then (
         let next_attempt = Close_event.attempt close_event + 1 in
+        let command_index = Command.index (Close_event.command close_event) in
         let delay_ms = Run_policy.restart_delay_ms policy ~next_attempt in
-        set_current_attempt
-          (Command.index (Close_event.command close_event))
-          next_attempt;
+        set_current_attempt command_index next_attempt;
         Eio.Mutex.use_rw ~protect:true state_mutex (fun () ->
-            let command_index =
-              Command.index (Close_event.command close_event)
-            in
             retry_pending_command_indexes :=
               command_index :: !retry_pending_command_indexes
               |> List.sort_uniq Int.compare);
         add_close_event
+          ~complete:false
           ~collect:(Run_policy.collect_retry_close_events policy)
           close_event;
+        clear_kill_marks_for_retry command_index;
         emit_lifecycle
           ~command:(Close_event.command close_event)
           ~attempt:(Close_event.attempt close_event)
@@ -685,26 +785,33 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
                     | process ->
                         assert (
                           String.trim process.Runner_backend.process_id <> "");
-                        starting_command_indexes :=
-                          List.filter
-                            (fun starting_command_index ->
-                              starting_command_index <> command_index)
-                            !starting_command_indexes;
                         let pending_input, close_stdin_after_spawn =
                           Runner_input_queue.drain_for_spawn input_queue
                             ~command_index ~stdin_should_follow_input
                         in
                         running_processes :=
                           { command_index; process } :: !running_processes;
+                        let signal_after_spawn =
+                          List.assoc_opt command_index
+                            !parent_signal_pending_starting_commands
+                        in
+                        remove_pending_parent_signal command_index;
+                        starting_command_indexes :=
+                          List.filter
+                            (fun starting_command_index ->
+                              starting_command_index <> command_index)
+                            !starting_command_indexes;
                         `Process
                           ( process,
-                            !termination_signal,
+                            signal_after_spawn,
                             pending_input,
                             close_stdin_after_spawn )
                     | exception exn -> `Spawn_error exn)
             in
             match spawn_result with
             | `Closed ->
+                Eio.Mutex.use_rw ~protect:true state_mutex (fun () ->
+                    remove_pending_parent_signal command_index);
                 remove_active command_index;
                 `Done
             | `Process
@@ -877,6 +984,8 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
                         remove_active command_index;
                         next_action))
             | `Spawn_error exn -> (
+                Eio.Mutex.use_rw ~protect:true state_mutex (fun () ->
+                    remove_pending_parent_signal command_index);
                 remove_starting command_index;
                 let ended_at = now () in
                 let command_result =
@@ -925,10 +1034,15 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
       loop ()
     in
     let rec run_command_loop ~sw command attempt =
-      if command_is_closed (Command.index command) then ()
+      let command_index = Command.index command in
+      if command_is_closed command_index then (
+        if take_parent_signal_skipped_command command_index then
+          Eio.Stream.add close_events Skipped)
       else
         match run_command_attempt ~sw command attempt with
-        | `Done -> ()
+        | `Done ->
+            if take_parent_signal_skipped_command command_index then
+              Eio.Stream.add close_events Skipped
         | `Retry (next_attempt, delay_ms) ->
             if delay_ms <= 0 || sleep_until_retry_or_close command delay_ms then
               run_command_loop ~sw command next_attempt
@@ -1025,7 +1139,7 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
           match Eio.Stream.take close_events with
           | Closed close_event ->
               let remaining =
-                if close_event_completes_command close_event then remaining - 1
+                if close_event_finishes_collection close_event then remaining - 1
                 else remaining
               in
               collect remaining (close_event :: collected)
@@ -1053,13 +1167,19 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
       run_teardown_commands ();
       main_result
     in
-    let create_run_result ~spec close_events =
+    let create_run_result ?interrupted_signal ~spec ~interrupted close_events =
       match recorded_failure () with
       | Some error -> Error error
       | None -> (
           match
-            Run_result.create ~spec ~close_events
-              ~output_event_count:!output_event_count ~interrupted:false
+            match interrupted_signal with
+            | None ->
+                Run_result.create ~spec ~close_events
+                  ~output_event_count:!output_event_count ~interrupted
+            | Some signal ->
+                assert interrupted;
+                Run_result.create_interrupted_by_signal ~signal ~spec
+                  ~close_events ~output_event_count:!output_event_count
           with
           | Ok result -> Ok result
           | Error error -> Error (`Run_result_error error))
@@ -1067,17 +1187,58 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
     match
       with_parent_termination_signals
         ~cleanup:(fun signal ->
-          if Option.is_none !termination_signal then
+          if Option.is_none !parent_signal then parent_signal := Some signal;
+          let skipped_command_indexes =
+            parent_signal_skippable_commands () |> List.map Command.index
+          in
+          closed_command_indexes :=
+            skipped_command_indexes
+            |> List.rev_append !closed_command_indexes
+            |> List.sort_uniq Int.compare;
+          parent_signal_skipped_command_indexes :=
+            skipped_command_indexes
+            |> List.rev_append !parent_signal_skipped_command_indexes
+            |> List.sort_uniq Int.compare;
+          parent_signal_pending_starting_commands :=
+            !starting_command_indexes
+            |> List.map (fun command_index -> (command_index, signal))
+            |> List.rev_append !parent_signal_pending_starting_commands
+            |> List.sort_uniq (fun (left_index, _) (right_index, _) ->
+                   Int.compare left_index right_index);
+          if signal = Sys.sigint && Option.is_none !termination_signal then
             termination_signal := Some signal;
-          signal_running_process_groups signal)
+          let signaled_command_indexes =
+            signal_running_process_groups signal
+          in
+          if signaled_command_indexes <> [] then (
+            let main_running_command_indexes =
+              signaled_command_indexes
+              |> List.filter (fun command_index ->
+                     command_index >= 0 && command_index < command_count)
+            in
+            let running_command_attempts =
+              main_running_command_indexes
+              |> List.map (fun command_index ->
+                     (command_index, current_attempts.(command_index)))
+            in
+            parent_signal_forwarded_command_attempts :=
+              running_command_attempts
+              |> List.rev_append !parent_signal_forwarded_command_attempts
+              |> List.sort_uniq Stdlib.compare;
+            killed_command_indexes :=
+              signaled_command_indexes
+              |> List.rev_append !killed_command_indexes
+              |> List.sort_uniq Int.compare);
+          ())
         run_main_then_teardown
     with
     | `Interrupted (_, Error error) -> Error error
-    | `Interrupted (signal, Ok _) ->
-        Unix.kill (Unix.getpid ()) signal;
-        Error (`Unexpected_runner_error "termination signal was not delivered")
+    | `Interrupted (signal, Ok close_events) ->
+        create_run_result ~spec ~interrupted:true
+          ~interrupted_signal:signal close_events
     | `Completed (Error error) -> Error error
-    | `Completed (Ok close_events) -> create_run_result ~spec close_events
+    | `Completed (Ok close_events) ->
+        create_run_result ~spec ~interrupted:false close_events
     | exception Fatal_runner_error error -> Error error
     | exception exn -> Error (`Unexpected_runner_error (Printexc.to_string exn))
   in
