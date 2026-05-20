@@ -30,6 +30,8 @@ The core domain model must stay OS-neutral. Process supervision is a backend
 concern: Unix-like runners and Windows runners should share the same
 `Command`/`Run_policy`/`Run_spec` model but use platform-specific spawn,
 signal, process-tree teardown, and pipe implementations.
+The POSIX backend is now packaged as `concurrentlyocaml_posix`, keeping
+`eio_posix` and POSIX C stubs out of the OS-neutral core library.
 
 ## Current State
 
@@ -39,14 +41,15 @@ signal, process-tree teardown, and pipe implementations.
 - `lib/runner.ml` owns OS-neutral orchestration: bounded `max_processes`,
   retries, sibling cancellation decisions, output-event reading, close-event
   collection, and `Run_result` construction.
-- `lib/runner_backend.ml` defines the backend contract. `lib/posix_runner_backend.ml`
-  owns POSIX shell selection, Eio POSIX process spawning, stdout/stderr pipe
-  creation, process-group signalling, process identity exposure, and POSIX
-  close-status mapping. POSIX backend conformance tests now cover cwd/env
-  propagation, stdout/stderr pipes, stdin writes and close, process identity,
-  post-exit signal no-ops, process-group signalling, and close-status mapping.
-  Runner backend-boundary tests cover spawn exceptions, retry after spawn
-  failure, and teardown spawn failure isolation.
+- `lib/runner_backend.ml` defines the backend contract. The
+  `concurrentlyocaml_posix` library owns POSIX shell selection, Eio POSIX
+  process spawning, stdout/stderr pipe creation, process-group signalling,
+  process identity exposure, and POSIX close-status mapping. POSIX backend
+  conformance tests now cover cwd/env propagation, stdout/stderr pipes, stdin
+  writes and close, process identity, post-exit signal no-ops, process-group
+  signalling, and close-status mapping. Runner backend-boundary tests cover
+  spawn exceptions, retry after spawn failure, and teardown spawn failure
+  isolation.
 - The blocking `Unix.open_process_full` / `Unix.fork` / `Unix.waitpid`
   orchestration has been removed from the executable.
 - Output now flows through structured `Output_event.t` callbacks as bounded
@@ -428,7 +431,7 @@ As of May 20, 2026, the current `master` worktree has the following local proof:
    events, and close-event collection.
 
    Status: complete for the current Unix-like POSIX backend. The executable now
-   calls `Runner.run` with `Posix_runner_backend.backend`, and the blocking Unix
+   calls `Runner.run` with the selected native backend, and the blocking Unix
    orchestration has been deleted. The Runner executes commands concurrently
    with Eio fibers, bounds
    fan-out with `Run_policy.max_processes`, emits structured output events,
@@ -443,7 +446,9 @@ As of May 20, 2026, the current `master` worktree has the following local proof:
    become close events, retry through the same close-event path, and teardown
    spawn failures remain isolated from main command exit projection. Additional
    backend evidence can still be added for platform-specific signal labels; the
-   remaining implementation gap is the deferred Windows backend.
+   remaining implementation gap is the deferred Windows backend. POSIX-specific
+   code now lives in the `concurrentlyocaml_posix` backend library, so the
+   OS-neutral core no longer links `eio_posix` or POSIX C stubs.
 
 5. Output formatter parity
 
@@ -609,15 +614,15 @@ As of May 20, 2026, the current `master` worktree has the following local proof:
    error mapping.
 
    Status: partial implementation complete. `Runner.run` now takes an explicit
-   `Runner_backend.t`, and the CLI/test harness selects
-   `Posix_runner_backend.backend`. The POSIX backend owns `/bin/sh`, Eio POSIX
-   spawning, process-group signalling, pipe creation, stdin writes, process
-   identity, and process close-status mapping. POSIX backend conformance tests
-   cover the current backend contract without depending on npm availability,
-   while Runner backend-boundary tests cover spawn-failure projection above the
-   backend seam. Deferred backend scope: add a Windows backend with native shell
-   and process-tree semantics, plus broader conformance for platform-specific
-   signal labels.
+   `Runner_backend.t`, and the CLI selects a native backend through Dune. The
+   POSIX backend owns `/bin/sh`, Eio POSIX spawning, process-group signalling,
+   pipe creation, stdin writes, process identity, and process close-status
+   mapping from the separate `concurrentlyocaml_posix` library. POSIX backend
+   conformance tests cover the current backend contract without depending on npm
+   availability, while Runner backend-boundary tests cover spawn-failure
+   projection above the backend seam. Deferred backend scope: add a Windows
+   backend with native shell and process-tree semantics, plus broader conformance
+   for platform-specific signal labels.
 
 ## Test Strategy
 

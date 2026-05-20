@@ -1,6 +1,6 @@
 module Close_event = Concurrentlyocaml.Close_event
 module Command = Concurrentlyocaml.Command
-module Posix_runner_backend = Concurrentlyocaml.Posix_runner_backend
+module Posix_runner_backend = Concurrentlyocaml_posix.Posix_runner_backend
 
 let ok = function Ok value -> value | Error _ -> assert false
 

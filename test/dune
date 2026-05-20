@@ -1,7 +1,8 @@
 (test
  (name domain_tests)
  (modules domain_tests)
- (libraries unix eio_main eio concurrentlyocaml))
+ (enabled_if (<> %{os_type} "Win32"))
+ (libraries unix eio_main eio concurrentlyocaml concurrentlyocaml_posix))
 
 (tests
  (names cli_command_inputs_tests)
@@ -44,4 +45,5 @@
 (test
  (name posix_runner_backend_tests)
  (modules posix_runner_backend_tests)
- (libraries eio_main eio unix concurrentlyocaml))
+ (enabled_if (<> %{os_type} "Win32"))
+ (libraries eio_main eio unix concurrentlyocaml concurrentlyocaml_posix))

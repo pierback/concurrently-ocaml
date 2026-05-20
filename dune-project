@@ -28,7 +28,9 @@
   (eio
    (>= 1.3))
   (eio_posix
-   (>= 1.3))
+   (and
+    (>= 1.3)
+    (<> :os "win32")))
   (eio_main
    (>= 1.3))
   (cmdliner

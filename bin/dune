@@ -1,4 +1,11 @@
 (executable
  (public_name concurrentlyocaml)
  (name main)
- (libraries eio_main eio cmdliner concurrentlyocaml))
+ (libraries
+  eio_main
+  eio
+  cmdliner
+  concurrentlyocaml
+  (select native_backend.ml from
+   (concurrentlyocaml_posix -> native_backend.posix.ml)
+   ( -> native_backend.unsupported.ml))))

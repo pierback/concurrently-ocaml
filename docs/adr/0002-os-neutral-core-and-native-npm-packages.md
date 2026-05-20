@@ -32,6 +32,9 @@ behavior:
   termination, stdout/stderr pipe capture, and platform error mapping.
 - Unix-like implementations use Eio POSIX process handles plus process-group
   teardown.
+- POSIX process-group stubs and the `eio_posix` dependency live in the
+  `concurrentlyocaml_posix` backend library. The core `concurrentlyocaml`
+  library remains the OS-neutral CLI/domain model and runner orchestration.
 - Windows implementations must use Windows-native process tree teardown instead
   of pretending POSIX signals are portable.
 
@@ -79,6 +82,9 @@ platform binary or fail with a missing native binary.
   fixtures.
 - Runner parity work must define behavior at the backend interface, not by
   leaking Unix assumptions into `Command` or `Run_policy`.
+- The executable selects a native backend at build time. Platforms without a
+  backend fail with an explicit native-backend error while Windows support is in
+  progress; they do not route to upstream JavaScript.
 - Alpine/musl users do not accidentally execute a glibc binary. They install
   and smoke the dedicated `linux-*-musl` package instead.
 - Windows drop-in npm-script behavior remains withheld until native backend

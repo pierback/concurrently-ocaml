@@ -1,5 +1,7 @@
 [@@@alert "-unstable"]
 
+open Concurrentlyocaml
+
 let shell_args command =
   [ "/bin/sh"; "-c"; Command.text command ]
 
