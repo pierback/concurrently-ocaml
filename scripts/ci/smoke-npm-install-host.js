@@ -53,7 +53,7 @@ function hostTarget() {
   }
 
   throw new Error(
-    `host npm install smoke is not supported on ${process.platform}; Windows packages are withheld until a Windows backend exists`
+    `host native package smoke is not supported on ${process.platform}; run npm run smoke:windows-js for the Windows drop-in package route`
   );
 }
 

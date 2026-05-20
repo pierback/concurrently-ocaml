@@ -354,7 +354,16 @@ const cases = [
   {
     name: "separate false passthrough value disables passthrough",
     upstream: "yargs boolean separate value coercion before passthrough extraction",
-    args: ["--no-color", "-P", "false", "printf '{1}'", "--", "printf arg"],
+    args: [
+      "--no-color",
+      "-m",
+      "1",
+      "-P",
+      "false",
+      "printf '{1}'",
+      "--",
+      "printf arg",
+    ],
   },
   {
     name: "hidden command suppresses close notification",
