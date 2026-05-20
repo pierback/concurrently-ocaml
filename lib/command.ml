@@ -1,6 +1,7 @@
 type t =
   { index : int
   ; text : string
+  ; display_text : string
   ; name : string option
   ; cwd : string option
   ; env : (string * string) list
@@ -17,7 +18,7 @@ type create_error =
   ]
 
 let create ?name ?cwd ?(env = []) ?prefix_color ?(raw = false) ?(hidden = false)
-    ?(ipc = false) ?(allow_empty = false) ~index text =
+    ?(ipc = false) ?display_text ?(allow_empty = false) ~index text =
   if index < 0 then Error `Negative_index
   else if (not allow_empty) && String.equal text "" then Error `Empty_command
   else
@@ -27,6 +28,7 @@ let create ?name ?cwd ?(env = []) ?prefix_color ?(raw = false) ?(hidden = false)
        Ok
          { index
          ; text
+         ; display_text = Option.value ~default:text display_text
          ; name
          ; cwd
          ; env
@@ -38,6 +40,7 @@ let create ?name ?cwd ?(env = []) ?prefix_color ?(raw = false) ?(hidden = false)
 
 let index t = t.index
 let text t = t.text
+let display_text t = t.display_text
 let name t = t.name
 let cwd t = t.cwd
 let env t = t.env
@@ -49,6 +52,7 @@ let ipc t = t.ipc
 let equal left right =
   left.index = right.index
   && String.equal left.text right.text
+  && String.equal left.display_text right.display_text
   && left.name = right.name
   && left.cwd = right.cwd
   && left.env = right.env

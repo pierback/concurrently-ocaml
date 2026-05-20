@@ -115,7 +115,7 @@ let template_label ~now ~options ~process_id command template =
       ("{index}", index_label command);
       ("{pid}", Option.value ~default:"" process_id);
       ("{name}", name_label command);
-      ("{command}", Command.text command);
+      ("{command}", Command.display_text command);
       ("{time}", format_timestamp options.timestamp_format (now ()));
     ]
   in
@@ -150,7 +150,7 @@ let raw_label ~now ~options ~process_id ~mode command =
   | Name -> name_label command
   | Command ->
       truncate_command ~prefix_length:options.prefix_length
-        (Command.text command)
+        (Command.display_text command)
   | No_prefix -> ""
   | Time -> format_timestamp options.timestamp_format (now ())
   | Template template ->

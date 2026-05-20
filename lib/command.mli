@@ -14,6 +14,7 @@ val create :
   ?raw:bool ->
   ?hidden:bool ->
   ?ipc:bool ->
+  ?display_text:string ->
   ?allow_empty:bool ->
   index:int ->
   string ->
@@ -21,6 +22,7 @@ val create :
 
 val index : t -> int
 val text : t -> string
+val display_text : t -> string
 val name : t -> string option
 val cwd : t -> string option
 val env : t -> (string * string) list

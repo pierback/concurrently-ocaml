@@ -234,11 +234,12 @@ let run_config env config =
                 1))
 
 let run ~passthrough_argv_arguments ~deprecated_name_separator_used
-    command_texts names_csv name_separator timings group raw hide_csv no_color
-    passthrough_arguments handle_input default_input_target success prefix
+    command_texts display_command_texts names_csv api_empty_expansion
+    name_separator api_name_separator timings group raw hide_csv api_hide_indexes_csv
+    no_color passthrough_arguments handle_input default_input_target success prefix
     prefix_colors_csv prefix_length timestamp_format pad_prefix kill_others
-    kill_others_on_fail kill_signal kill_timeout_ms max_processes restart_tries
-    restart_after teardown_texts =
+    kill_others_on_success kill_others_on_fail kill_signal kill_timeout_ms
+    max_processes restart_tries restart_after teardown_texts =
   let prefix_length =
     match float_of_string_opt (String.trim prefix_length) with
     | Some value
@@ -247,14 +248,17 @@ let run ~passthrough_argv_arguments ~deprecated_name_separator_used
     | Some _ | None -> 10.0
   in
   match
-    Cli_config.create ~cwd:None
+    Cli_config.create_with_display ~cwd:None
       ~passthrough_arguments:
         (if passthrough_arguments then Some passthrough_argv_arguments else None)
-      ~teardown_texts ~command_texts ~names_csv ~name_separator ~spacious:false
-      ~timings ~group ~raw ~hide_csv ~no_color ~prefix ~prefix_colors_csv
-      ~prefix_length ~pad_prefix ~timestamp_format ~handle_input
-      ~default_input_target ~success ~kill_others ~kill_others_on_fail
-      ~kill_signal ~kill_timeout_ms ~max_processes ~restart_tries ~restart_after
+      ~teardown_texts ~command_texts ~display_command_texts ~names_csv
+      ~force_empty_expansion:api_empty_expansion
+      ~name_separator:(Option.value api_name_separator ~default:name_separator)
+      ~spacious:false ~timings ~group ~raw ~hide_csv ~no_color ~prefix
+      ~api_hide_indexes_csv ~prefix_colors_csv ~prefix_length ~pad_prefix
+      ~timestamp_format ~handle_input ~default_input_target ~success
+      ~kill_others_on_success ~kill_others ~kill_others_on_fail ~kill_signal
+      ~kill_timeout_ms ~max_processes ~restart_tries ~restart_after
   with
   | Error error ->
       Printf.eprintf "Error: %s\n" (Cli_config.error_message error);
@@ -272,6 +276,13 @@ let name_separator =
   let doc = "Character or string used to split --names." in
   Cmdliner.Arg.(
     value & opt string "," & info [ "name-separator" ] ~docv:"SEPARATOR" ~doc)
+
+let api_name_separator =
+  let doc = "Internal API facade name separator." in
+  Cmdliner.Arg.(
+    value
+    & opt (some string) None
+    & info [ "api-name-separator" ] ~docv:"SEPARATOR" ~doc)
 
 let timings =
   let doc = "Show elapsed time for each command." in
@@ -291,6 +302,13 @@ let hide =
   in
   Cmdliner.Arg.(
     value & opt (some string) None & info [ "hide" ] ~docv:"COMMANDS" ~doc)
+
+let api_hide_indexes =
+  let doc = "Internal API facade command indexes whose output is hidden." in
+  Cmdliner.Arg.(
+    value
+    & opt (some string) None
+    & info [ "api-hide-indexes" ] ~docv:"INDEXES" ~doc)
 
 let no_color =
   let doc = "Disable ANSI colors in formatted output." in
@@ -364,6 +382,10 @@ let kill_others_on_fail =
   let doc = "Cancel sibling commands when one command fails." in
   Cmdliner.Arg.(value & flag & info [ "kill-others-on-fail" ] ~doc)
 
+let kill_others_on_success =
+  let doc = "Cancel sibling commands when one command succeeds." in
+  Cmdliner.Arg.(value & flag & info [ "kill-others-on-success" ] ~doc)
+
 let kill_signal =
   let doc = "Signal to send when cancelling sibling commands." in
   Cmdliner.Arg.(
@@ -409,6 +431,19 @@ let command_texts =
   let doc = "Command to run. Use -- before commands that start with '-'." in
   Cmdliner.Arg.(value & pos_all string [] & info [] ~docv:"COMMAND" ~doc)
 
+let api_display_commands =
+  let doc =
+    "Internal API facade command labels. Count must match command count."
+  in
+  Cmdliner.Arg.(
+    value
+    & opt_all string []
+    & info [ "api-display-command" ] ~docv:"COMMAND" ~doc)
+
+let api_empty_expansion =
+  let doc = "Internal API facade empty expansion marker." in
+  Cmdliner.Arg.(value & flag & info [ "api-empty-expansion" ] ~doc)
+
 let command ~passthrough_argv_arguments ~deprecated_name_separator_used =
   let doc = "Run several shell commands and prefix their output." in
   let info =
@@ -417,11 +452,13 @@ let command ~passthrough_argv_arguments ~deprecated_name_separator_used =
   Cmdliner.Cmd.v info
     Cmdliner.Term.(
       const (run ~passthrough_argv_arguments ~deprecated_name_separator_used)
-      $ command_texts $ names $ name_separator $ timings $ group $ raw $ hide
-      $ no_color $ passthrough_arguments $ handle_input $ default_input_target
-      $ success $ prefix $ prefix_colors $ prefix_length $ timestamp_format
-      $ pad_prefix $ kill_others $ kill_others_on_fail $ kill_signal
-      $ kill_timeout $ max_processes $ restart_tries $ restart_after $ teardown)
+      $ command_texts $ api_display_commands $ names $ api_empty_expansion
+      $ name_separator $ api_name_separator $ timings $ group $ raw $ hide
+      $ api_hide_indexes $ no_color $ passthrough_arguments $ handle_input
+      $ default_input_target $ success $ prefix $ prefix_colors $ prefix_length
+      $ timestamp_format $ pad_prefix $ kill_others $ kill_others_on_success
+      $ kill_others_on_fail $ kill_signal $ kill_timeout $ max_processes
+      $ restart_tries $ restart_after $ teardown)
 
 let () =
   if Cli_argv.requests_help_before_separator Sys.argv then (

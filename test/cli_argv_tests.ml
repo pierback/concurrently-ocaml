@@ -35,6 +35,8 @@ let test_requests_default_help () =
   let normalized = Cli_argv.normalize [| "conc"; "--version"; "false" |] in
   assert (Cli_argv.requests_default_help normalized.argv);
   assert (not (Cli_argv.requests_default_help [| "conc"; "printf ok" |]));
+  assert (
+    not (Cli_argv.requests_default_help [| "conc"; "--api-empty-expansion" |]));
   assert (not (Cli_argv.requests_default_help [| "conc"; "--"; "--help" |]))
 
 let test_extracts_passthrough_arguments () =
@@ -224,6 +226,27 @@ let test_cli_options_override_env_defaults () =
     [| "conc"; "--prefix-length=4"; "printf one"; "printf two" |]
     normalized.Cli_argv.argv
 
+let test_api_ignore_env_options_flag_removes_env_defaults () =
+  let normalized =
+    Cli_argv.normalize_with_env
+      ~env:
+        (env
+           [
+             ("CONCURRENTLY_SUCCESS", "first");
+             ("CONCURRENTLY_RAW", "true");
+           ])
+      [| "conc"; "--api-ignore-env-options"; "printf one"; "printf two" |]
+  in
+  assert_array_equal [| "conc"; "printf one"; "printf two" |] normalized.argv;
+  let normalized =
+    Cli_argv.normalize_with_env
+      ~env:(env [ ("CONCURRENTLY_SUCCESS", "first") ])
+      [| "conc"; "--"; "--api-ignore-env-options" |]
+  in
+  assert_array_equal
+    [| "conc"; "--success=first"; "--"; "--api-ignore-env-options" |]
+    normalized.argv
+
 let test_negated_boolean_options_use_last_value () =
   let normalized =
     Cli_argv.normalize
@@ -381,6 +404,7 @@ let () =
   test_normalizes_short_inline_value_options ();
   test_preserves_single_dash_string_option_values ();
   test_cli_options_override_env_defaults ();
+  test_api_ignore_env_options_flag_removes_env_defaults ();
   test_negated_boolean_options_use_last_value ();
   test_positive_boolean_options_consume_separate_true_false_values ();
   test_no_color_preserves_separate_true_false_commands ();

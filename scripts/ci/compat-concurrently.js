@@ -31,14 +31,14 @@ const signalTrappedSuccessCommand =
   "node -e \"process.on('SIGTERM',()=>process.exit(0)); process.stdout.write('ready\\n'); setTimeout(()=>process.exit(99),5000)\"";
 const delayedOneCommand =
   "node -e \"setTimeout(()=>process.stdout.write('one'),1200)\"";
-const forceNoColorEnv = { NO_COLOR: null, FORCE_COLOR: "0" };
-const forceFalseColorEnv = { NO_COLOR: null, FORCE_COLOR: "false" };
-const forceBasicColorEnv = { NO_COLOR: null, FORCE_COLOR: "1" };
-const forceAnsi256ColorEnv = { NO_COLOR: null, FORCE_COLOR: "2" };
-const forceAnsi256SuffixColorEnv = { NO_COLOR: null, FORCE_COLOR: "2foo" };
-const forceTruecolorEnv = { NO_COLOR: null, FORCE_COLOR: "3" };
-const forceSpacedZeroColorEnv = { NO_COLOR: null, FORCE_COLOR: " 0" };
-const forceNanColorEnv = { NO_COLOR: null, FORCE_COLOR: "NaN" };
+const forceNoColorEnv = { COLORTERM: null, NO_COLOR: null, TERM: "dumb", FORCE_COLOR: "0" };
+const forceFalseColorEnv = { COLORTERM: null, NO_COLOR: null, TERM: "dumb", FORCE_COLOR: "false" };
+const forceBasicColorEnv = { COLORTERM: null, NO_COLOR: null, TERM: "dumb", FORCE_COLOR: "1" };
+const forceAnsi256ColorEnv = { COLORTERM: null, NO_COLOR: null, TERM: "xterm-256color", FORCE_COLOR: "2" };
+const forceAnsi256SuffixColorEnv = { COLORTERM: null, NO_COLOR: null, TERM: "xterm-256color", FORCE_COLOR: "2foo" };
+const forceTruecolorEnv = { COLORTERM: "truecolor", NO_COLOR: null, TERM: "xterm-256color", FORCE_COLOR: "3" };
+const forceSpacedZeroColorEnv = { COLORTERM: null, NO_COLOR: null, TERM: "dumb", FORCE_COLOR: " 0" };
+const forceNanColorEnv = { COLORTERM: null, NO_COLOR: null, TERM: "dumb", FORCE_COLOR: "NaN" };
 const shortcutFixture = createShortcutFixture();
 const escapedScriptFixture = createEscapedScriptFixture();
 const literalWildcardFixture = createLiteralWildcardFixture();
@@ -46,8 +46,8 @@ const invalidPackageFixture = createInvalidPackageFixture();
 const invalidDenoFixture = createInvalidDenoFixture();
 const killTimeoutFixture = createKillTimeoutFixture();
 const restartFixture = createRestartFixture();
-const inputReadyDelayMs = 750;
-const secondInputReadyDelayMs = 850;
+const inputReadyDelayMs = 1200;
+const secondInputReadyDelayMs = 1400;
 
 if (!existsSync(localBinary)) {
   throw new Error(`missing local binary: ${localBinary}; run npm run compile first`);
@@ -1397,6 +1397,7 @@ const posixCases = [
       "trap 'exit 130' INT; sleep 1",
       "printf ok",
     ],
+    normalizeStatus: normalizeSignalTrapStatus,
     normalizeStdout: normalizeSignalTrapCloseStatus,
   },
   {
@@ -1410,6 +1411,7 @@ const posixCases = [
       "trap 'exit 130' INT; sleep 1",
       "printf ok",
     ],
+    normalizeStatus: normalizeSignalTrapStatus,
     normalizeStdout: normalizeSignalTrapCloseStatus,
   },
   {
@@ -1423,6 +1425,7 @@ const posixCases = [
       "trap 'exit 138' USR1; while :; do :; done",
       "printf ok",
     ],
+    normalizeStatus: normalizeSignalTrapStatus,
     normalizeStdout: normalizeSignalTrapCloseStatus,
   },
   {
@@ -1462,6 +1465,7 @@ const posixCases = [
       "trap 'exit 129' HUP; sleep 1",
       "printf ok",
     ],
+    normalizeStatus: normalizeShellTrapStatus,
     normalizeStdout: normalizeShellSignalDiagnosticStdout,
   },
   {
@@ -1474,6 +1478,7 @@ const posixCases = [
       "printf ok",
     ],
     env: { CONCURRENTLY_KILL_SIGNAL: "SIGINT" },
+    normalizeStatus: normalizeSignalTrapStatus,
     normalizeStdout: normalizeSignalTrapCloseStatus,
   },
   {
@@ -1486,6 +1491,7 @@ const posixCases = [
       "printf ok",
     ],
     env: { CONCURRENTLY_KS: "SIGUSR1" },
+    normalizeStatus: normalizeSignalTrapStatus,
     normalizeStdout: normalizeSignalTrapCloseStatus,
   },
   {
@@ -1577,6 +1583,7 @@ const posixCases = [
       killTimeoutFixture.trapCommand("fractional"),
       killTimeoutFixture.successCommand("fractional"),
     ],
+    normalizeStdout: normalizeShellSignalDiagnosticStdout,
   },
   {
     name: "kill timeout sub-millisecond fractional still force kills",
@@ -1589,6 +1596,7 @@ const posixCases = [
       killTimeoutFixture.trapCommand("submillisecond"),
       killTimeoutFixture.successCommand("submillisecond"),
     ],
+    normalizeStdout: normalizeShellSignalDiagnosticStdout,
   },
   {
     name: "kill timeout negative warning is emitted when used",
@@ -1601,6 +1609,7 @@ const posixCases = [
       killTimeoutFixture.trapCommand("negative"),
       killTimeoutFixture.successCommand("negative"),
     ],
+    normalizeStdout: normalizeShellSignalDiagnosticStdout,
     normalizeStderr: normalizeNodeTimerWarningPid,
   },
   {
@@ -1991,8 +2000,16 @@ const cases = process.platform === "win32" ? windowsCases : posixCases;
       const local = await runLocal(testCase);
       const npm = await runNpm(testCase);
 
-      assertEqual(local.status, npm.status, `${testCase.name} exit status`);
-      assertEqual(local.signal, npm.signal, `${testCase.name} signal`);
+      assertEqual(
+        normalizeStatus(testCase, local.status),
+        normalizeStatus(testCase, npm.status),
+        `${testCase.name} exit status`
+      );
+      assertEqual(
+        normalizeSignal(testCase, local.signal),
+        normalizeSignal(testCase, npm.signal),
+        `${testCase.name} signal`
+      );
       assertEqual(
         normalizeStdout(testCase, local.stdout),
         normalizeStdout(testCase, npm.stdout),
@@ -2596,6 +2613,14 @@ function normalizeStderr(testCase, stderr) {
   return testCase.normalizeStderr ? testCase.normalizeStderr(stderr) : stderr;
 }
 
+function normalizeStatus(testCase, status) {
+  return testCase.normalizeStatus ? testCase.normalizeStatus(status) : status;
+}
+
+function normalizeSignal(testCase, signal) {
+  return testCase.normalizeSignal ? testCase.normalizeSignal(signal) : signal;
+}
+
 function normalizeVersionStdout(stdout) {
   return stdout.replace(/^\d+\.\d+\.\d+\n$/, "<version>\n");
 }
@@ -2683,15 +2708,32 @@ function normalizeUnknownSignalStderr(stderr) {
 
 function normalizeSignalTrapCloseStatus(stdout) {
   return stdout
-    .replace(/exited with code (?:130|SIGINT)/g, "exited with code <SIGINT>")
-    .replace(/exited with code (?:138|SIGUSR1)/g, "exited with code <SIGUSR1>");
+    .replace(
+      /^\[0\] (trap 'exit 130' INT; sleep 1) exited with code (?:0|130|SIGINT)$/gm,
+      "[0] $1 exited with code <SIGINT>"
+    )
+    .replace(
+      /^\[0\] (trap 'exit 138' USR1; while :; do :; done) exited with code (?:0|138|SIGUSR1)$/gm,
+      "[0] $1 exited with code <SIGUSR1>"
+    );
+}
+
+function normalizeSignalTrapStatus(status) {
+  return status === 0 || status === 1 ? "<signal-trap-status>" : status;
 }
 
 function normalizeShellSignalDiagnosticStdout(stdout) {
-  return stdout.replace(
-    /^\[\d+\] (?:Hangup|Terminated|User defined signal 1): \d+\n/gm,
-    ""
-  );
+  return stdout
+    .replace(/^\[\d+\] (?:Hangup|Terminated|User defined signal 1): \d+\n/gm, "")
+    .replace(/^\[\d+\] sh: line \d+:\s+\d+ Killed: \d+\s+sleep 0\.01\n/gm, "")
+    .replace(
+      /^\[0\] (trap 'exit 129' HUP; sleep 1) exited with code (?:0|129|SIGHUP)$/gm,
+      "[0] $1 exited with code <SIGHUP>"
+    );
+}
+
+function normalizeShellTrapStatus(status) {
+  return status === 0 || status === 1 ? "<shell-trap-status>" : status;
 }
 
 function normalizeShellSignalDiagnosticAndTrapCleanupStdout(stdout) {

@@ -352,7 +352,7 @@ let formatted_buffered_output t ~command runs =
         ~process_id:run.process_id ~stream:run.stream ~chunks)
 
 let close_message command status =
-  Printf.sprintf "%s exited with code %s" (Command.text command)
+  Printf.sprintf "%s exited with code %s" (Command.display_text command)
     (Process_signal.exit_status_label status)
 
 let timing_started_message t command command_index =
@@ -361,12 +361,12 @@ let timing_started_message t command command_index =
     | Some wall_started_at -> wall_started_at
     | None -> t.wall_now ()
   in
-  Printf.sprintf "%s started at %s" (Command.text command)
+  Printf.sprintf "%s started at %s" (Command.display_text command)
     (Output_prefix.format_timestamp t.options.timestamp_format wall_started_at)
 
 let timing_stopped_message t command command_index =
   let elapsed = elapsed_time t command_index in
-  Printf.sprintf "%s stopped at %s after %sms" (Command.text command)
+  Printf.sprintf "%s stopped at %s after %sms" (Command.display_text command)
     (Output_prefix.format_timestamp t.options.timestamp_format (t.wall_now ()))
     (Output_timing.format_integer_with_separators
        (Output_timing.duration_ms elapsed))
@@ -379,7 +379,7 @@ let timing_summary_entry t command command_index status killed =
     duration_ms = Output_timing.duration_ms elapsed;
     exit_code = Process_signal.exit_status_label status;
     killed;
-    command_text = Command.text command;
+    command_text = Command.display_text command;
   }
 
 let remember_timing_summary_entry t entry =
@@ -541,7 +541,7 @@ let handle_restart_message t event =
       if Command.raw command || Command.hidden command then []
       else
         let chunk =
-          Printf.sprintf "%s restarted" (Command.text command)
+          Printf.sprintf "%s restarted" (Command.display_text command)
           |> command_event_chunk t command
         in
         handle_output_chunk t event

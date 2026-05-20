@@ -46,6 +46,7 @@ type policy_input = {
 type create_error =
   [ `Command_error of int * Command.create_error
   | `Command_input_error of Cli_command_inputs.expand_error
+  | `Display_command_count_mismatch of int * int
   | `Input_router_error of Input_router.create_error
   | `Run_policy_error of Run_policy.create_error
   | `Run_spec_error of Run_spec.create_error ]
@@ -113,14 +114,28 @@ let indexes_for_token ~command_count ~names token =
   in
   List.rev_append by_name by_index
 
-let hidden_indexes ~command_count ~names hide_csv =
-  match hide_csv with
-  | None -> []
-  | Some csv ->
-      csv |> String.split_on_char ',' |> List.map String.trim
-      |> List.filter (fun token -> not (String.equal token ""))
-      |> List.concat_map (indexes_for_token ~command_count ~names)
-      |> List.sort_uniq Int.compare
+let indexes_for_csv ~command_count csv =
+  csv |> String.split_on_char ',' |> List.map String.trim
+  |> List.filter_map (fun token ->
+         match int_of_string_opt token with
+         | Some index when index >= 0 && index < command_count -> Some index
+         | Some _ | None -> None)
+
+let hidden_indexes ~command_count ~names ~api_hide_indexes_csv hide_csv =
+  let hidden_from_identifiers =
+    match hide_csv with
+    | None -> []
+    | Some csv ->
+        csv |> String.split_on_char ',' |> List.map String.trim
+        |> List.filter (fun token -> not (String.equal token ""))
+        |> List.concat_map (indexes_for_token ~command_count ~names)
+  in
+  let hidden_from_indexes =
+    match api_hide_indexes_csv with
+    | None -> []
+    | Some csv -> indexes_for_csv ~command_count csv
+  in
+  List.sort_uniq Int.compare (hidden_from_indexes @ hidden_from_identifiers)
 
 let split_csv = function
   | None -> []
@@ -147,10 +162,14 @@ let kill_signal_of_string signal =
   | "SIGKILL" -> Run_policy.Sigkill
   | named_signal -> Run_policy.Named_signal named_signal
 
-let kill_conditions ~kill_others ~kill_others_on_fail =
+let kill_conditions ~kill_others ~kill_others_on_success ~kill_others_on_fail =
   if kill_others then [ Run_policy.Success; Run_policy.Failure ]
-  else if kill_others_on_fail then [ Run_policy.Failure ]
-  else []
+  else
+    List.concat
+      [
+        (if kill_others_on_success then [ Run_policy.Success ] else []);
+        (if kill_others_on_fail then [ Run_policy.Failure ] else []);
+      ]
 
 let starts_with ~prefix value =
   let prefix_length = String.length prefix in
@@ -313,7 +332,7 @@ let max_processes_of_string ~cpu_count ~command_count = function
 let option_of_name name = if String.equal name "" then None else Some name
 
 let expand_command_inputs ~cwd ~passthrough_arguments ~command_texts ~names
-    ~hide_csv ~prefix_colors_csv ~teardown_texts =
+    ~hide_csv ~api_hide_indexes_csv ~prefix_colors_csv ~teardown_texts =
   match
     Cli_command_inputs.expand ~cwd ~passthrough_arguments ~command_texts ~names
   with
@@ -324,7 +343,8 @@ let expand_command_inputs ~cwd ~passthrough_arguments ~command_texts ~names
   let no_op = empty_expansion && teardown_texts = [] in
   let effective_names = Cli_command_inputs.effective_names command_inputs in
   let hidden_indexes =
-    hidden_indexes ~command_count ~names:effective_names hide_csv
+    hidden_indexes ~command_count ~names:effective_names ~api_hide_indexes_csv
+      hide_csv
   in
   let hidden_by_index = Array.make command_count false in
   List.iter
@@ -359,7 +379,24 @@ let create_display ~labels ~prefix ~prefix_length ~pad_prefix ~timestamp_format
     no_color;
   }
 
-let create_commands ?cwd ~raw ~hidden_by_index ~prefix_palette command_inputs =
+let display_command_texts_for_count ~command_count display_command_texts =
+  match display_command_texts with
+  | [] -> Ok None
+  | values ->
+      let value_count = List.length values in
+      if value_count = command_count then Ok (Some (Array.of_list values))
+      else Error (`Display_command_count_mismatch (value_count, command_count))
+
+let display_command_text_at display_command_texts index =
+  match display_command_texts with
+  | None -> None
+  | Some values ->
+      assert (index >= 0);
+      assert (index < Array.length values);
+      Some values.(index)
+
+let create_commands ?cwd ~raw ~hidden_by_index ~prefix_palette
+    ?display_command_texts command_inputs =
   let rec create index commands = function
     | [] -> Ok (List.rev commands)
     | command_input :: rest -> (
@@ -371,6 +408,7 @@ let create_commands ?cwd ~raw ~hidden_by_index ~prefix_palette command_inputs =
             ?name:(option_of_name command_name)
             ?cwd ~env:[]
             ?prefix_color:(prefix_color_at prefix_palette index)
+            ?display_text:(display_command_text_at display_command_texts index)
             ~raw ~hidden:hidden_by_index.(index) ~index command_text
         with
         | Error error -> Error (`Command_error (index, error))
@@ -439,38 +477,47 @@ let create_empty_expansion_config ~cwd ~teardown_texts ~policy_input ~display
           | Ok spec -> create_result ~spec ~display ~input:None ~no_op))
 
 let create_command_config ~cwd ~teardown_texts ~policy_input ~display
-    ~handle_input ~default_input_target expanded =
+    ~handle_input ~default_input_target ~display_command_texts expanded =
   match
-    create_commands ?cwd ~raw:display.raw
-      ~hidden_by_index:expanded.hidden_by_index
-      ~prefix_palette:expanded.prefix_palette expanded.command_inputs
+    display_command_texts_for_count ~command_count:expanded.command_count
+      display_command_texts
   with
   | Error error -> Error error
-  | Ok commands -> (
+  | Ok display_command_texts -> (
       match
-        create_input_router ~handle_input ~commands ~default_input_target
+        create_commands ?cwd ~raw:display.raw
+          ~hidden_by_index:expanded.hidden_by_index
+          ~prefix_palette:expanded.prefix_palette ?display_command_texts
+          expanded.command_inputs
       with
       | Error error -> Error error
-      | Ok input -> (
+      | Ok commands -> (
           match
-            create_teardown_commands ?cwd
-              ~main_command_count:expanded.command_count teardown_texts
+            create_input_router ~handle_input ~commands ~default_input_target
           with
           | Error error -> Error error
-          | Ok teardown -> (
-              match create_policy policy_input ~teardown with
+          | Ok input -> (
+              match
+                create_teardown_commands ?cwd
+                  ~main_command_count:expanded.command_count teardown_texts
+              with
               | Error error -> Error error
-              | Ok policy -> (
-                  match create_run_spec ~commands ~policy with
+              | Ok teardown -> (
+                  match create_policy policy_input ~teardown with
                   | Error error -> Error error
-                  | Ok spec ->
-                      create_result ~spec ~display ~input ~no_op:expanded.no_op)
-              )))
+                  | Ok policy -> (
+                      match create_run_spec ~commands ~policy with
+                      | Error error -> Error error
+                      | Ok spec ->
+                          create_result ~spec ~display ~input
+                            ~no_op:expanded.no_op)))))
 
-let create ~cwd ~passthrough_arguments ~teardown_texts ~command_texts ~names_csv
-    ~name_separator ~spacious ~timings ~group ~raw ~hide_csv ~no_color ~prefix
-    ~prefix_colors_csv ~prefix_length ~pad_prefix ~timestamp_format
-    ~handle_input ~default_input_target ~success ~kill_others
+let create_with_display ~cwd ~passthrough_arguments ~teardown_texts
+    ~command_texts ~display_command_texts ~names_csv
+    ~force_empty_expansion ~name_separator ~spacious ~timings ~group ~raw
+    ~hide_csv ~api_hide_indexes_csv ~no_color ~prefix
+    ~prefix_colors_csv ~prefix_length ~pad_prefix ~timestamp_format ~handle_input
+    ~default_input_target ~success ~kill_others_on_success ~kill_others
     ~kill_others_on_fail ~kill_signal ~kill_timeout_ms ~max_processes
     ~restart_tries ~restart_after =
   let cpu_count = Domain.recommended_domain_count () in
@@ -478,59 +525,93 @@ let create ~cwd ~passthrough_arguments ~teardown_texts ~command_texts ~names_csv
   match split_names ~separator:name_separator names_csv with
   | Error error -> Error error
   | Ok names -> (
+      let create_from_expansion expanded =
+        let display =
+          create_display ~labels:expanded.effective_names ~prefix
+            ~prefix_length ~pad_prefix ~timestamp_format ~spacious ~timings
+            ~group ~raw ~no_color
+        in
+        let kill_others_on =
+          kill_conditions ~kill_others ~kill_others_on_success
+            ~kill_others_on_fail
+        in
+        let kill_signal = kill_signal_of_string kill_signal in
+        let max_processes =
+          max_processes_of_string ~cpu_count
+            ~command_count:expanded.command_count max_processes
+        in
+        let success_condition =
+          success_condition_of_string ~command_count:expanded.command_count
+            ~names:expanded.effective_names success
+        in
+        let kill_timeout_ms, kill_timeout_warning =
+          kill_timeout_of_string kill_timeout_ms
+        in
+        let restart_tries, drop_failed_close_events_for_success =
+          restart_tries_of_string restart_tries
+        in
+        let restart_delay, restart_delay_warning =
+          restart_delay_of_string restart_after
+        in
+        let policy_input =
+          {
+            kill_others_on;
+            kill_signal;
+            kill_timeout_ms;
+            kill_timeout_warning;
+            success_condition;
+            drop_failed_close_events_for_success;
+            restart_tries;
+            restart_delay;
+            restart_delay_warning;
+            max_processes;
+          }
+        in
+        if expanded.empty_expansion then
+          let policy_input =
+            { policy_input with success_condition = Run_policy.NoCommands }
+          in
+          create_empty_expansion_config ~cwd ~teardown_texts ~policy_input
+            ~display ~no_op:expanded.no_op
+        else
+          create_command_config ~cwd ~teardown_texts ~policy_input ~display
+            ~handle_input ~default_input_target ~display_command_texts expanded
+      in
+      if force_empty_expansion then
+        let expanded =
+          {
+            command_inputs = [];
+            command_count = 0;
+            empty_expansion = true;
+            no_op = teardown_texts = [];
+            effective_names = None;
+            hidden_by_index = [||];
+            prefix_palette = prefix_palette prefix_colors_csv;
+          }
+        in
+        create_from_expansion expanded
+      else
       (match
         expand_command_inputs ~cwd ~passthrough_arguments ~command_texts ~names
-          ~hide_csv ~prefix_colors_csv ~teardown_texts
+          ~hide_csv ~api_hide_indexes_csv ~prefix_colors_csv ~teardown_texts
        with
        | Error error -> Error error
-       | Ok expanded ->
-      let display =
-        create_display ~labels:expanded.effective_names ~prefix ~prefix_length
-          ~pad_prefix ~timestamp_format ~spacious ~timings ~group ~raw ~no_color
-      in
-      let kill_others_on = kill_conditions ~kill_others ~kill_others_on_fail in
-      let kill_signal = kill_signal_of_string kill_signal in
-      let max_processes =
-        max_processes_of_string ~cpu_count ~command_count:expanded.command_count
-          max_processes
-      in
-      let success_condition =
-        success_condition_of_string ~command_count:expanded.command_count
-          ~names:expanded.effective_names success
-      in
-      let kill_timeout_ms, kill_timeout_warning =
-        kill_timeout_of_string kill_timeout_ms
-      in
-      let restart_tries, drop_failed_close_events_for_success =
-        restart_tries_of_string restart_tries
-      in
-      let restart_delay, restart_delay_warning =
-        restart_delay_of_string restart_after
-      in
-      let policy_input =
-        {
-          kill_others_on;
-          kill_signal;
-          kill_timeout_ms;
-          kill_timeout_warning;
-          success_condition;
-          drop_failed_close_events_for_success;
-          restart_tries;
-          restart_delay;
-          restart_delay_warning;
-          max_processes;
-        }
-      in
-      if expanded.empty_expansion then
-        let policy_input =
-          { policy_input with success_condition = Run_policy.NoCommands }
-        in
-        create_empty_expansion_config ~cwd ~teardown_texts ~policy_input
-          ~display ~no_op:expanded.no_op
-      else
-        create_command_config ~cwd ~teardown_texts ~policy_input ~display
-          ~handle_input ~default_input_target expanded)
-      )
+       | Ok expanded -> create_from_expansion expanded))
+
+let create ~cwd ~passthrough_arguments ~teardown_texts ~command_texts ~names_csv
+    ~name_separator ~spacious ~timings ~group ~raw ~hide_csv
+    ~api_hide_indexes_csv ~no_color ~prefix ~prefix_colors_csv ~prefix_length
+    ~pad_prefix ~timestamp_format ~handle_input ~default_input_target ~success
+    ~kill_others_on_success ~kill_others ~kill_others_on_fail ~kill_signal
+    ~kill_timeout_ms ~max_processes ~restart_tries ~restart_after =
+  create_with_display ~cwd ~passthrough_arguments ~teardown_texts
+    ~command_texts ~display_command_texts:[] ~names_csv
+    ~force_empty_expansion:false ~name_separator
+    ~spacious ~timings ~group ~raw ~hide_csv ~api_hide_indexes_csv ~no_color ~prefix
+    ~prefix_colors_csv ~prefix_length ~pad_prefix ~timestamp_format
+    ~handle_input ~default_input_target ~success ~kill_others_on_success
+    ~kill_others ~kill_others_on_fail ~kill_signal ~kill_timeout_ms
+    ~max_processes ~restart_tries ~restart_after
 
 let spec t = t.spec
 let commands t = Run_spec.commands t.spec
@@ -569,6 +650,9 @@ let error_message = function
       Printf.sprintf "command %d is invalid: %s" index
         (command_error_message error)
   | `Command_input_error error -> command_input_error_message error
+  | `Display_command_count_mismatch (actual, expected) ->
+      Printf.sprintf "display command count mismatch: expected %d but got %d"
+        expected actual
   | `Input_router_error error -> Input_router.error_message error
   | `Run_policy_error error -> run_policy_error_message error
   | `Run_spec_error error -> run_spec_error_message error

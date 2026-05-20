@@ -151,28 +151,38 @@ let specs =
       ~env_names:[ "CONCURRENTLY_KILL_OTHERS"; "CONCURRENTLY_K" ]
       ~env_order:19 ~negated_names:[ "--no-kill-others" ]
       ~emitted_boolean_option:"--kill-others" ~boolean_order:8;
+    boolean [ "--kill-others-on-success" ]
+      ~env_names:[ "CONCURRENTLY_KILL_OTHERS_ON_SUCCESS" ]
+      ~env_order:20
+      ~negated_names:[ "--no-kill-others-on-success" ]
+      ~emitted_boolean_option:"--kill-others-on-success" ~boolean_order:9;
     boolean
       [ "--kill-others-on-fail" ]
       ~env_names:[ "CONCURRENTLY_KILL_OTHERS_ON_FAIL" ]
-      ~env_order:20
+      ~env_order:21
       ~negated_names:[ "--no-kill-others-on-fail" ]
-      ~emitted_boolean_option:"--kill-others-on-fail" ~boolean_order:9;
+      ~emitted_boolean_option:"--kill-others-on-fail" ~boolean_order:10;
     value
       [ "--kill-signal"; "--ks" ]
       ~env_names:[ "CONCURRENTLY_KILL_SIGNAL"; "CONCURRENTLY_KS" ]
-      ~env_order:21 ~emitted_option:"--kill-signal";
+      ~env_order:22 ~emitted_option:"--kill-signal";
     value [ "--kill-timeout" ]
       ~env_names:[ "CONCURRENTLY_KILL_TIMEOUT" ]
-      ~env_order:22 ~accepts_negative_number_value:true
+      ~env_order:23 ~accepts_negative_number_value:true
       ~emitted_option:"--kill-timeout";
     value [ "--restart-tries" ]
       ~env_names:[ "CONCURRENTLY_RESTART_TRIES" ]
-      ~env_order:23 ~accepts_negative_number_value:true
+      ~env_order:24 ~accepts_negative_number_value:true
       ~emitted_option:"--restart-tries";
     value [ "--restart-after" ]
       ~env_names:[ "CONCURRENTLY_RESTART_AFTER" ]
-      ~env_order:24 ~accepts_negative_number_value:true
+      ~env_order:25 ~accepts_negative_number_value:true
       ~emitted_option:"--restart-after";
+    value [ "--api-display-command" ] ~emitted_option:"--api-display-command";
+    value [ "--api-name-separator" ] ~emitted_option:"--api-name-separator";
+    value [ "--api-hide-indexes" ] ~emitted_option:"--api-hide-indexes";
+    boolean [ "--api-empty-expansion" ] ~negated_names:[]
+      ~emitted_boolean_option:"--api-empty-expansion" ~boolean_order:99;
   ]
 
 let sort_ordered values =

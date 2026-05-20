@@ -78,12 +78,12 @@ module accepts structured commands with command-local `name`, `cwd`, `env`,
 `Command.t`/`Run_spec.t` model as the CLI, and runs through the explicit
 `Runner_backend.t` seam.
 
-The npm package keeps the CLI path native on supported platforms while
-re-exporting the pinned `concurrently@9.2.1` JavaScript programmatic API
-through the npm alias `concurrently-js`. This preserves the upstream
-`require()`/ESM API shape for users who install this package under the
-`concurrently` name. Native Windows npm-script execution runs through the
-Windows `Runner_backend.t` implementation.
+The npm package keeps both the CLI path and the JavaScript programmatic facade
+native-backed on supported platforms. `require("concurrently")` and ESM imports
+return a repo-owned facade that spawns the native binary and exposes the
+upstream-compatible entrypoint names. Lower-level JavaScript hooks that would
+require upstream internals, such as custom controllers or custom spawn/kill
+functions, fail explicitly instead of routing to upstream JavaScript.
 
 ## Implemented CLI Surface
 
