@@ -48,7 +48,7 @@ function smokeCwdEnvAndOutput() {
     cwd: tempDir,
     env: { CONCURRENTLY_WINDOWS_SMOKE: "ok" },
   });
-  assertEqual(result.status, 0, "cwd/env command status");
+  assertEqual(result.status, 0, "cwd/env command status", result);
   assertEqual(result.stderr, "", "cwd/env stderr");
   assertEqual(
     result.stdout,
@@ -67,7 +67,7 @@ function smokeStdin() {
   const result = runSync(["--no-color", "-i", command], {
     input: "stdin-ok\n",
   });
-  assertEqual(result.status, 0, "stdin command status");
+  assertEqual(result.status, 0, "stdin command status", result);
   assertEqual(result.stderr, "", "stdin stderr");
   assertEqual(
     result.stdout,
@@ -79,7 +79,7 @@ function smokeStdin() {
 function smokeFailureExitStatus() {
   const command = nodeEvalCommand("process.exit(7)");
   const result = runSync(["--no-color", command]);
-  assertEqual(result.status, 1, "failure command status");
+  assertEqual(result.status, 1, "failure command status", result);
   assertEqual(result.stderr, "", "failure stderr");
   assertEqual(
     result.stdout,
@@ -222,10 +222,13 @@ function sleep(ms) {
   });
 }
 
-function assertEqual(actual, expected, label) {
+function assertEqual(actual, expected, label, detail) {
   if (actual !== expected) {
+    const suffix = detail
+      ? `\nstdout:\n${detail.stdout}\nstderr:\n${detail.stderr}`
+      : "";
     throw new Error(
-      `${label}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`
+      `${label}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}${suffix}`
     );
   }
 }
