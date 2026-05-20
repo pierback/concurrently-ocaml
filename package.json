@@ -41,6 +41,7 @@
     "package:platform": "node scripts/ci/package-platform.js",
     "smoke:npm-install": "node scripts/ci/smoke-npm-install.js",
     "smoke:npm-install:host": "node scripts/ci/smoke-npm-install-host.js",
+    "smoke:windows-native": "node scripts/ci/smoke-windows-native.js",
     "audit:npm-api": "node scripts/ci/audit-npm-api-surface.js",
     "compat:concurrently": "node scripts/ci/compat-concurrently.js",
     "perf:concurrently": "node scripts/ci/perf-concurrently.js"
@@ -63,7 +64,9 @@
     "@pierback/concurrently-ml-linux-arm64-gnu": "0.0.14",
     "@pierback/concurrently-ml-linux-arm64-musl": "0.0.14",
     "@pierback/concurrently-ml-linux-x64-gnu": "0.0.14",
-    "@pierback/concurrently-ml-linux-x64-musl": "0.0.14"
+    "@pierback/concurrently-ml-linux-x64-musl": "0.0.14",
+    "@pierback/concurrently-ml-win32-arm64": "0.0.14",
+    "@pierback/concurrently-ml-win32-x64": "0.0.14"
   },
   "directories": {
     "doc": "docs",

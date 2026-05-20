@@ -19,7 +19,8 @@
   output_prefix_tests
   output_timing_tests
   process_signal_tests
-  runner_input_queue_tests)
+  runner_input_queue_tests
+  windows_command_line_tests)
  (modules
   cli_argv_tests
   cli_env_options_tests
@@ -29,7 +30,8 @@
   output_prefix_tests
   output_timing_tests
   process_signal_tests
-  runner_input_queue_tests)
+  runner_input_queue_tests
+  windows_command_line_tests)
  (libraries concurrentlyocaml))
 
 (test

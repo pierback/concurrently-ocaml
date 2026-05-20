@@ -7,5 +7,6 @@
   cmdliner
   concurrentlyocaml
   (select native_backend.ml from
+   (concurrentlyocaml_windows -> native_backend.windows.ml)
    (concurrentlyocaml_posix -> native_backend.posix.ml)
    ( -> native_backend.unsupported.ml))))

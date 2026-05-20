@@ -53,7 +53,7 @@ if (!existsSync(localBinary)) {
   throw new Error(`missing local binary: ${localBinary}; run npm run compile first`);
 }
 
-const cases = [
+const posixCases = [
   {
     name: "version long option",
     upstream: "bin/concurrently.spec.ts --version",
@@ -1867,6 +1867,124 @@ const cases = [
   },
 ];
 
+const windowsCases = [
+  {
+    name: "version long option",
+    upstream: "bin/concurrently.spec.ts --version",
+    args: ["--version"],
+    normalizeStdout: normalizeVersionStdout,
+  },
+  {
+    name: "help long option",
+    upstream: "bin/concurrently.spec.ts --help",
+    args: ["--help"],
+  },
+  {
+    name: "single success close notification",
+    upstream: "src/flow-control/log-exit.spec.ts",
+    args: ["--no-color", nodePrintCommand("smoke")],
+  },
+  {
+    name: "failed command close notification",
+    upstream: "src/flow-control/log-exit.spec.ts",
+    args: ["--no-color", nodeExitCommand(3)],
+  },
+  {
+    name: "formatted stderr is emitted on stdout",
+    upstream: "src/logger.spec.ts output stream routing",
+    args: ["--no-color", nodeStderrCommand("err")],
+  },
+  {
+    name: "raw suppresses close notification",
+    upstream: "bin/concurrently.spec.ts does not log extra output with --raw",
+    args: ["--no-color", "--raw", nodePrintCommand("one")],
+  },
+  {
+    name: "grouped output is ordered by command index",
+    upstream: "bin/concurrently.spec.ts --group",
+    args: [
+      "--no-color",
+      "-g",
+      nodeDelayPrintCommand("slow", 80),
+      nodePrintCommand("fast"),
+    ],
+  },
+  {
+    name: "cwd and env reach child command",
+    upstream: "src/concurrently.spec.ts command cwd and env",
+    args: [
+      "--no-color",
+      nodeEvalCommand(
+        "process.stdout.write(process.cwd()+'\\n'+process.env.CONCURRENTLY_COMPAT_ENV)"
+      ),
+    ],
+    env: { CONCURRENTLY_COMPAT_ENV: "env-ok" },
+  },
+  {
+    name: "max processes serializes command start",
+    upstream: "src/concurrently.spec.ts maxProcesses",
+    args: [
+      "--no-color",
+      "-g",
+      "-m",
+      "1",
+      nodePrintCommand("one"),
+      nodePrintCommand("two"),
+    ],
+  },
+  {
+    name: "teardown logs start and exit status",
+    upstream: "bin/concurrently.spec.ts --teardown",
+    args: [
+      "--no-color",
+      "--teardown",
+      nodePrintCommand("bye"),
+      nodePrintCommand("hey"),
+    ],
+  },
+  {
+    name: "kill others default success projection",
+    upstream: "bin/concurrently.spec.ts --kill-others",
+    args: ["--no-color", "-k", nodePrintCommand("ok"), nodeHangCommand()],
+  },
+  {
+    name: "kill others on fail",
+    upstream: "bin/concurrently.spec.ts --kill-others-on-fail",
+    args: [
+      "--no-color",
+      "--kill-others-on-fail",
+      nodeHangCommand(),
+      nodeExitCommand(1),
+    ],
+  },
+  {
+    name: "handle input forwards to default command",
+    upstream: "bin/concurrently.spec.ts --handle-input default target",
+    args: ["--no-color", "-i", inputEchoCommand],
+    input: "stop\n",
+    inputDelayMs: inputReadyDelayMs,
+  },
+  {
+    name: "handle input routes by command name",
+    upstream: "bin/concurrently.spec.ts --handle-input specified process",
+    args: [
+      "--no-color",
+      "-g",
+      "-i",
+      "-n",
+      "api,worker",
+      firstInputEchoCommand,
+      secondInputEchoCommand,
+    ],
+    inputWrites: [
+      { delayMs: inputReadyDelayMs, input: "worker:two\n" },
+      { delayMs: secondInputReadyDelayMs, input: "api:one\n" },
+    ],
+  },
+];
+
+const cases = process.platform === "win32" ? windowsCases : posixCases;
+
 (async () => {
   try {
     for (const testCase of cases) {
@@ -1915,13 +2033,13 @@ function resolveNpmConcurrentlyBinary() {
     return local;
   }
 
-  const result = spawnSync("npm", [
+  const result = spawnFileSync(npmCommand(), [
     "exec",
     "--yes",
     "--package",
     `concurrently@${npmConcurrentlyVersion}`,
     "--",
-    "which",
+    commandLocator(),
     "concurrently",
   ], {
     cwd: resolve("."),
@@ -1938,9 +2056,9 @@ function resolveNpmConcurrentlyBinary() {
     );
   }
 
-  const binary = result.stdout.trim().split(/\r?\n/).pop();
+  const binary = commandLocatorResult(result.stdout);
   if (!binary) {
-    throw new Error(`which concurrently returned no binary path`);
+    throw new Error(`${commandLocator()} concurrently returned no binary path`);
   }
   return binary;
 }
@@ -1953,12 +2071,12 @@ function resolveLocalPinnedConcurrentlyBinary() {
     return configuredBinary;
   }
 
-  const which = spawnSync("which", ["concurrently"], {
+  const which = spawnFileSync(commandLocator(), ["concurrently"], {
     cwd: resolve("."),
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"],
   });
-  const binary = resolveVoltaShim(which.stdout.trim().split(/\r?\n/).pop());
+  const binary = resolveVoltaShim(commandLocatorResult(which.stdout));
   if (!binary) {
     return null;
   }
@@ -1966,12 +2084,50 @@ function resolveLocalPinnedConcurrentlyBinary() {
   return assertPinnedConcurrentlyVersion(binary) ? binary : null;
 }
 
+function npmCommand() {
+  return process.platform === "win32" ? "npm.cmd" : "npm";
+}
+
+function commandLocator() {
+  return process.platform === "win32" ? "where" : "which";
+}
+
+function commandLocatorResult(stdout) {
+  const binaries = stdout.trim().split(/\r?\n/).filter(Boolean);
+  if (process.platform !== "win32") {
+    return binaries.pop() ?? "";
+  }
+  return (
+    binaries.find((binary) => binary.toLowerCase().endsWith(".cmd")) ??
+    binaries.pop() ??
+    ""
+  );
+}
+
+function spawnFileSync(command, args, options) {
+  return spawnSync(command, args, {
+    ...options,
+    shell: windowsCommandScript(command),
+  });
+}
+
+function spawnFile(command, args, options) {
+  return spawn(command, args, {
+    ...options,
+    shell: windowsCommandScript(command),
+  });
+}
+
+function windowsCommandScript(command) {
+  return process.platform === "win32" && command.toLowerCase().endsWith(".cmd");
+}
+
 function resolveVoltaShim(binary) {
   if (!binary || !binary.includes(`${sep}.volta${sep}bin${sep}`)) {
     return binary;
   }
 
-  const result = spawnSync("volta", ["which", "concurrently"], {
+  const result = spawnFileSync("volta", ["which", "concurrently"], {
     cwd: resolve("."),
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"],
@@ -1984,7 +2140,7 @@ function resolveVoltaShim(binary) {
 }
 
 function assertPinnedConcurrentlyVersion(binary) {
-  const version = spawnSync(binary, ["--version"], {
+  const version = spawnFileSync(binary, ["--version"], {
     cwd: resolve("."),
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"],
@@ -2018,7 +2174,7 @@ function run(command, args, testCase) {
     return runAsync(command, args, testCase);
   }
 
-  const result = spawnSync(command, args, {
+  const result = spawnFileSync(command, args, {
     cwd: testCase.cwd ?? resolve("."),
     encoding: "utf8",
     env: environmentFor(testCase),
@@ -2041,7 +2197,7 @@ function run(command, args, testCase) {
 
 function runAsync(command, args, testCase) {
   return new Promise((resolvePromise, rejectPromise) => {
-    const child = spawn(command, args, {
+    const child = spawnFile(command, args, {
       cwd: testCase.cwd ?? resolve("."),
       env: environmentFor(testCase),
       stdio: ["pipe", "pipe", "pipe"],
@@ -2371,6 +2527,38 @@ function createRestartFixture() {
 
 function shellQuote(value) {
   return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function nodePrintCommand(text) {
+  return nodeEvalCommand(`process.stdout.write('${jsSingleQuoted(text)}')`);
+}
+
+function nodeStderrCommand(text) {
+  return nodeEvalCommand(`process.stderr.write('${jsSingleQuoted(text)}')`);
+}
+
+function nodeDelayPrintCommand(text, delayMs) {
+  return nodeEvalCommand(
+    `setTimeout(function(){` +
+      `process.stdout.write('${jsSingleQuoted(text)}')` +
+      `},${delayMs})`
+  );
+}
+
+function nodeExitCommand(exitCode) {
+  return nodeEvalCommand(`process.exit(${exitCode})`);
+}
+
+function nodeHangCommand() {
+  return nodeEvalCommand("setInterval(function(){},1000)");
+}
+
+function nodeEvalCommand(source) {
+  return `node -e "${source.replaceAll('"', '\\"')}"`;
+}
+
+function jsSingleQuoted(value) {
+  return value.replaceAll("\\", "\\\\").replaceAll("'", "\\'");
 }
 
 function environmentFor(testCase) {
