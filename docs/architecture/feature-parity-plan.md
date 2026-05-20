@@ -75,11 +75,14 @@ signal, process-tree teardown, and pipe implementations.
   installed launcher resolves the optional platform package's native binary,
   verifies the platform package `SHA256SUMS` manifest against the installed
   native binary, installs the root tarball under the public `concurrently`
-  alias, verifies CommonJS and ESM programmatic imports, and runs
-  `conc`/`concurrently` from that install. A Windows smoke job packs and
-  installs the root package on `windows-latest` and verifies the pinned upstream
-  JavaScript CLI route. Windows native package publication is deliberately
-  withheld until a Windows-native runner backend exists.
+  alias, verifies CommonJS and ESM programmatic imports, audits the packed root
+  package's `bin` aliases, `exports` condition shape, and runtime export keys
+  against pinned
+  `concurrently@9.2.1`, and runs `conc`/`concurrently` from that install. A
+  Windows smoke job packs and installs the root package on `windows-latest` and
+  verifies the pinned upstream JavaScript CLI route. Windows native package
+  publication is deliberately withheld until a Windows-native runner backend
+  exists.
 - `npm run perf:concurrently` provides repeatable native-vs-pinned-npm timing
   evidence for startup/version output, many short commands, and streaming
   output. The harness validates both CLIs on the same bounded workloads and
@@ -594,7 +597,8 @@ As of May 20, 2026, the current `master` worktree has the following local proof:
    surface, asserts that the installed launcher resolves the optional platform
    package's native binary, verifies the platform package checksum manifest,
    executes both `conc` and `concurrently` through the installed npm bin shims,
-   and publishes packages on version tags with npm provenance. A separate
+   audits the packed npm API surface against pinned `concurrently@9.2.1`, and
+   publishes packages on version tags with npm provenance. A separate
    `windows-latest` smoke job installs the root package and verifies the
    Windows JavaScript CLI route. Windows native packaging is withheld until a
    Windows backend exists.

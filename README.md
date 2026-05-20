@@ -28,6 +28,7 @@ depend on manually exporting the switch environment:
 npm run build
 npm test
 npm run compile
+npm run audit:npm-api
 npm run compat:concurrently
 npm run smoke:npm-install:host
 ```

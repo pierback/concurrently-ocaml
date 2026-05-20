@@ -42,6 +42,8 @@ jobs:
 
       - run: opam exec -- dune build @install @runtest
 
+      - run: npm run audit:npm-api
+
       - run: npm run compat:concurrently
 
   native-packages:
