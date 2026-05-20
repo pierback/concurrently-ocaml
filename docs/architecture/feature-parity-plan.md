@@ -66,16 +66,16 @@ signal, process-tree teardown, and pipe implementations.
   aliases plus the project-specific `concml` alias, and the package import
   entrypoints re-export pinned upstream `concurrently@9.2.1` as a compatibility
   facade for JavaScript callers.
-- GitHub Actions now includes a native package matrix for Linux GNU x64/arm64
-  and macOS x64/arm64. Each native package job now packs the platform package and
-  root package into a clean npm project, verifies that the root tarball did not
-  leak OCaml source/build/test files, asserts that the installed launcher
-  resolves the optional platform package's native binary, verifies the platform
-  package `SHA256SUMS` manifest against the installed native binary, installs
-  the root tarball under the public `concurrently` alias, verifies CommonJS and
-  ESM programmatic imports, and runs `conc`/`concurrently` from that install.
-  Windows packaging is deliberately withheld until a Windows-native runner
-  backend exists.
+- GitHub Actions now includes native package jobs for Linux GNU x64/arm64,
+  Linux musl x64/arm64, and macOS x64/arm64. Each native package job now packs
+  the platform package and root package into a clean npm project, verifies that
+  the root tarball did not leak OCaml source/build/test files, asserts that the
+  installed launcher resolves the optional platform package's native binary,
+  verifies the platform package `SHA256SUMS` manifest against the installed
+  native binary, installs the root tarball under the public `concurrently`
+  alias, verifies CommonJS and ESM programmatic imports, and runs
+  `conc`/`concurrently` from that install. Windows packaging is deliberately
+  withheld until a Windows-native runner backend exists.
 - `npm run perf:concurrently` provides repeatable native-vs-pinned-npm timing
   evidence for startup/version output, many short commands, and streaming
   output. The harness validates both CLIs on the same bounded workloads and
@@ -195,7 +195,7 @@ signal, process-tree teardown, and pipe implementations.
 | `CONCURRENTLY_*` environment defaults and boolean coercion | CLI env options, CLI argv, CLI config | Implemented for pinned npm CLI flags and aliases through argv normalization; explicit CLI arguments override env defaults, and yargs-style boolean `--flag=true/false`, non-true inline false, `--no-flag` negation, known short boolean groups like `-kg`/`-rg`, and mixed unknown/known short groups like `-xg`/`-xr`/`-rx` are supported |
 | Timings output and close-event timings | Runner, Output formatter | Implemented for deterministic success, failure, restart, hidden, raw, named, grouped, custom timestamp, kill-on-fail, and kill-on-success cases; runtime timestamps, durations, and duration-derived row order are normalized in compatibility evidence because upstream sorts by measured duration |
 | Help and version flags | CLI argv, CLI config, npm distribution | Implemented for `--version`, `-v`, `-V`, `--help`, `-h`, yargs-style built-in aliases before separate option values, and no-command default help on stderr after npm-compatible unknown-option normalization; deterministic help output is pinned byte-for-byte against npm `concurrently@9.2.1`, and npm install smoke verifies matching `concurrently`/`conc` help aliases |
-| OCaml run API | Run API, Runner | Implemented for structured OCaml callers; not shipped as a JavaScript package API |
+| OCaml run API and JavaScript API facade | Run API, Runner, npm distribution | Structured OCaml callers use `Concurrentlyocaml.Run_api`; JavaScript callers receive the pinned upstream `concurrently@9.2.1` CommonJS/ESM/type API through the root package facade |
 
 ## Compatibility Evidence And Divergence Ledger
 
@@ -360,10 +360,10 @@ Known divergences and deferred scope:
 | Area | Upstream behavior | Current status |
 | --- | --- | --- |
 | Timing table row order for runtime-dependent signal durations | npm sorts the timing table by measured duration. When one command is killed after another exits, relative durations can legitimately differ by runtime and platform. | Kill-on-fail and success-triggered kill timing now match npm under normalized timestamps, durations, and duration-derived table row order. This is intentionally normalized compatibility evidence rather than byte-stable output, because the upstream sort key is runtime duration. |
-| Shell job-control diagnostics for trapped shell children | For shell commands such as `trap 'exit 129' HUP; sleep 1`, npm's process-tree kill path can race between surfacing and omitting shell diagnostics like `Hangup: 1` or `Terminated: 15` before the command close notification. | The native POSIX backend signals the process group directly to bound descendants. Deterministic close status and lifecycle output match upstream; shell-emitted job-control diagnostics are normalized in targeted evidence because upstream output is runtime-dependent. |
+| Shell job-control diagnostics for trapped shell children | For shell commands such as `trap 'exit 129' HUP; sleep 1`, npm's process-tree kill path can race between surfacing and omitting shell diagnostics like `Hangup: 1` or `Terminated: 15` before the command close notification. Trap cleanup output emitted while the shell is being torn down can also appear or disappear by runtime timing. | The native POSIX backend signals the process group directly to bound descendants. Deterministic close status and lifecycle output match upstream; shell-emitted job-control diagnostics and signal-trap cleanup output are normalized in targeted evidence because upstream output is runtime-dependent. |
 | Unsupported kill-signal stderr when used | Upstream forwards the exact `--kill-signal` string to Node/tree-kill. Bare aliases such as `TERM`/`HUP`, and unsupported names such as `SIGFOO`, print a partial shutdown log and then throw Node's `ERR_UNKNOWN_SIGNAL` stack when used. | The native CLI now matches the exit status, shutdown status line text, and `ERR_UNKNOWN_SIGNAL` headline for deterministic unsupported values. It still does not reproduce Node's environment-specific stack frames. |
 | JavaScript programmatic API | Upstream `concurrently()` can be imported from JavaScript. | The npm package now ships CommonJS/ESM/type entrypoints that re-export pinned upstream `concurrently@9.2.1` through the `concurrently-js` npm alias. Programmatic callers get the upstream JS API; npm-script callers use the native OCaml bin. |
-| Linux musl packaging | Upstream runs on Alpine/musl through Node. | Musl package names are reserved by the launcher contract, but musl packages remain withheld until a real musl/static native build target and smoke job exist. |
+| Linux musl packaging | Upstream runs on Alpine/musl through Node. | Linux musl packages are built and smoke-installed on Alpine through npm's `libc` package selector. |
 | Windows backend | Upstream supports Windows process semantics. | Windows npm packages are withheld until a Windows-native runner backend exists. |
 
 ## Current Verification Snapshot
@@ -571,20 +571,20 @@ As of May 20, 2026, the current `master` worktree has the following local proof:
 
    Status: complete for supported Unix-like package targets currently shipped
    by CI. The root package now declares optional platform
-   packages for Linux GNU and macOS targets, exposes `concurrently`, `conc`, and
-   `concml` npm binaries, and the launcher resolves the matching native package
-   before falling back to a local development build. The Linux resolver is
-   libc-aware: glibc hosts select `linux-*-gnu` packages, while musl hosts select
-   unpublished `linux-*-musl` packages instead of accidentally executing a glibc
-   binary. The packed
-   root package is restricted to the JS launcher, package metadata, README, and
-   LICENSE, so users do not receive OCaml source, tests, Dune files, local
-   development scripts, or a JavaScript programmatic API.
+   packages for Linux GNU, Linux musl, and macOS targets, exposes
+   `concurrently`, `conc`, and `concml` npm binaries, and the launcher resolves
+   the matching native package before falling back to a local development build.
+   The Linux resolver is libc-aware: glibc hosts select `linux-*-gnu` packages,
+   while musl hosts select `linux-*-musl` packages instead of accidentally
+   executing a glibc binary. The packed root package is restricted to the JS
+   launcher, JavaScript API facade, package metadata, README, and LICENSE, so
+   users do not receive OCaml source, tests, Dune files, or local development
+   scripts.
    Each platform package now ships a `SHA256SUMS` manifest for the native
    binary, and the npm install smoke test verifies the manifest before running
    the installed CLI. `npm run smoke:npm-install:host` packages the current host
-   binary and runs the same install proof locally for supported macOS and Linux
-   GNU hosts.
+   binary and runs the same install proof locally for supported macOS, Linux
+   GNU, and Linux musl hosts.
    GitHub Actions builds platform packages, smoke-installs the packed root and
    platform package into a clean npm project, asserts the lean root package
    surface, asserts that the installed launcher resolves the optional platform
@@ -592,8 +592,7 @@ As of May 20, 2026, the current `master` worktree has the following local proof:
    executes both `conc` and `concurrently` through the installed npm bin shims,
    and publishes packages on version tags with npm provenance. Windows
    packaging is withheld until a Windows backend exists.
-   Deferred distribution scope: add musl/static packages only when a real musl
-   build target exists, and implement then package Windows runner behavior.
+   Deferred distribution scope: implement then package Windows runner behavior.
 
 10. Platform backend split
 

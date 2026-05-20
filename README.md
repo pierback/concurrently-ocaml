@@ -52,17 +52,19 @@ That keeps existing `concurrently`/`conc` package scripts and
 `npm run smoke:npm-install:host` packages the current host binary, installs the
 root package plus matching platform package into a clean temporary npm project,
 installs the root package under the `concurrently` alias, and verifies the
-`conc` and `concurrently` bin shims resolve to the native binary. It currently
-supports macOS x64/arm64 and Linux GNU x64/arm64; musl and Windows remain
-withheld until real build/backend targets exist.
+`conc` and `concurrently` bin shims resolve to the native binary. It supports
+macOS x64/arm64 plus Linux GNU and Linux musl x64/arm64. Windows remains
+withheld until a Windows-native runner backend exists.
 
 The packed root npm package is intentionally lean: it contains the native
 launcher, package metadata, JavaScript API facade, README, and LICENSE only.
 OCaml source, Dune/opam metadata, tests, and development scripts stay out of
 the install payload.
 
-Windows platform packages are intentionally withheld until a Windows runner
-backend exists.
+Linux platform packages are libc-specific. glibc hosts install
+`linux-*-gnu`, while Alpine/musl hosts install `linux-*-musl` through npm's
+`libc` package selector (`glibc` or `musl`). Windows platform packages are
+intentionally withheld until a Windows runner backend exists.
 
 ## Library Scope
 

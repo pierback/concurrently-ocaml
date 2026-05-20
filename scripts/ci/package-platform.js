@@ -9,7 +9,9 @@ for (let index = 2; index < process.argv.length; index += 2) {
   const key = process.argv[index];
   const value = process.argv[index + 1];
   if (!key || !key.startsWith("--") || !value) {
-    throw new Error("usage: package-platform --target TARGET --platform OS --arch CPU --binary PATH");
+    throw new Error(
+      "usage: package-platform --target TARGET --platform OS --arch CPU [--libc LIBC] --binary PATH"
+    );
   }
   args.set(key.slice(2), value);
 }
@@ -17,8 +19,9 @@ for (let index = 2; index < process.argv.length; index += 2) {
 const target = required("target");
 const platform = required("platform");
 const arch = required("arch");
+const libc = optional("libc");
 const binary = resolve(required("binary"));
-const expectedTarget = platform === "linux" ? `${platform}-${arch}-gnu` : `${platform}-${arch}`;
+const expectedTarget = targetName({ platform, arch, libc });
 if (target !== expectedTarget) {
   throw new Error(`target ${target} does not match expected ${expectedTarget}`);
 }
@@ -40,15 +43,16 @@ writeFileSync(
 writeFileSync(
   join(packageDir, "package.json"),
   `${JSON.stringify(
-    {
+    withoutUndefined({
       name: packageName,
       version: rootPackage.version,
       description: `${rootPackage.description} native binary for ${target}`,
       license: rootPackage.license,
       os: [platform],
       cpu: [arch],
+      libc: platform === "linux" ? [npmLibcSelector(libc)] : undefined,
       files: ["bin/", "SHA256SUMS"],
-    },
+    }),
     null,
     2
   )}\n`
@@ -66,4 +70,33 @@ function required(key) {
     throw new Error(`missing --${key}`);
   }
   return value;
+}
+
+function optional(key) {
+  return args.get(key);
+}
+
+function targetName({ platform, arch, libc }) {
+  if (platform !== "linux") {
+    if (libc) {
+      throw new Error("--libc is only valid for linux targets");
+    }
+    return `${platform}-${arch}`;
+  }
+
+  if (libc !== "gnu" && libc !== "musl") {
+    throw new Error("linux targets require --libc gnu or --libc musl");
+  }
+
+  return `${platform}-${arch}-${libc}`;
+}
+
+function withoutUndefined(value) {
+  return Object.fromEntries(
+    Object.entries(value).filter(([_key, entry]) => entry !== undefined)
+  );
+}
+
+function npmLibcSelector(libc) {
+  return libc === "gnu" ? "glibc" : libc;
 }

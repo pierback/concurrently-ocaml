@@ -20,7 +20,9 @@ for (let index = 2; index < process.argv.length; index += 2) {
   const key = process.argv[index];
   const value = process.argv[index + 1];
   if (!key || !key.startsWith("--") || !value) {
-    throw new Error("usage: smoke-npm-install --target TARGET --platform OS --arch CPU");
+    throw new Error(
+      "usage: smoke-npm-install --target TARGET --platform OS --arch CPU [--libc LIBC]"
+    );
   }
   args.set(key.slice(2), value);
 }
@@ -28,6 +30,7 @@ for (let index = 2; index < process.argv.length; index += 2) {
 const target = required("target");
 const platform = required("platform");
 const arch = required("arch");
+const libc = optional("libc");
 const packageRoot = resolve(".");
 const rootPackage = readJson(resolve("package.json"));
 const publicPackageName = "concurrently";
@@ -61,6 +64,7 @@ assertEqual(
 );
 assertArrayEqual(platformPackage.os, [platform], "platform package os");
 assertArrayEqual(platformPackage.cpu, [arch], "platform package cpu");
+assertLinuxLibc(platformPackage);
 assertArrayEqual(platformPackage.files, ["bin/", "SHA256SUMS"], "platform package files");
 assertExecutable(nativeBinaryPath);
 assertChecksum(checksumPath, `bin/${nativeBinaryName}`, nativeBinaryPath);
@@ -319,6 +323,10 @@ function required(key) {
   return value;
 }
 
+function optional(key) {
+  return args.get(key);
+}
+
 function readJson(path) {
   return JSON.parse(readFileSync(path, "utf8"));
 }
@@ -361,6 +369,44 @@ function assertEqual(actual, expected, label) {
 
 function assertArrayEqual(actual, expected, label) {
   assertEqual(JSON.stringify(actual), JSON.stringify(expected), label);
+}
+
+function assertLinuxLibc(platformPackage) {
+  if (platform !== "linux") {
+    if (libc) {
+      throw new Error("--libc is only valid for linux smoke targets");
+    }
+    if (Object.prototype.hasOwnProperty.call(platformPackage, "libc")) {
+      throw new Error("non-linux platform package must not declare libc");
+    }
+    return;
+  }
+
+  if (libc !== "gnu" && libc !== "musl") {
+    throw new Error("linux smoke targets require --libc gnu or --libc musl");
+  }
+  assertEqual(hostLinuxLibc(), libc, "smoke host libc");
+  assertArrayEqual(
+    platformPackage.libc,
+    [npmLibcSelector(libc)],
+    "platform package libc"
+  );
+}
+
+function hostLinuxLibc() {
+  try {
+    const header = process.report?.getReport?.().header ?? {};
+    if (header.glibcVersionRuntime || header.glibcVersionCompiler) {
+      return "gnu";
+    }
+  } catch (_error) {
+    return "musl";
+  }
+  return "musl";
+}
+
+function npmLibcSelector(libc) {
+  return libc === "gnu" ? "glibc" : libc;
 }
 
 function assertNoPackedSourceTree(packageDir) {

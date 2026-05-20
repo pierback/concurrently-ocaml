@@ -17,38 +17,39 @@ const target = hostTarget();
 runNpmScript("package:platform", [
   "--",
   "--target",
-  target,
+  target.name,
   "--platform",
   process.platform,
   "--arch",
   process.arch,
+  ...target.libcArgs,
   "--binary",
   binary,
 ]);
 runNpmScript("smoke:npm-install", [
   "--",
   "--target",
-  target,
+  target.name,
   "--platform",
   process.platform,
   "--arch",
   process.arch,
+  ...target.libcArgs,
 ]);
 
 function hostTarget() {
   if (process.platform === "darwin") {
     assertSupportedArch();
-    return `darwin-${process.arch}`;
+    return { name: `darwin-${process.arch}`, libcArgs: [] };
   }
 
   if (process.platform === "linux") {
     assertSupportedArch();
-    if (!isGlibcLinux()) {
-      throw new Error(
-        "host npm install smoke is only supported for Linux GNU until a real musl build target exists"
-      );
-    }
-    return `linux-${process.arch}-gnu`;
+    const libc = linuxLibc();
+    return {
+      name: `linux-${process.arch}-${libc}`,
+      libcArgs: ["--libc", libc],
+    };
   }
 
   throw new Error(
@@ -62,13 +63,16 @@ function assertSupportedArch() {
   }
 }
 
-function isGlibcLinux() {
+function linuxLibc() {
   try {
     const header = process.report?.getReport?.().header ?? {};
-    return Boolean(header.glibcVersionRuntime || header.glibcVersionCompiler);
+    if (header.glibcVersionRuntime || header.glibcVersionCompiler) {
+      return "gnu";
+    }
   } catch (_error) {
-    return false;
+    return "musl";
   }
+  return "musl";
 }
 
 function runNpmScript(script, args) {

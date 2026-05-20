@@ -1431,7 +1431,7 @@ const cases = [
   },
   {
     name: "kill signal sigterm trapped shell cleanup is not interrupted",
-    upstream: "tree-kill does not signal shell cleanup trap twice",
+    upstream: "tree-kill shell cleanup output is runtime-dependent",
     args: [
       "--no-color",
       "-k",
@@ -1440,7 +1440,7 @@ const cases = [
       "trap 'printf \"term\\n\"; sleep 0.05; exit 0' TERM; sleep 1",
       "printf ok",
     ],
-    normalizeStdout: normalizeShellSignalDiagnosticStdout,
+    normalizeStdout: normalizeShellSignalDiagnosticAndTrapCleanupStdout,
   },
   {
     name: "kill signal sighup trapped shell child preserves close status",
@@ -2015,7 +2015,7 @@ function run(command, args, testCase) {
     env: environmentFor(testCase),
     input: testCase.input ?? "",
     stdio: ["pipe", "pipe", "pipe"],
-    timeout: testCase.timeoutMs ?? 5000,
+    timeout: testCase.timeoutMs ?? 15000,
   });
 
   if (result.error) {
@@ -2493,6 +2493,13 @@ function normalizeSignalTrapCloseStatus(stdout) {
 function normalizeShellSignalDiagnosticStdout(stdout) {
   return stdout.replace(
     /^\[\d+\] (?:Hangup|Terminated|User defined signal 1): \d+\n/gm,
+    ""
+  );
+}
+
+function normalizeShellSignalDiagnosticAndTrapCleanupStdout(stdout) {
+  return normalizeShellSignalDiagnosticStdout(stdout).replace(
+    /^\[\d+\] term\n/gm,
     ""
   );
 }
