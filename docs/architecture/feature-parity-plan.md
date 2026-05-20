@@ -57,8 +57,9 @@ signal, process-tree teardown, and pipe implementations.
   The formatter also owns prefix modes, prefix padding, command-prefix
   truncation, timestamp prefixes, ANSI color rendering, timings output, and
   command-level buffering for the currently exposed flags.
-- Kill-others now starts each POSIX command in its own process group and signals
-  the group so shell children are cancelled with their parent shell.
+- Kill-others now starts each POSIX command in its own process group, sends
+  configured signals directly to the group so shell children are bounded with
+  their parent shell, and keeps force-kill escalation available.
 - The npm launcher prefers the local Dune binary inside a source checkout and
   prefers optional native platform packages from installed package roots. The
   root npm package exposes npm-compatible `concurrently` and `conc` binary
@@ -314,9 +315,12 @@ Currently mirrored deterministic behavior:
   sent, yargs-style empty `--kill-signal ''` values fall back to the default
   `SIGTERM` signal, and used invalid values such as `TERM`, `term`, `HUP`,
   `SIGFOO`, `sigusr1`, and `0` preserve npm's configured signal text in the
-  shutdown status line before failing.
+  shutdown status line before failing. Trapped shell commands with child
+  processes are covered for `SIGTERM` and `SIGHUP`; shell-emitted job-control
+  diagnostics are normalized there because upstream can race between emitting
+  and omitting those lines while preserving the same close status.
 - Published `dist/src/flow-control/kill-on-signal.js`: parent `SIGINT`,
-  `SIGTERM`, and `SIGHUP` are forwarded to active child process groups while
+  `SIGTERM`, and `SIGHUP` are forwarded to active process groups while
   preserving npm's own process exit projection: `SIGINT` forces parent exit 0,
   while `SIGTERM`/`SIGHUP` continue to evaluate the child close result, with no
   parent signal termination reported to callers; queued commands that never
@@ -352,7 +356,7 @@ Known divergences and deferred scope:
 | Area | Upstream behavior | Current status |
 | --- | --- | --- |
 | Timing table row order for runtime-dependent signal durations | npm sorts the timing table by measured duration. When one command is killed after another exits, relative durations can legitimately differ by runtime and platform. | Kill-on-fail and success-triggered kill timing now match npm under normalized timestamps, durations, and duration-derived table row order. This is intentionally normalized compatibility evidence rather than byte-stable output, because the upstream sort key is runtime duration. |
-| SIGHUP shell job-control diagnostics | For shell commands such as `trap 'exit 129' HUP; sleep 1`, npm's process-tree kill path can surface an extra shell diagnostic like `Hangup: 1` before the command close notification. | The native POSIX backend signals the command process group directly, so the deterministic close status matches but that shell-emitted diagnostic is not reproduced. This remains tracked as process-tree parity work, not formatter output to fake. |
+| Shell job-control diagnostics for trapped shell children | For shell commands such as `trap 'exit 129' HUP; sleep 1`, npm's process-tree kill path can race between surfacing and omitting shell diagnostics like `Hangup: 1` or `Terminated: 15` before the command close notification. | The native POSIX backend signals the process group directly to bound descendants. Deterministic close status and lifecycle output match upstream; shell-emitted job-control diagnostics are normalized in targeted evidence because upstream output is runtime-dependent. |
 | Unsupported kill-signal stderr when used | Upstream forwards the exact `--kill-signal` string to Node/tree-kill. Bare aliases such as `TERM`/`HUP`, and unsupported names such as `SIGFOO`, print a partial shutdown log and then throw Node's `ERR_UNKNOWN_SIGNAL` stack when used. | The native CLI now matches the exit status, shutdown status line text, and `ERR_UNKNOWN_SIGNAL` headline for deterministic unsupported values. It still does not reproduce Node's environment-specific stack frames. |
 | JavaScript programmatic API | Upstream `concurrently()` can be imported from JavaScript. | Explicit non-goal for this project. CLI parity for `concurrently`/`conc` in package scripts is the product surface; npm package JavaScript remains launcher and install glue only. |
 | Windows backend | Upstream supports Windows process semantics. | Windows npm packages are withheld until a Windows-native runner backend exists. |
@@ -472,8 +476,9 @@ As of May 20, 2026, the current `master` worktree has the following local proof:
    `--success all`, while never-started queued commands are closed internally
    without synthetic killed output after a cancellation condition fires. Retry
    delays remain live after sibling success/failure, matching npm's command
-   lifecycle semantics. Parent `SIGINT`, `SIGTERM`, and `SIGHUP` are forwarded
-   to active child process groups while the native parent exits with npm's
+   lifecycle semantics. POSIX sibling signals target command process groups so
+   descendants close promptly. Parent `SIGINT`, `SIGTERM`, and `SIGHUP` are
+   forwarded to active process groups while the native parent exits with npm's
    observed status projection, including non-`SIGINT` children that trap a
    signal and exit successfully, and queued commands that never started are
    skipped under bounded `max_processes`. Non-`SIGINT` parent signals preserve
@@ -530,7 +535,9 @@ As of May 20, 2026, the current `master` worktree has the following local proof:
    script/task containers, wildcard suffix truncation at `&`, embedded literal
    runner wildcard matching, literal regexp-special glob characters, escaped
    script key decoding, invalid package JSON fallback, kill-others exit
-   projection, raw kill output, kill-on-fail behavior,
+   projection, raw kill output, kill-on-fail behavior, trapped shell child
+   close status under `SIGTERM` and `SIGHUP` with runtime-dependent shell
+   diagnostics normalized,
    serialized success-condition exit projection for `first`, `last`, selected
    command index/name, and negated command-name selectors,
    max-process serialization including restart-exhaustion queueing, npm-style

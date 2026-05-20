@@ -70,12 +70,12 @@ let spawn ~sw ~command =
   | process ->
     close_child_sources ();
     close_child_sinks ();
-	    let pid = Eio_posix.Low_level.Process.pid process in
-	    let exit_status = Eio_posix.Low_level.Process.exit_status process in
-	    let signal signal =
-	      if Eio.Promise.is_resolved exit_status then Ok false
-	      else Posix_process_group.signal_group ~pid signal
-	    in
+    let pid = Eio_posix.Low_level.Process.pid process in
+    let exit_status = Eio_posix.Low_level.Process.exit_status process in
+    let signal signal =
+      if Eio.Promise.is_resolved exit_status then Ok false
+      else Posix_process_group.signal_group ~pid signal
+    in
     { Runner_backend.process_id = string_of_int pid
     ; write_stdin = (fun input -> Eio.Flow.copy_string input stdin_sink)
     ; close_stdin = (fun () -> Eio.Flow.close stdin_sink)
