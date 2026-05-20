@@ -214,7 +214,7 @@ jobs:
 
       - run: opam install . --deps-only --with-test
 
-      - run: opam exec -- dune build @install
+      - run: opam exec -- dune build bin/main.exe
 
       - run: npm run audit:npm-api
 
