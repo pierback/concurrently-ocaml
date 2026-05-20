@@ -56,10 +56,10 @@ installs the root package under the `concurrently` alias, and verifies the
 `conc` and `concurrently` bin shims resolve to the native binary. It supports
 macOS x64/arm64 plus Linux GNU and Linux musl x64/arm64.
 
-On Windows, the npm bin shim runs the pinned upstream `concurrently@9.2.1` CLI
-through the `concurrently-js` npm alias. That keeps Windows installs drop-in
-compatible while native Windows process supervision remains blocked by the
-current Eio Windows backend.
+Windows npm-script execution no longer falls back to upstream JavaScript. Native
+Windows package publication is withheld until a Windows runner backend exists;
+Windows installs fail with a missing native binary instead of silently running a
+different implementation.
 
 The packed root npm package is intentionally lean: it contains the native
 launcher, package metadata, JavaScript API facade, README, and LICENSE only.
@@ -79,12 +79,12 @@ module accepts structured commands with command-local `name`, `cwd`, `env`,
 `Command.t`/`Run_spec.t` model as the CLI, and runs through the explicit
 `Runner_backend.t` seam.
 
-The npm package keeps the CLI path native on Unix-like platforms while
+The npm package keeps the CLI path native on supported platforms while
 re-exporting the pinned `concurrently@9.2.1` JavaScript programmatic API
 through the npm alias `concurrently-js`. This preserves the upstream
 `require()`/ESM API shape for users who install this package under the
-`concurrently` name. Windows npm-script execution uses the same pinned upstream
-CLI until a native Windows runner backend exists.
+`concurrently` name. Native Windows npm-script execution remains pending a
+Windows `Runner_backend.t` implementation.
 
 ## Implemented CLI Surface
 
