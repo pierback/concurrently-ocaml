@@ -45,11 +45,7 @@ try {
   const localPackageJson = readJson(join(localPackageDir, "package.json"));
   const upstreamPackageJson = readJson(join(upstreamPackageDir, "package.json"));
 
-  assertEqual(
-    localPackageJson.dependencies["concurrently-js"],
-    `npm:concurrently@${upstreamVersion}`,
-    "local concurrently-js dependency"
-  );
+  assertNoUpstreamRuntimeDependency(localPackageJson);
   assertBinSurface(localPackageJson.bin, upstreamPackageJson.bin, localPackageDir);
   assertExportsSurface(
     localPackageJson.exports,
@@ -64,6 +60,16 @@ try {
   console.log(`api surface audit ok: concurrently@${upstreamVersion}`);
 } finally {
   rmSync(tempDir, { recursive: true, force: true });
+}
+
+function assertNoUpstreamRuntimeDependency(packageJson) {
+  for (const field of ["dependencies", "optionalDependencies", "peerDependencies"]) {
+    for (const [name, version] of Object.entries(packageJson[field] ?? {})) {
+      if (name === "concurrently-js" || version === `npm:concurrently@${upstreamVersion}`) {
+        throw new Error(`${field}.${name} still routes to upstream concurrently`);
+      }
+    }
+  }
 }
 
 function assertRuntimeExports(projectDir, moduleKind) {

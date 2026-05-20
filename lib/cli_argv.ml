@@ -12,6 +12,12 @@ type passthrough_extraction = {
 let is_passthrough_flag argument =
   argument = "-P" || argument = "--passthrough-arguments"
 
+let is_api_ignore_env_options_flag argument =
+  argument = "--api-ignore-env-options"
+
+let is_api_empty_expansion_flag argument =
+  argument = "--api-empty-expansion"
+
 let option_consumes_value = Cli_options.consumes_value
 let boolean_options = Cli_options.boolean_options
 
@@ -65,6 +71,33 @@ let provided_option_name_matches provided_option_names option_names =
   List.exists
     (fun option_name -> String_set.mem option_name provided_option_names)
     option_names
+
+let argv_contains_api_ignore_env_options_flag argv =
+  let rec loop index =
+    if index >= Array.length argv || argv.(index) = "--" then false
+    else is_api_ignore_env_options_flag argv.(index) || loop (index + 1)
+  in
+  loop 1
+
+let argv_contains_api_empty_expansion_flag argv =
+  let rec loop index =
+    if index >= Array.length argv || argv.(index) = "--" then false
+    else is_api_empty_expansion_flag argv.(index) || loop (index + 1)
+  in
+  loop 1
+
+let strip_api_ignore_env_options_flag_argv argv =
+  let rec loop index normalized =
+    if index >= Array.length argv then Array.of_list (List.rev normalized)
+    else if argv.(index) = "--" then
+      let tail_count = Array.length argv - index in
+      let tail = List.init tail_count (fun offset -> argv.(index + offset)) in
+      Array.of_list (List.rev_append normalized tail)
+    else if index > 0 && is_api_ignore_env_options_flag argv.(index) then
+      loop (index + 1) normalized
+    else loop (index + 1) (argv.(index) :: normalized)
+  in
+  loop 0 []
 
 let boolean_option_for_name option_name =
   List.find_opt
@@ -298,6 +331,7 @@ let has_command_argument argv =
 let requests_default_help argv =
   (not (requests_builtin_exit_before_separator argv))
   && not (has_command_argument argv)
+  && not (argv_contains_api_empty_expansion_flag argv)
 
 let argv_contains_passthrough_flag_before_separator argv =
   let rec loop index =
@@ -369,9 +403,14 @@ let normalize_negative_option_values_argv argv =
 
 let normalize_with_env ~env argv =
   let expanded_argv = Cli_short_options.expand_clusters argv in
+  let ignore_env_options =
+    argv_contains_api_ignore_env_options_flag expanded_argv
+  in
+  let expanded_argv = strip_api_ignore_env_options_flag_argv expanded_argv in
   let provided_option_names = provided_option_names expanded_argv in
   let with_env_argv =
-    Cli_env_options.add_arguments ~env
+    Cli_env_options.add_arguments
+      ~env:(if ignore_env_options then fun _ -> None else env)
       ~option_was_provided:(fun option_names ->
         provided_option_name_matches provided_option_names option_names)
       expanded_argv

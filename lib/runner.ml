@@ -1052,7 +1052,9 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
        until retries finish, even while the current command is in backoff. *)
       Eio.Semaphore.acquire process_slots;
       Fun.protect
-        ~finally:(fun () -> Eio.Semaphore.release process_slots)
+        ~finally:(fun () ->
+          Eio.Semaphore.release process_slots;
+          if max_processes < command_count then Eio.Fiber.yield ())
         (fun () -> run_command_loop ~sw command 0)
     in
     let emit_teardown_status message =

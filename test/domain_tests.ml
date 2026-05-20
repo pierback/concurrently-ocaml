@@ -49,6 +49,7 @@ let test_command_validation () =
   in
   assert (Command.index command = 0);
   assert (Command.text command = "npm run dev");
+  assert (Command.display_text command = "npm run dev");
   assert (Command.name command = Some "web");
   assert (Command.cwd command = Some "/tmp");
   assert (Command.env command = [ ("PORT", "3000") ]);
@@ -58,6 +59,11 @@ let test_command_validation () =
   assert (Command.ipc command);
   assert (Result.is_ok (Command.create ~index:0 " "));
   expect_error `Empty_command (Command.create ~index:0 "");
+  let wrapper =
+    ok (Command.create ~index:0 ~display_text:"npm run api" "node wrapper")
+  in
+  assert (Command.text wrapper = "node wrapper");
+  assert (Command.display_text wrapper = "npm run api");
   assert (Result.is_ok (Command.create ~allow_empty:true ~index:0 ""));
   expect_error `Empty_cwd (Command.create ~index:0 ~cwd:" " "echo no");
   expect_error `Negative_index (Command.create ~index:(-1) "echo no")
@@ -784,6 +790,18 @@ let test_output_formatter_prefix_modes () =
     output api
       (ok (create_formatter ~prefix:"{index}:{pid}:{command}:{name}" commands))
     = [ "0::npm run api:api ready" ]);
+  let wrapped_api =
+    ok (Command.create ~index:0 ~display_text:"npm run api" "node wrapper")
+  in
+  assert (
+    output wrapped_api
+      (ok (create_formatter ~prefix:"command" ~prefix_length:10.0 [ wrapped_api ]))
+    = [ "[npm .. api] ready" ]);
+  assert (
+    Output_formatter.handle_event (ok (create_formatter [ wrapped_api ]))
+      (stopped_with_status wrapped_api)
+    |> output_texts
+    = [ "[0] npm run api exited with code 0" ]);
   assert (
     Output_formatter.handle_event
       (ok (create_formatter ~prefix:"{index}:{pid}:{name}" commands))
@@ -1663,11 +1681,11 @@ let test_cli_config_validation () =
          ~command_texts:[ "echo api"; "echo worker" ]
          ~names_csv:(Some "api,worker") ~name_separator:"," ~spacious:true
          ~timings:true ~group:true ~raw:true
-         ~hide_csv:(Some "worker,99,missing") ~no_color:true
+         ~hide_csv:(Some "worker,99,missing") ~api_hide_indexes_csv:None ~no_color:true
          ~prefix:(Some "command") ~prefix_colors_csv:(Some "red,blue")
          ~prefix_length:8.0 ~pad_prefix:true ~timestamp_format:"HH:mm:ss.SSS"
          ~handle_input:false ~default_input_target:"0" ~success:"command-worker"
-         ~kill_others:true ~kill_others_on_fail:true ~kill_signal:"SIGKILL"
+         ~kill_others_on_success:false ~kill_others:true ~kill_others_on_fail:true ~kill_signal:"SIGKILL"
          ~kill_timeout_ms:(Some "250") ~max_processes:(Some "2")
          ~restart_tries:"2" ~restart_after:"exponential"
          ~teardown_texts:[ "printf clean" ])
@@ -1718,10 +1736,10 @@ let test_cli_config_validation () =
       (Cli_config.create ~passthrough_arguments:None ~cwd:None
          ~command_texts:[ "printf ok" ] ~names_csv:None ~name_separator:","
          ~spacious:false ~timings:false ~group:false ~raw:false ~hide_csv:None
-         ~no_color:false ~prefix:None ~prefix_colors_csv:None ~prefix_length:10.0
+         ~api_hide_indexes_csv:None ~no_color:false ~prefix:None ~prefix_colors_csv:None ~prefix_length:10.0
          ~pad_prefix:false ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS"
          ~handle_input:false ~default_input_target:"0" ~success:"all"
-         ~kill_others:false ~kill_others_on_fail:false ~kill_signal:"SIGTERM"
+         ~kill_others_on_success:false ~kill_others:false ~kill_others_on_fail:false ~kill_signal:"SIGTERM"
          ~kill_timeout_ms:None ~max_processes:None ~restart_tries:"0"
          ~restart_after:"0" ~teardown_texts:[ "" ])
   in
@@ -1734,10 +1752,10 @@ let test_cli_config_validation () =
     Cli_config.create ~passthrough_arguments:None ~cwd:None
       ~command_texts:[ "exit 1" ] ~names_csv:None ~name_separator:","
       ~spacious:false ~timings:false ~group:false ~raw:false ~hide_csv:None
-      ~no_color:false ~prefix:None ~prefix_colors_csv:None ~prefix_length:10.0
+      ~api_hide_indexes_csv:None ~no_color:false ~prefix:None ~prefix_colors_csv:None ~prefix_length:10.0
       ~pad_prefix:false ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS"
       ~handle_input:false ~default_input_target:"0" ~success:"all"
-      ~kill_others:false ~kill_others_on_fail:false ~kill_signal:"SIGTERM"
+      ~kill_others_on_success:false ~kill_others:false ~kill_others_on_fail:false ~kill_signal:"SIGTERM"
       ~kill_timeout_ms:None ~max_processes:None ~restart_tries
       ~restart_after:"0" ~teardown_texts:[]
   in
@@ -1758,10 +1776,10 @@ let test_cli_config_validation () =
          (Cli_config.create ~passthrough_arguments:None ~cwd:None
             ~command_texts:[ "printf ok" ] ~names_csv:None ~name_separator:","
             ~spacious:false ~timings:false ~group:false ~raw:false
-            ~hide_csv:None ~no_color:false ~prefix:None ~prefix_colors_csv:None
+            ~hide_csv:None ~api_hide_indexes_csv:None ~no_color:false ~prefix:None ~prefix_colors_csv:None
             ~prefix_length:10.0 ~pad_prefix:false
             ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS" ~handle_input:false
-            ~default_input_target:"0" ~success:"all" ~kill_others:false
+            ~default_input_target:"0" ~success:"all" ~kill_others_on_success:false ~kill_others:false
             ~kill_others_on_fail:false ~kill_signal ~kill_timeout_ms:None
             ~max_processes:None ~restart_tries:"0" ~restart_after:"0"
             ~teardown_texts:[]))
@@ -1789,10 +1807,10 @@ let test_cli_config_validation () =
          (Cli_config.create ~passthrough_arguments:None ~cwd:None
             ~command_texts:[ "exit 1" ] ~names_csv:None ~name_separator:","
             ~spacious:false ~timings:false ~group:false ~raw:false
-            ~hide_csv:None ~no_color:false ~prefix:None ~prefix_colors_csv:None
+            ~hide_csv:None ~api_hide_indexes_csv:None ~no_color:false ~prefix:None ~prefix_colors_csv:None
             ~prefix_length:10.0 ~pad_prefix:false
             ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS" ~handle_input:false
-            ~default_input_target:"0" ~success:"all" ~kill_others:false
+            ~default_input_target:"0" ~success:"all" ~kill_others_on_success:false ~kill_others:false
             ~kill_others_on_fail:false ~kill_signal:"SIGTERM"
             ~kill_timeout_ms:None ~max_processes:None ~restart_tries:"1"
             ~restart_after:"bogus" ~teardown_texts:[]))
@@ -1806,10 +1824,10 @@ let test_cli_config_validation () =
 	         (Cli_config.create ~passthrough_arguments:None ~cwd:None
 	            ~command_texts:[ "exit 1" ] ~names_csv:None ~name_separator:","
 	            ~spacious:false ~timings:false ~group:false ~raw:false
-	            ~hide_csv:None ~no_color:false ~prefix:None ~prefix_colors_csv:None
+	            ~hide_csv:None ~api_hide_indexes_csv:None ~no_color:false ~prefix:None ~prefix_colors_csv:None
 	            ~prefix_length:10.0 ~pad_prefix:false
 	            ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS" ~handle_input:false
-	            ~default_input_target:"0" ~success:"all" ~kill_others:false
+	            ~default_input_target:"0" ~success:"all" ~kill_others_on_success:false ~kill_others:false
 	            ~kill_others_on_fail:false ~kill_signal:"SIGTERM"
 	            ~kill_timeout_ms:None ~max_processes:None ~restart_tries:"1"
 	            ~restart_after:"" ~teardown_texts:[]))
@@ -1829,10 +1847,10 @@ let test_cli_config_validation () =
     Cli_config.create ~passthrough_arguments:None ~cwd:None
       ~command_texts:[ "sleep 1"; "printf ok" ] ~names_csv:None
       ~name_separator:"," ~spacious:false ~timings:false ~group:false ~raw:false
-      ~hide_csv:None ~no_color:false ~prefix:None ~prefix_colors_csv:None
+      ~hide_csv:None ~api_hide_indexes_csv:None ~no_color:false ~prefix:None ~prefix_colors_csv:None
       ~prefix_length:10.0 ~pad_prefix:false
       ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS" ~handle_input:false
-      ~default_input_target:"0" ~success:"all" ~kill_others:true
+      ~default_input_target:"0" ~success:"all" ~kill_others_on_success:false ~kill_others:true
       ~kill_others_on_fail:false ~kill_signal:"SIGTERM"
       ~kill_timeout_ms:(Some kill_timeout_ms) ~max_processes:None
       ~restart_tries:"0" ~restart_after:"0" ~teardown_texts:[]
@@ -1863,10 +1881,10 @@ let test_cli_config_validation () =
     Cli_config.create ~passthrough_arguments:None ~cwd:None
       ~command_texts:[ "echo api"; "echo worker"; "echo extra" ]
       ~names_csv:None ~name_separator:"," ~spacious:false ~timings:false
-      ~group:false ~raw:false ~hide_csv:None ~no_color:false ~prefix:None
+      ~group:false ~raw:false ~hide_csv:None ~api_hide_indexes_csv:None ~no_color:false ~prefix:None
       ~prefix_colors_csv:None ~prefix_length:10.0 ~pad_prefix:false
       ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS" ~handle_input:false
-      ~default_input_target:"0" ~success:"all" ~kill_others:false
+      ~default_input_target:"0" ~success:"all" ~kill_others_on_success:false ~kill_others:false
       ~kill_others_on_fail:false ~kill_signal:"SIGTERM" ~kill_timeout_ms:None
       ~max_processes:(Some max_processes) ~restart_tries:"0" ~restart_after:"0"
       ~teardown_texts:[]
@@ -1889,10 +1907,10 @@ let test_cli_config_validation () =
       (Cli_config.create ~passthrough_arguments:None ~cwd:None
          ~command_texts:[ "echo api"; "echo worker" ]
          ~names_csv:None ~name_separator:"," ~spacious:false ~timings:false
-         ~group:false ~raw:false ~hide_csv:None ~no_color:false ~prefix:None
+         ~group:false ~raw:false ~hide_csv:None ~api_hide_indexes_csv:None ~no_color:false ~prefix:None
          ~prefix_colors_csv:None ~prefix_length:10.0 ~pad_prefix:false
          ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS" ~handle_input:false
-         ~default_input_target:"0" ~success:"all" ~kill_others:false
+         ~default_input_target:"0" ~success:"all" ~kill_others_on_success:false ~kill_others:false
          ~kill_others_on_fail:false ~kill_signal:"SIGTERM" ~kill_timeout_ms:None
          ~max_processes:(Some "50%") ~restart_tries:"0" ~restart_after:"0"
          ~teardown_texts:[])
@@ -1905,10 +1923,10 @@ let test_cli_config_validation () =
       (Cli_config.create ~passthrough_arguments:None ~cwd:None
          ~command_texts:[ "echo api"; "echo worker" ]
          ~names_csv:None ~name_separator:"," ~spacious:false ~timings:false
-         ~group:false ~raw:false ~hide_csv:None ~no_color:false ~prefix:None
+         ~group:false ~raw:false ~hide_csv:None ~api_hide_indexes_csv:None ~no_color:false ~prefix:None
          ~prefix_colors_csv:None ~prefix_length:10.0 ~pad_prefix:false
          ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS" ~handle_input:false
-         ~default_input_target:"0" ~success:"all" ~kill_others:false
+         ~default_input_target:"0" ~success:"all" ~kill_others_on_success:false ~kill_others:false
          ~kill_others_on_fail:false ~kill_signal:"SIGTERM" ~kill_timeout_ms:None
          ~max_processes:(Some "1%") ~restart_tries:"0" ~restart_after:"0"
          ~teardown_texts:[])
@@ -1924,10 +1942,10 @@ let test_cli_config_validation () =
          ~cwd:None
          ~command_texts:[ "printf %s {1}"; "printf %s {@}"; "printf %s {*}" ]
          ~names_csv:None ~name_separator:"," ~spacious:false ~timings:false
-         ~group:false ~raw:false ~hide_csv:None ~no_color:false ~prefix:None
+         ~group:false ~raw:false ~hide_csv:None ~api_hide_indexes_csv:None ~no_color:false ~prefix:None
          ~prefix_colors_csv:None ~prefix_length:10.0 ~pad_prefix:false
          ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS" ~handle_input:false
-         ~default_input_target:"0" ~success:"all" ~kill_others:false
+         ~default_input_target:"0" ~success:"all" ~kill_others_on_success:false ~kill_others:false
          ~kill_others_on_fail:false ~kill_signal:"SIGTERM" ~kill_timeout_ms:None
          ~max_processes:None ~restart_tries:"0" ~restart_after:"0"
          ~teardown_texts:[])
@@ -1944,10 +1962,10 @@ let test_cli_config_validation () =
       (Cli_config.create ~passthrough_arguments:None ~cwd:None
          ~command_texts:[ "printf %s {1}" ] ~names_csv:None ~name_separator:","
          ~spacious:false ~timings:false ~group:false ~raw:false ~hide_csv:None
-         ~no_color:false ~prefix:None ~prefix_colors_csv:None ~prefix_length:10.0
+         ~api_hide_indexes_csv:None ~no_color:false ~prefix:None ~prefix_colors_csv:None ~prefix_length:10.0
          ~pad_prefix:false ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS"
          ~handle_input:false ~default_input_target:"0" ~success:"all"
-         ~kill_others:false ~kill_others_on_fail:false ~kill_signal:"SIGTERM"
+         ~kill_others_on_success:false ~kill_others:false ~kill_others_on_fail:false ~kill_signal:"SIGTERM"
          ~kill_timeout_ms:None ~max_processes:None ~restart_tries:"0"
          ~restart_after:"0" ~teardown_texts:[])
   in
@@ -1959,11 +1977,11 @@ let test_cli_config_validation () =
       (Cli_config.create ~passthrough_arguments:None ~cwd:None
          ~command_texts:[ "npm:print -- --flag"; "printf normal" ]
          ~names_csv:None ~name_separator:"," ~spacious:false ~timings:false
-         ~group:false ~raw:false ~hide_csv:(Some "print") ~no_color:false
+         ~group:false ~raw:false ~hide_csv:(Some "print") ~api_hide_indexes_csv:None ~no_color:false
          ~prefix:None ~prefix_colors_csv:None ~prefix_length:10.0
          ~pad_prefix:false ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS"
          ~handle_input:false ~default_input_target:"0" ~success:"command-print"
-         ~kill_others:false ~kill_others_on_fail:false ~kill_signal:"SIGTERM"
+         ~kill_others_on_success:false ~kill_others:false ~kill_others_on_fail:false ~kill_signal:"SIGTERM"
          ~kill_timeout_ms:None ~max_processes:None ~restart_tries:"0"
          ~restart_after:"0" ~teardown_texts:[])
   in
@@ -1985,10 +2003,10 @@ let test_cli_config_validation () =
       (Cli_config.create ~passthrough_arguments:(Some [ "client build" ])
          ~cwd:None ~command_texts:[ "npm:{1}" ] ~names_csv:None
          ~name_separator:"," ~spacious:false ~timings:false ~group:false
-         ~raw:false ~hide_csv:None ~no_color:false ~prefix:None
+         ~raw:false ~hide_csv:None ~api_hide_indexes_csv:None ~no_color:false ~prefix:None
          ~prefix_colors_csv:None ~prefix_length:10.0 ~pad_prefix:false
          ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS" ~handle_input:false
-         ~default_input_target:"0" ~success:"all" ~kill_others:false
+         ~default_input_target:"0" ~success:"all" ~kill_others_on_success:false ~kill_others:false
          ~kill_others_on_fail:false ~kill_signal:"SIGTERM" ~kill_timeout_ms:None
          ~max_processes:None ~restart_tries:"0" ~restart_after:"0"
          ~teardown_texts:[])
@@ -2004,10 +2022,10 @@ let test_cli_config_validation () =
       (Cli_config.create ~passthrough_arguments:None ~cwd:None
          ~command_texts:[ "npm:print" ] ~names_csv:(Some "custom")
          ~name_separator:"," ~spacious:false ~timings:false ~group:false
-         ~raw:false ~hide_csv:None ~no_color:false ~prefix:None
+         ~raw:false ~hide_csv:None ~api_hide_indexes_csv:None ~no_color:false ~prefix:None
          ~prefix_colors_csv:None ~prefix_length:10.0 ~pad_prefix:false
          ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS" ~handle_input:false
-         ~default_input_target:"0" ~success:"all" ~kill_others:false
+         ~default_input_target:"0" ~success:"all" ~kill_others_on_success:false ~kill_others:false
          ~kill_others_on_fail:false ~kill_signal:"SIGTERM" ~kill_timeout_ms:None
          ~max_processes:None ~restart_tries:"0" ~restart_after:"0"
          ~teardown_texts:[])
@@ -2023,10 +2041,10 @@ let test_cli_config_validation () =
       (Cli_config.create ~passthrough_arguments:None ~cwd:None
          ~command_texts:[ "npm:build;echo-injected" ]
          ~names_csv:None ~name_separator:"," ~spacious:false ~timings:false
-         ~group:false ~raw:false ~hide_csv:None ~no_color:false ~prefix:None
+         ~group:false ~raw:false ~hide_csv:None ~api_hide_indexes_csv:None ~no_color:false ~prefix:None
          ~prefix_colors_csv:None ~prefix_length:10.0 ~pad_prefix:false
          ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS" ~handle_input:false
-         ~default_input_target:"0" ~success:"all" ~kill_others:false
+         ~default_input_target:"0" ~success:"all" ~kill_others_on_success:false ~kill_others:false
          ~kill_others_on_fail:false ~kill_signal:"SIGTERM" ~kill_timeout_ms:None
          ~max_processes:None ~restart_tries:"0" ~restart_after:"0"
          ~teardown_texts:[])
@@ -2082,11 +2100,11 @@ let test_cli_config_validation () =
           (Cli_config.create ~passthrough_arguments:None ~cwd:None
              ~command_texts:[ "npm:build-*"; "printf normal" ]
              ~names_csv:None ~name_separator:"," ~spacious:false ~timings:false
-             ~group:false ~raw:false ~hide_csv:(Some "css") ~no_color:false
+             ~group:false ~raw:false ~hide_csv:(Some "css") ~api_hide_indexes_csv:None ~no_color:false
              ~prefix:None ~prefix_colors_csv:None ~prefix_length:10.0
              ~pad_prefix:false ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS"
              ~handle_input:false ~default_input_target:"0" ~success:"command-js"
-             ~kill_others:false ~kill_others_on_fail:false
+             ~kill_others_on_success:false ~kill_others:false ~kill_others_on_fail:false
              ~kill_signal:"SIGTERM" ~kill_timeout_ms:None ~max_processes:None
              ~restart_tries:"0" ~restart_after:"0" ~teardown_texts:[])
       in
@@ -2112,10 +2130,10 @@ let test_cli_config_validation () =
           (Cli_config.create ~passthrough_arguments:None ~cwd:None
              ~command_texts:[ "npm:build-* -- --url='a&b' && echo done" ]
              ~names_csv:None ~name_separator:"," ~spacious:false ~timings:false
-             ~group:false ~raw:false ~hide_csv:None ~no_color:false ~prefix:None
+             ~group:false ~raw:false ~hide_csv:None ~api_hide_indexes_csv:None ~no_color:false ~prefix:None
              ~prefix_colors_csv:None ~prefix_length:10.0 ~pad_prefix:false
              ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS" ~handle_input:false
-             ~default_input_target:"0" ~success:"all" ~kill_others:false
+             ~default_input_target:"0" ~success:"all" ~kill_others_on_success:false ~kill_others:false
              ~kill_others_on_fail:false ~kill_signal:"SIGTERM"
              ~kill_timeout_ms:None ~max_processes:None ~restart_tries:"0"
              ~restart_after:"0" ~teardown_texts:[])
@@ -2131,10 +2149,10 @@ let test_cli_config_validation () =
           (Cli_config.create ~passthrough_arguments:None
              ~cwd:(Some child_directory) ~command_texts:[ "npm:child-*" ]
              ~names_csv:None ~name_separator:"," ~spacious:false ~timings:false
-             ~group:false ~raw:false ~hide_csv:None ~no_color:false ~prefix:None
+             ~group:false ~raw:false ~hide_csv:None ~api_hide_indexes_csv:None ~no_color:false ~prefix:None
              ~prefix_colors_csv:None ~prefix_length:10.0 ~pad_prefix:false
              ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS" ~handle_input:false
-             ~default_input_target:"0" ~success:"all" ~kill_others:false
+             ~default_input_target:"0" ~success:"all" ~kill_others_on_success:false ~kill_others:false
              ~kill_others_on_fail:false ~kill_signal:"SIGTERM"
              ~kill_timeout_ms:None ~max_processes:None ~restart_tries:"0"
              ~restart_after:"0" ~teardown_texts:[])
@@ -2150,10 +2168,10 @@ let test_cli_config_validation () =
           (Cli_config.create ~passthrough_arguments:None ~cwd:None
              ~command_texts:[ "npm:build;*" ] ~names_csv:None
              ~name_separator:"," ~spacious:false ~timings:false ~group:false
-             ~raw:false ~hide_csv:None ~no_color:false ~prefix:None
+             ~raw:false ~hide_csv:None ~api_hide_indexes_csv:None ~no_color:false ~prefix:None
              ~prefix_colors_csv:None ~prefix_length:10.0 ~pad_prefix:false
              ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS" ~handle_input:false
-             ~default_input_target:"0" ~success:"all" ~kill_others:false
+             ~default_input_target:"0" ~success:"all" ~kill_others_on_success:false ~kill_others:false
              ~kill_others_on_fail:false ~kill_signal:"SIGTERM"
              ~kill_timeout_ms:None ~max_processes:None ~restart_tries:"0"
              ~restart_after:"0" ~teardown_texts:[])
@@ -2166,10 +2184,10 @@ let test_cli_config_validation () =
           (Cli_config.create ~passthrough_arguments:None ~cwd:None
              ~command_texts:[ "npm:omit-*(!css)" ] ~names_csv:None
              ~name_separator:"," ~spacious:false ~timings:false ~group:false
-             ~raw:false ~hide_csv:None ~no_color:false ~prefix:None
+             ~raw:false ~hide_csv:None ~api_hide_indexes_csv:None ~no_color:false ~prefix:None
              ~prefix_colors_csv:None ~prefix_length:10.0 ~pad_prefix:false
              ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS" ~handle_input:false
-             ~default_input_target:"0" ~success:"all" ~kill_others:false
+             ~default_input_target:"0" ~success:"all" ~kill_others_on_success:false ~kill_others:false
              ~kill_others_on_fail:false ~kill_signal:"SIGTERM"
              ~kill_timeout_ms:None ~max_processes:None ~restart_tries:"0"
              ~restart_after:"0" ~teardown_texts:[])
@@ -2182,10 +2200,10 @@ let test_cli_config_validation () =
           (Cli_config.create ~passthrough_arguments:None ~cwd:None
              ~command_texts:[ "npm:no-match-*" ] ~names_csv:None
              ~name_separator:"," ~spacious:false ~timings:false ~group:false
-             ~raw:false ~hide_csv:None ~no_color:false ~prefix:None
+             ~raw:false ~hide_csv:None ~api_hide_indexes_csv:None ~no_color:false ~prefix:None
              ~prefix_colors_csv:None ~prefix_length:10.0 ~pad_prefix:false
              ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS" ~handle_input:false
-             ~default_input_target:"0" ~success:"all" ~kill_others:false
+             ~default_input_target:"0" ~success:"all" ~kill_others_on_success:false ~kill_others:false
              ~kill_others_on_fail:false ~kill_signal:"SIGTERM"
              ~kill_timeout_ms:None ~max_processes:None ~restart_tries:"0"
              ~restart_after:"0" ~teardown_texts:[])
@@ -2197,10 +2215,10 @@ let test_cli_config_validation () =
           (Cli_config.create ~passthrough_arguments:None ~cwd:None
              ~command_texts:[ "npm:no-match-*" ] ~names_csv:None
              ~name_separator:"," ~spacious:false ~timings:false ~group:false
-             ~raw:false ~hide_csv:None ~no_color:false ~prefix:None
+             ~raw:false ~hide_csv:None ~api_hide_indexes_csv:None ~no_color:false ~prefix:None
              ~prefix_colors_csv:None ~prefix_length:10.0 ~pad_prefix:false
              ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS" ~handle_input:false
-             ~default_input_target:"0" ~success:"all" ~kill_others:false
+             ~default_input_target:"0" ~success:"all" ~kill_others_on_success:false ~kill_others:false
              ~kill_others_on_fail:false ~kill_signal:"SIGTERM"
              ~kill_timeout_ms:None ~max_processes:None ~restart_tries:"0"
              ~restart_after:"0" ~teardown_texts:[ "printf clean" ])
@@ -2216,10 +2234,10 @@ let test_cli_config_validation () =
           (Cli_config.create ~passthrough_arguments:None ~cwd:None
              ~command_texts:[ "npm:no-match-*" ] ~names_csv:None
              ~name_separator:"," ~spacious:false ~timings:false ~group:false
-             ~raw:false ~hide_csv:None ~no_color:false ~prefix:None
+             ~raw:false ~hide_csv:None ~api_hide_indexes_csv:None ~no_color:false ~prefix:None
              ~prefix_colors_csv:None ~prefix_length:10.0 ~pad_prefix:false
              ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS" ~handle_input:false
-             ~default_input_target:"0" ~success:"all" ~kill_others:false
+             ~default_input_target:"0" ~success:"all" ~kill_others_on_success:false ~kill_others:false
              ~kill_others_on_fail:false ~kill_signal:"SIGTERM"
              ~kill_timeout_ms:None ~max_processes:None ~restart_tries:"0"
              ~restart_after:"later" ~teardown_texts:[])
@@ -2233,10 +2251,10 @@ let test_cli_config_validation () =
           (Cli_config.create ~passthrough_arguments:None ~cwd:None
              ~command_texts:[ "npm:build-*" ] ~names_csv:(Some "pre")
              ~name_separator:"," ~spacious:false ~timings:false ~group:false
-             ~raw:false ~hide_csv:None ~no_color:false ~prefix:None
+             ~raw:false ~hide_csv:None ~api_hide_indexes_csv:None ~no_color:false ~prefix:None
              ~prefix_colors_csv:None ~prefix_length:10.0 ~pad_prefix:false
              ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS" ~handle_input:false
-             ~default_input_target:"0" ~success:"all" ~kill_others:false
+             ~default_input_target:"0" ~success:"all" ~kill_others_on_success:false ~kill_others:false
              ~kill_others_on_fail:false ~kill_signal:"SIGTERM"
              ~kill_timeout_ms:None ~max_processes:None ~restart_tries:"0"
              ~restart_after:"0" ~teardown_texts:[])
@@ -2249,10 +2267,10 @@ let test_cli_config_validation () =
           (Cli_config.create ~passthrough_arguments:None ~cwd:None
              ~command_texts:[ "deno:dev-*" ] ~names_csv:None ~name_separator:","
              ~spacious:false ~timings:false ~group:false ~raw:false
-             ~hide_csv:None ~no_color:false ~prefix:None ~prefix_colors_csv:None
+             ~hide_csv:None ~api_hide_indexes_csv:None ~no_color:false ~prefix:None ~prefix_colors_csv:None
              ~prefix_length:10.0 ~pad_prefix:false
              ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS" ~handle_input:false
-             ~default_input_target:"0" ~success:"all" ~kill_others:false
+             ~default_input_target:"0" ~success:"all" ~kill_others_on_success:false ~kill_others:false
              ~kill_others_on_fail:false ~kill_signal:"SIGTERM"
              ~kill_timeout_ms:None ~max_processes:None ~restart_tries:"0"
              ~restart_after:"0" ~teardown_texts:[])
@@ -2268,11 +2286,11 @@ let test_cli_config_validation () =
       (Cli_config.create ~passthrough_arguments:None ~cwd:None
          ~command_texts:[ "echo api"; "echo worker" ]
          ~names_csv:(Some "api,worker") ~name_separator:"," ~spacious:false
-         ~timings:false ~group:false ~raw:false ~hide_csv:None ~no_color:false
+         ~timings:false ~group:false ~raw:false ~hide_csv:None ~api_hide_indexes_csv:None ~no_color:false
          ~prefix:None ~prefix_colors_csv:None ~prefix_length:10.0
          ~pad_prefix:false ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS"
          ~handle_input:true ~default_input_target:"worker" ~success:"all"
-         ~kill_others:false ~kill_others_on_fail:false ~kill_signal:"SIGTERM"
+         ~kill_others_on_success:false ~kill_others:false ~kill_others_on_fail:false ~kill_signal:"SIGTERM"
          ~kill_timeout_ms:None ~max_processes:None ~restart_tries:"0"
          ~restart_after:"0" ~teardown_texts:[])
   in
@@ -2282,10 +2300,10 @@ let test_cli_config_validation () =
       (Cli_config.create ~passthrough_arguments:None ~cwd:None
          ~teardown_texts:[] ~command_texts:[ "echo api" ] ~names_csv:None
          ~name_separator:"," ~spacious:false ~timings:false ~group:false
-         ~raw:false ~hide_csv:None ~no_color:false ~prefix:None
+         ~raw:false ~hide_csv:None ~api_hide_indexes_csv:None ~no_color:false ~prefix:None
          ~prefix_colors_csv:None ~prefix_length:10.0 ~pad_prefix:false
          ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS" ~handle_input:false
-         ~default_input_target:"0" ~success:"!command-0" ~kill_others:false
+         ~default_input_target:"0" ~success:"!command-0" ~kill_others_on_success:false ~kill_others:false
          ~kill_others_on_fail:true ~kill_signal:"SIGTERM" ~kill_timeout_ms:None
          ~max_processes:None ~restart_tries:"0" ~restart_after:"0")
   in
@@ -2301,10 +2319,10 @@ let test_cli_config_validation () =
       (Cli_config.create ~passthrough_arguments:None ~cwd:None
          ~teardown_texts:[] ~command_texts:[ "echo api" ] ~names_csv:None
          ~name_separator:"," ~spacious:false ~timings:false ~group:false
-         ~raw:false ~hide_csv:None ~no_color:false ~prefix:None
+         ~raw:false ~hide_csv:None ~api_hide_indexes_csv:None ~no_color:false ~prefix:None
          ~prefix_colors_csv:None ~prefix_length:10.0 ~pad_prefix:false
          ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS" ~handle_input:false
-         ~default_input_target:"0" ~success:"first" ~kill_others:false
+         ~default_input_target:"0" ~success:"first" ~kill_others_on_success:false ~kill_others:false
          ~kill_others_on_fail:false ~kill_signal:"SIGTERM" ~kill_timeout_ms:None
          ~max_processes:None ~restart_tries:"0" ~restart_after:"0")
   in
@@ -2317,11 +2335,11 @@ let test_cli_config_validation () =
          ~teardown_texts:[]
          ~command_texts:[ "echo api"; "echo worker"; "echo docs" ]
          ~names_csv:None ~name_separator:"," ~spacious:false ~timings:false
-         ~group:false ~raw:false ~hide_csv:None ~no_color:false ~prefix:None
+         ~group:false ~raw:false ~hide_csv:None ~api_hide_indexes_csv:None ~no_color:false ~prefix:None
          ~prefix_colors_csv:(Some "red,blue") ~prefix_length:10.0
          ~pad_prefix:false ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS"
          ~handle_input:false ~default_input_target:"0" ~success:"all"
-         ~kill_others:false ~kill_others_on_fail:false ~kill_signal:"SIGTERM"
+         ~kill_others_on_success:false ~kill_others:false ~kill_others_on_fail:false ~kill_signal:"SIGTERM"
          ~kill_timeout_ms:None ~max_processes:None ~restart_tries:"0"
          ~restart_after:"0")
   in
@@ -2336,10 +2354,10 @@ let test_cli_config_validation () =
          ~command_texts:[ "echo api"; "echo worker" ]
          ~names_csv:(Some "api, worker") ~name_separator:"," ~spacious:false
          ~timings:false ~group:false ~raw:false ~hide_csv:(Some "worker")
-         ~no_color:false ~prefix:None ~prefix_colors_csv:None ~prefix_length:10.0
+         ~api_hide_indexes_csv:None ~no_color:false ~prefix:None ~prefix_colors_csv:None ~prefix_length:10.0
          ~pad_prefix:false ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS"
          ~handle_input:false ~default_input_target:"0" ~success:"command-worker"
-         ~kill_others:false ~kill_others_on_fail:false ~kill_signal:"SIGTERM"
+         ~kill_others_on_success:false ~kill_others:false ~kill_others_on_fail:false ~kill_signal:"SIGTERM"
          ~kill_timeout_ms:None ~max_processes:None ~restart_tries:"0"
          ~restart_after:"0")
   in
@@ -2360,10 +2378,10 @@ let test_cli_config_validation () =
          ~command_texts:[ "echo api"; "echo worker"; "echo docs" ]
          ~names_csv:(Some "api| worker|docs") ~name_separator:"|"
          ~spacious:false ~timings:false ~group:false ~raw:false
-         ~hide_csv:(Some "docs") ~no_color:false ~prefix:None
+         ~hide_csv:(Some "docs") ~api_hide_indexes_csv:None ~no_color:false ~prefix:None
          ~prefix_colors_csv:None ~prefix_length:10.0 ~pad_prefix:false
          ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS" ~handle_input:false
-         ~default_input_target:"0" ~success:"command- worker" ~kill_others:false
+         ~default_input_target:"0" ~success:"command- worker" ~kill_others_on_success:false ~kill_others:false
          ~kill_others_on_fail:false ~kill_signal:"SIGTERM" ~kill_timeout_ms:None
          ~max_processes:None ~restart_tries:"0" ~restart_after:"0")
   in
@@ -2383,10 +2401,10 @@ let test_cli_config_validation () =
 	         ~teardown_texts:[] ~command_texts:[ "echo face"; "echo x" ]
 	         ~names_csv:(Some "😀x") ~name_separator:"" ~spacious:false
 	         ~timings:false ~group:false ~raw:false ~hide_csv:None
-	         ~no_color:false ~prefix:None ~prefix_colors_csv:None
+	         ~api_hide_indexes_csv:None ~no_color:false ~prefix:None ~prefix_colors_csv:None
 	         ~prefix_length:10.0 ~pad_prefix:false
 	         ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS" ~handle_input:false
-	         ~default_input_target:"0" ~success:"all" ~kill_others:false
+	         ~default_input_target:"0" ~success:"all" ~kill_others_on_success:false ~kill_others:false
 	         ~kill_others_on_fail:false ~kill_signal:"SIGTERM"
 	         ~kill_timeout_ms:None ~max_processes:None ~restart_tries:"0"
 	         ~restart_after:"0")
@@ -2400,11 +2418,11 @@ let test_cli_config_validation () =
       (Cli_config.create ~passthrough_arguments:None ~cwd:None
          ~teardown_texts:[] ~command_texts:[ "echo api" ] ~names_csv:None
          ~name_separator:"," ~spacious:false ~timings:false ~group:false
-         ~raw:false ~hide_csv:None ~no_color:false ~prefix:None
+         ~raw:false ~hide_csv:None ~api_hide_indexes_csv:None ~no_color:false ~prefix:None
          ~prefix_colors_csv:None ~prefix_length:10.0 ~pad_prefix:false
          ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS" ~handle_input:false
          ~default_input_target:"0" ~success:"!command-missing"
-         ~kill_others:false ~kill_others_on_fail:false ~kill_signal:"SIGTERM"
+         ~kill_others_on_success:false ~kill_others:false ~kill_others_on_fail:false ~kill_signal:"SIGTERM"
          ~kill_timeout_ms:None ~max_processes:None ~restart_tries:"0"
          ~restart_after:"0")
   in
@@ -2417,10 +2435,10 @@ let test_cli_config_validation () =
       (Cli_config.create ~passthrough_arguments:None ~cwd:None
          ~teardown_texts:[] ~command_texts:[ "echo api" ] ~names_csv:None
          ~name_separator:"," ~spacious:false ~timings:false ~group:false
-         ~raw:false ~hide_csv:None ~no_color:false ~prefix:None
+         ~raw:false ~hide_csv:None ~api_hide_indexes_csv:None ~no_color:false ~prefix:None
          ~prefix_colors_csv:None ~prefix_length:10.0 ~pad_prefix:false
          ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS" ~handle_input:true
-         ~default_input_target:"missing" ~success:"all" ~kill_others:false
+         ~default_input_target:"missing" ~success:"all" ~kill_others_on_success:false ~kill_others:false
          ~kill_others_on_fail:false ~kill_signal:"SIGTERM" ~kill_timeout_ms:None
          ~max_processes:None ~restart_tries:"0" ~restart_after:"0"));
   let unmatched_success_config =
@@ -2428,10 +2446,10 @@ let test_cli_config_validation () =
       (Cli_config.create ~passthrough_arguments:None ~cwd:None
          ~teardown_texts:[] ~command_texts:[ "echo api" ] ~names_csv:None
          ~name_separator:"," ~spacious:false ~timings:false ~group:false
-         ~raw:false ~hide_csv:None ~no_color:false ~prefix:None
+         ~raw:false ~hide_csv:None ~api_hide_indexes_csv:None ~no_color:false ~prefix:None
          ~prefix_colors_csv:None ~prefix_length:10.0 ~pad_prefix:false
          ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS" ~handle_input:false
-         ~default_input_target:"0" ~success:"command-" ~kill_others:false
+         ~default_input_target:"0" ~success:"command-" ~kill_others_on_success:false ~kill_others:false
          ~kill_others_on_fail:false ~kill_signal:"SIGTERM" ~kill_timeout_ms:None
          ~max_processes:None ~restart_tries:"0" ~restart_after:"0")
   in
@@ -2443,10 +2461,10 @@ let test_cli_config_validation () =
       (Cli_config.create ~passthrough_arguments:None ~cwd:None
          ~teardown_texts:[] ~command_texts:[ "echo api" ] ~names_csv:None
          ~name_separator:"," ~spacious:false ~timings:false ~group:false
-         ~raw:false ~hide_csv:None ~no_color:false ~prefix:None
+         ~raw:false ~hide_csv:None ~api_hide_indexes_csv:None ~no_color:false ~prefix:None
          ~prefix_colors_csv:None ~prefix_length:10.0 ~pad_prefix:false
          ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS" ~handle_input:false
-         ~default_input_target:"0" ~success:"all" ~kill_others:false
+         ~default_input_target:"0" ~success:"all" ~kill_others_on_success:false ~kill_others:false
          ~kill_others_on_fail:false ~kill_signal:"SIGTERM" ~kill_timeout_ms:None
          ~max_processes:None ~restart_tries:"0" ~restart_after:"later")
   in
@@ -2458,10 +2476,10 @@ let test_cli_config_validation () =
       (Cli_config.create ~passthrough_arguments:None ~cwd:None
          ~teardown_texts:[] ~command_texts:[ "echo api" ] ~names_csv:None
          ~name_separator:"," ~spacious:false ~timings:false ~group:false
-         ~raw:false ~hide_csv:None ~no_color:false ~prefix:None
+         ~raw:false ~hide_csv:None ~api_hide_indexes_csv:None ~no_color:false ~prefix:None
          ~prefix_colors_csv:None ~prefix_length:10.0 ~pad_prefix:false
          ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS" ~handle_input:false
-         ~default_input_target:"0" ~success:"all" ~kill_others:false
+         ~default_input_target:"0" ~success:"all" ~kill_others_on_success:false ~kill_others:false
          ~kill_others_on_fail:false ~kill_signal:"SIGTERM" ~kill_timeout_ms:None
          ~max_processes:None ~restart_tries:"0" ~restart_after:"1.5")
   in
@@ -2473,10 +2491,10 @@ let test_cli_config_validation () =
       (Cli_config.create ~passthrough_arguments:None ~cwd:None
          ~teardown_texts:[] ~command_texts:[ "echo api" ] ~names_csv:None
          ~name_separator:"," ~spacious:false ~timings:false ~group:false
-         ~raw:false ~hide_csv:None ~no_color:false ~prefix:None
+         ~raw:false ~hide_csv:None ~api_hide_indexes_csv:None ~no_color:false ~prefix:None
          ~prefix_colors_csv:None ~prefix_length:10.0 ~pad_prefix:false
          ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS" ~handle_input:false
-         ~default_input_target:"0" ~success:"all" ~kill_others:false
+         ~default_input_target:"0" ~success:"all" ~kill_others_on_success:false ~kill_others:false
          ~kill_others_on_fail:false ~kill_signal:"SIGTERM" ~kill_timeout_ms:None
          ~max_processes:None ~restart_tries:"0" ~restart_after:"-1")
   in
@@ -2489,11 +2507,11 @@ let test_cli_config_validation () =
          ~teardown_texts:[]
          ~command_texts:[ "echo api"; "echo worker" ]
          ~names_csv:(Some "api") ~name_separator:"," ~spacious:false
-         ~timings:false ~group:false ~raw:false ~hide_csv:None ~no_color:false
+         ~timings:false ~group:false ~raw:false ~hide_csv:None ~api_hide_indexes_csv:None ~no_color:false
          ~prefix:None ~prefix_colors_csv:None ~prefix_length:10.0
          ~pad_prefix:false ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS"
          ~handle_input:false ~default_input_target:"0" ~success:"all"
-         ~kill_others:false ~kill_others_on_fail:false ~kill_signal:"SIGTERM"
+         ~kill_others_on_success:false ~kill_others:false ~kill_others_on_fail:false ~kill_signal:"SIGTERM"
          ~kill_timeout_ms:None ~max_processes:None ~restart_tries:"0"
          ~restart_after:"0")
   in
@@ -2507,11 +2525,11 @@ let test_cli_config_validation () =
          ~teardown_texts:[]
          ~command_texts:[ "echo api"; "echo worker" ]
          ~names_csv:(Some "api, ") ~name_separator:"," ~spacious:false
-         ~timings:false ~group:false ~raw:false ~hide_csv:None ~no_color:false
+         ~timings:false ~group:false ~raw:false ~hide_csv:None ~api_hide_indexes_csv:None ~no_color:false
          ~prefix:None ~prefix_colors_csv:None ~prefix_length:10.0
          ~pad_prefix:false ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS"
          ~handle_input:false ~default_input_target:"0" ~success:"all"
-         ~kill_others:false ~kill_others_on_fail:false ~kill_signal:"SIGTERM"
+         ~kill_others_on_success:false ~kill_others:false ~kill_others_on_fail:false ~kill_signal:"SIGTERM"
          ~kill_timeout_ms:None ~max_processes:None ~restart_tries:"0"
          ~restart_after:"0")
   in
@@ -2525,10 +2543,10 @@ let test_cli_config_validation () =
          ~teardown_texts:[]
          ~command_texts:[ "echo api"; "echo worker" ] ~names_csv:(Some "a,b")
          ~name_separator:"" ~spacious:false ~timings:false ~group:false
-         ~raw:false ~hide_csv:None ~no_color:false ~prefix:None
+         ~raw:false ~hide_csv:None ~api_hide_indexes_csv:None ~no_color:false ~prefix:None
          ~prefix_colors_csv:None ~prefix_length:10.0 ~pad_prefix:false
          ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS" ~handle_input:false
-         ~default_input_target:"0" ~success:"all" ~kill_others:false
+         ~default_input_target:"0" ~success:"all" ~kill_others_on_success:false ~kill_others:false
          ~kill_others_on_fail:false ~kill_signal:"SIGTERM" ~kill_timeout_ms:None
          ~max_processes:None ~restart_tries:"0" ~restart_after:"0")
   in
@@ -2540,10 +2558,10 @@ let test_cli_config_validation () =
   expect_error (`Run_spec_error `Empty_command_list)
     (Cli_config.create ~passthrough_arguments:None ~cwd:None ~teardown_texts:[]
        ~command_texts:[] ~names_csv:None ~name_separator:"," ~spacious:false
-       ~timings:false ~group:false ~raw:false ~hide_csv:None ~no_color:false
+       ~timings:false ~group:false ~raw:false ~hide_csv:None ~api_hide_indexes_csv:None ~no_color:false
        ~prefix:None ~prefix_colors_csv:None ~prefix_length:10.0 ~pad_prefix:false
        ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS" ~handle_input:false
-       ~default_input_target:"0" ~success:"all" ~kill_others:false
+       ~default_input_target:"0" ~success:"all" ~kill_others_on_success:false ~kill_others:false
        ~kill_others_on_fail:false ~kill_signal:"SIGTERM" ~kill_timeout_ms:None
        ~max_processes:None ~restart_tries:"0" ~restart_after:"0");
   expect_error
@@ -2551,10 +2569,10 @@ let test_cli_config_validation () =
     (Cli_config.create ~passthrough_arguments:None ~cwd:(Some " ")
        ~teardown_texts:[] ~command_texts:[ "echo api" ] ~names_csv:None
        ~name_separator:"," ~spacious:false ~timings:false ~group:false
-       ~raw:false ~hide_csv:None ~no_color:false ~prefix:None
+       ~raw:false ~hide_csv:None ~api_hide_indexes_csv:None ~no_color:false ~prefix:None
        ~prefix_colors_csv:None ~prefix_length:10.0 ~pad_prefix:false
        ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS" ~handle_input:false
-       ~default_input_target:"0" ~success:"all" ~kill_others:false
+       ~default_input_target:"0" ~success:"all" ~kill_others_on_success:false ~kill_others:false
        ~kill_others_on_fail:false ~kill_signal:"SIGTERM" ~kill_timeout_ms:None
        ~max_processes:None ~restart_tries:"0" ~restart_after:"0");
   let blank_teardown_config =
@@ -2562,10 +2580,10 @@ let test_cli_config_validation () =
       (Cli_config.create ~passthrough_arguments:None ~cwd:None
          ~command_texts:[ "echo api" ] ~teardown_texts:[ " " ] ~names_csv:None
          ~name_separator:"," ~spacious:false ~timings:false ~group:false
-         ~raw:false ~hide_csv:None ~no_color:false ~prefix:None
+         ~raw:false ~hide_csv:None ~api_hide_indexes_csv:None ~no_color:false ~prefix:None
          ~prefix_colors_csv:None ~prefix_length:10.0 ~pad_prefix:false
          ~timestamp_format:"yyyy-MM-dd HH:mm:ss.SSS" ~handle_input:false
-         ~default_input_target:"0" ~success:"all" ~kill_others:false
+         ~default_input_target:"0" ~success:"all" ~kill_others_on_success:false ~kill_others:false
          ~kill_others_on_fail:false ~kill_signal:"SIGTERM"
          ~kill_timeout_ms:None ~max_processes:None ~restart_tries:"0"
          ~restart_after:"0")

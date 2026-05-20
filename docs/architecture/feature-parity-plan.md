@@ -20,11 +20,11 @@ The target is not a thin CLI wrapper. The library should own the core run model,
 and the executable should only parse CLI input, call the library, and translate
 the final run result to a process exit code.
 
-The JavaScript programmatic API from npm `concurrently` is preserved by
-re-exporting pinned upstream `concurrently@9.2.1` through an npm alias. The CLI
-path remains native OCaml; JavaScript importers receive the upstream
-CommonJS/ESM entrypoints, command observables, Node IPC shims, and custom
-JavaScript spawn/kill hooks.
+The JavaScript programmatic API must not be implemented by falling back to
+upstream `concurrently`. The root package owns a native-backed CommonJS/ESM
+facade that preserves the public entrypoint names and runs through the native
+binary. Lower-level JavaScript-only extension hooks that would require upstream
+internals fail explicitly until they are replaced by repo-owned behavior.
 
 The core domain model must stay OS-neutral. Process supervision is a backend
 concern: Unix-like runners and Windows runners should share the same
@@ -75,9 +75,9 @@ Win32 process creation, stdio handle inheritance, and job-object teardown.
   prefers optional native platform packages from installed package roots. The
   root npm package exposes npm-compatible `concurrently` and `conc` binary
   aliases plus the project-specific `concml` alias, and the package import
-  entrypoints re-export pinned upstream `concurrently@9.2.1` as a compatibility
-  facade for JavaScript callers. Windows npm-script execution no longer routes
-  to the pinned upstream CLI; it uses the native Windows runner backend.
+  entrypoints use a repo-owned native-backed JavaScript facade. Windows
+  npm-script execution no longer routes to the pinned upstream CLI; it uses the
+  native Windows runner backend.
 - GitHub Actions now includes native package jobs for Linux GNU x64/arm64,
   Linux musl x64/arm64, macOS x64/arm64, and Windows x64/arm64. Each native
   package job now packs the platform package and root package into a clean npm
@@ -377,9 +377,9 @@ Known divergences and deferred scope:
 | Area | Upstream behavior | Current status |
 | --- | --- | --- |
 | Timing table row order for runtime-dependent signal durations | npm sorts the timing table by measured duration. When one command is killed after another exits, relative durations can legitimately differ by runtime and platform. | Kill-on-fail and success-triggered kill timing now match npm under normalized timestamps, durations, and duration-derived table row order. This is intentionally normalized compatibility evidence rather than byte-stable output, because the upstream sort key is runtime duration. |
-| Shell job-control diagnostics for trapped shell children | For shell commands such as `trap 'exit 129' HUP; sleep 1`, npm's process-tree kill path can race between surfacing and omitting shell diagnostics like `Hangup: 1` or `Terminated: 15` before the command close notification. Trap cleanup output emitted while the shell is being torn down can also appear or disappear by runtime timing. | The native POSIX backend signals the process group directly to bound descendants. Deterministic close status and lifecycle output match upstream; shell-emitted job-control diagnostics and signal-trap cleanup output are normalized in targeted evidence because upstream output is runtime-dependent. |
+| Shell job-control diagnostics for trapped shell children | For shell commands such as `trap 'exit 129' HUP; sleep 1`, npm's process-tree kill path can race between surfacing and omitting shell diagnostics like `Hangup: 1` or `Terminated: 15` before the command close notification. Trap cleanup output emitted while the shell is being torn down can also appear or disappear by runtime timing. Upstream also races between parent exit status `0` and `1` for targeted `SIGINT`/`SIGUSR1`/`SIGHUP` trapped-shell sibling cancellation cases. | The native POSIX backend signals the process group directly to bound descendants. Lifecycle output matches upstream once shell-emitted job-control diagnostics, signal-trap cleanup output, and targeted trapped-shell parent status races are normalized as runtime-dependent evidence. |
 | Unsupported kill-signal stderr when used | Upstream forwards the exact `--kill-signal` string to Node/tree-kill. Bare aliases such as `TERM`/`HUP`, and unsupported names such as `SIGFOO`, print a partial shutdown log and then throw Node's `ERR_UNKNOWN_SIGNAL` stack when used. | The native CLI now matches the exit status, shutdown status line text, and `ERR_UNKNOWN_SIGNAL` headline for deterministic unsupported values. It still does not reproduce Node's environment-specific stack frames. |
-| JavaScript programmatic API | Upstream `concurrently()` can be imported from JavaScript. | The npm package now ships CommonJS/ESM/type entrypoints that re-export pinned upstream `concurrently@9.2.1` through the `concurrently-js` npm alias. Programmatic callers get the upstream JS API; npm-script callers use the native OCaml bin. |
+| JavaScript programmatic API | Upstream `concurrently()` can be imported from JavaScript. | The npm package now ships CommonJS/ESM/type entrypoints backed by the native binary, with matching top-level export names and explicit failures for unsupported lower-level hooks such as custom controllers, custom spawn/kill functions, and command IPC. |
 | Linux musl packaging | Upstream runs on Alpine/musl through Node. | Linux musl packages are built and smoke-installed on Alpine through npm's `libc` package selector. |
 | Windows backend | Upstream supports Windows process semantics. | Windows npm-script callers no longer fall back to the pinned upstream JavaScript CLI. The native Windows backend uses `CreateProcessW`, inherited stdio handles, exit-code mapping, and job-object process-tree termination. Windows x64/arm64 package smoke gates are wired in CI, including a Windows-selected pinned compatibility harness and native process-tree cleanup smoke. Full compatibility parity still needs the first Windows CI run results and any follow-up fixtures they expose. |
 

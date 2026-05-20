@@ -55,9 +55,6 @@
   ],
   "author": "Franz Pieringer",
   "license": "MIT",
-  "dependencies": {
-    "concurrently-js": "npm:concurrently@9.2.1"
-  },
   "optionalDependencies": {
     "@pierback/concurrently-ml-darwin-arm64": "0.0.14",
     "@pierback/concurrently-ml-darwin-x64": "0.0.14",

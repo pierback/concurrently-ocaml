@@ -44,7 +44,8 @@ behavior:
 Distribute npm packages as:
 
 - Root package: `@pierback/concurrently-ml`, containing the JS launcher,
-  JavaScript API facade, and optional native platform dependencies.
+  repo-owned native-backed JavaScript API facade, and optional native platform
+  dependencies.
 - POSIX-compatible platform packages:
   - `@pierback/concurrently-ml-linux-x64-gnu`
   - `@pierback/concurrently-ml-linux-arm64-gnu`
@@ -93,6 +94,9 @@ upstream JavaScript CLI.
 - Windows drop-in npm-script behavior comes from explicit Windows process
   supervision, not accidental compatibility through upstream JavaScript, POSIX
   shell strings, or POSIX signal names.
+- JavaScript imports also avoid upstream `concurrently`; unsupported
+  JavaScript-only extension hooks fail explicitly until they are implemented in
+  this repo.
 
 ## References
 
