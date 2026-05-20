@@ -30,6 +30,7 @@ const platform = required("platform");
 const arch = required("arch");
 const packageRoot = resolve(".");
 const rootPackage = readJson(resolve("package.json"));
+const publicPackageName = "concurrently";
 const platformPackageName = `${rootPackage.name}-${target}`;
 const platformPackageDir = resolve(
   "dist",
@@ -78,9 +79,9 @@ try {
       "--ignore-scripts",
       "--no-audit",
       "--no-fund",
-      "--offline",
+      "--prefer-offline",
       platformTarball,
-      rootTarball,
+      `${publicPackageName}@file:${rootTarball}`,
     ],
     projectDir
   );
@@ -100,8 +101,7 @@ try {
   const installedRootDir = join(
     projectDir,
     "node_modules",
-    "@pierback",
-    "concurrently-ml"
+    publicPackageName
   );
   const installedPlatformDir = join(
     projectDir,
@@ -122,10 +122,10 @@ try {
     `bin/${nativeBinaryName}`,
     installedPlatformBinaryPath
   );
-  assertNoFile(join(installedRootDir, "index.js"));
-  assertNoFile(join(installedRootDir, "index.mjs"));
-  assertNoFile(join(installedRootDir, "index.d.ts"));
-  assertNoFile(join(installedRootDir, "index.d.mts"));
+  assertFile(join(installedRootDir, "index.js"));
+  assertFile(join(installedRootDir, "index.mjs"));
+  assertFile(join(installedRootDir, "index.d.ts"));
+  assertFile(join(installedRootDir, "index.d.mts"));
   assertFile(join(installedRootDir, "npm", "lib", "native.js"));
   assertNoPackedSourceTree(installedRootDir);
 
@@ -192,6 +192,84 @@ try {
   }
   assertEqual(versionSmoke.stdout, `${rootPackage.version}\n`, "conc version stdout");
   assertEqual(versionSmoke.stderr, "", "conc version stderr");
+
+  const apiSmoke = spawnSync(
+    process.execPath,
+    [
+      "-e",
+      `
+      const concurrently = require(${JSON.stringify(publicPackageName)});
+      if (typeof concurrently !== "function") {
+        throw new Error("default export is not callable");
+      }
+      if (typeof concurrently.createConcurrently !== "function") {
+        throw new Error("createConcurrently export is missing");
+      }
+      const run = concurrently(['node -e "process.exit(0)"'], { raw: true });
+      if (!run || !Array.isArray(run.commands) || run.commands.length !== 1) {
+        throw new Error("invalid concurrently result commands");
+      }
+      run.result.then((events) => {
+        if (!Array.isArray(events) || events.length !== 1 || events[0].exitCode !== 0) {
+          throw new Error("invalid concurrently result events");
+        }
+        process.stdout.write("api smoke ok\\n");
+      }, (error) => {
+        console.error(error);
+        process.exit(1);
+      });
+      `,
+    ],
+    { cwd: projectDir, encoding: "utf8" }
+  );
+  if (apiSmoke.error) {
+    throw apiSmoke.error;
+  }
+  if (apiSmoke.status !== 0) {
+    throw new Error(
+      `programmatic API smoke exited ${apiSmoke.status}\nstdout:\n${apiSmoke.stdout}\nstderr:\n${apiSmoke.stderr}`
+    );
+  }
+  assertEqual(apiSmoke.stdout, "api smoke ok\n", "programmatic API smoke stdout");
+  assertEqual(apiSmoke.stderr, "", "programmatic API smoke stderr");
+
+  const esmApiSmoke = spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `
+      import concurrently, { createConcurrently } from ${JSON.stringify(publicPackageName)};
+      if (typeof concurrently !== "function") {
+        throw new Error("default ESM export is not callable");
+      }
+      if (typeof createConcurrently !== "function") {
+        throw new Error("createConcurrently ESM export is missing");
+      }
+      const run = concurrently(['node -e "process.exit(0)"'], { raw: true });
+      const events = await run.result;
+      if (!Array.isArray(events) || events.length !== 1 || events[0].exitCode !== 0) {
+        throw new Error("invalid concurrently ESM result events");
+      }
+      process.stdout.write("esm api smoke ok\\n");
+      `,
+    ],
+    { cwd: projectDir, encoding: "utf8" }
+  );
+  if (esmApiSmoke.error) {
+    throw esmApiSmoke.error;
+  }
+  if (esmApiSmoke.status !== 0) {
+    throw new Error(
+      `programmatic ESM API smoke exited ${esmApiSmoke.status}\nstdout:\n${esmApiSmoke.stdout}\nstderr:\n${esmApiSmoke.stderr}`
+    );
+  }
+  assertEqual(
+    esmApiSmoke.stdout,
+    "esm api smoke ok\n",
+    "programmatic ESM API smoke stdout"
+  );
+  assertEqual(esmApiSmoke.stderr, "", "programmatic ESM API smoke stderr");
 
   const helpSmoke = spawnSync(binPath, ["-h"], {
     cwd: projectDir,
