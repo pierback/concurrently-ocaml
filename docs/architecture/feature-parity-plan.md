@@ -65,7 +65,9 @@ signal, process-tree teardown, and pipe implementations.
   root npm package exposes npm-compatible `concurrently` and `conc` binary
   aliases plus the project-specific `concml` alias, and the package import
   entrypoints re-export pinned upstream `concurrently@9.2.1` as a compatibility
-  facade for JavaScript callers.
+  facade for JavaScript callers. On Windows, the bin shim routes to the same
+  pinned upstream CLI because `eio_windows` 1.3 does not provide process
+  operations yet.
 - GitHub Actions now includes native package jobs for Linux GNU x64/arm64,
   Linux musl x64/arm64, and macOS x64/arm64. Each native package job now packs
   the platform package and root package into a clean npm project, verifies that
@@ -74,7 +76,9 @@ signal, process-tree teardown, and pipe implementations.
   verifies the platform package `SHA256SUMS` manifest against the installed
   native binary, installs the root tarball under the public `concurrently`
   alias, verifies CommonJS and ESM programmatic imports, and runs
-  `conc`/`concurrently` from that install. Windows packaging is deliberately
+  `conc`/`concurrently` from that install. A Windows smoke job packs and
+  installs the root package on `windows-latest` and verifies the pinned upstream
+  JavaScript CLI route. Windows native package publication is deliberately
   withheld until a Windows-native runner backend exists.
 - `npm run perf:concurrently` provides repeatable native-vs-pinned-npm timing
   evidence for startup/version output, many short commands, and streaming
@@ -362,9 +366,9 @@ Known divergences and deferred scope:
 | Timing table row order for runtime-dependent signal durations | npm sorts the timing table by measured duration. When one command is killed after another exits, relative durations can legitimately differ by runtime and platform. | Kill-on-fail and success-triggered kill timing now match npm under normalized timestamps, durations, and duration-derived table row order. This is intentionally normalized compatibility evidence rather than byte-stable output, because the upstream sort key is runtime duration. |
 | Shell job-control diagnostics for trapped shell children | For shell commands such as `trap 'exit 129' HUP; sleep 1`, npm's process-tree kill path can race between surfacing and omitting shell diagnostics like `Hangup: 1` or `Terminated: 15` before the command close notification. Trap cleanup output emitted while the shell is being torn down can also appear or disappear by runtime timing. | The native POSIX backend signals the process group directly to bound descendants. Deterministic close status and lifecycle output match upstream; shell-emitted job-control diagnostics and signal-trap cleanup output are normalized in targeted evidence because upstream output is runtime-dependent. |
 | Unsupported kill-signal stderr when used | Upstream forwards the exact `--kill-signal` string to Node/tree-kill. Bare aliases such as `TERM`/`HUP`, and unsupported names such as `SIGFOO`, print a partial shutdown log and then throw Node's `ERR_UNKNOWN_SIGNAL` stack when used. | The native CLI now matches the exit status, shutdown status line text, and `ERR_UNKNOWN_SIGNAL` headline for deterministic unsupported values. It still does not reproduce Node's environment-specific stack frames. |
-| JavaScript programmatic API | Upstream `concurrently()` can be imported from JavaScript. | The npm package now ships CommonJS/ESM/type entrypoints that re-export pinned upstream `concurrently@9.2.1` through the `concurrently-js` npm alias. Programmatic callers get the upstream JS API; npm-script callers use the native OCaml bin. |
+| JavaScript programmatic API | Upstream `concurrently()` can be imported from JavaScript. | The npm package now ships CommonJS/ESM/type entrypoints that re-export pinned upstream `concurrently@9.2.1` through the `concurrently-js` npm alias. Programmatic callers get the upstream JS API; Unix-like npm-script callers use the native OCaml bin. |
 | Linux musl packaging | Upstream runs on Alpine/musl through Node. | Linux musl packages are built and smoke-installed on Alpine through npm's `libc` package selector. |
-| Windows backend | Upstream supports Windows process semantics. | Windows npm packages are withheld until a Windows-native runner backend exists. |
+| Windows backend | Upstream supports Windows process semantics. | Windows npm-script callers route to the pinned upstream JavaScript CLI. Native Windows npm packages remain withheld until `Runner_backend.t` has a Windows process-tree implementation. |
 
 ## Current Verification Snapshot
 
@@ -590,9 +594,12 @@ As of May 20, 2026, the current `master` worktree has the following local proof:
    surface, asserts that the installed launcher resolves the optional platform
    package's native binary, verifies the platform package checksum manifest,
    executes both `conc` and `concurrently` through the installed npm bin shims,
-   and publishes packages on version tags with npm provenance. Windows
-   packaging is withheld until a Windows backend exists.
-   Deferred distribution scope: implement then package Windows runner behavior.
+   and publishes packages on version tags with npm provenance. A separate
+   `windows-latest` smoke job installs the root package and verifies the
+   Windows JavaScript CLI route. Windows native packaging is withheld until a
+   Windows backend exists.
+   Deferred distribution scope: implement then package native Windows runner
+   behavior.
 
 10. Platform backend split
 
