@@ -37,8 +37,8 @@ behavior:
 
 Distribute npm packages as:
 
-- Root package: `@pierback/concurrently-ml`, containing the JS launcher and
-  optional dependencies.
+- Root package: `@pierback/concurrently-ml`, containing the JS launcher,
+  upstream JavaScript CLI route for Windows, and optional dependencies.
 - POSIX-compatible platform packages:
   - `@pierback/concurrently-ml-linux-x64-gnu`
   - `@pierback/concurrently-ml-linux-arm64-gnu`
@@ -64,9 +64,12 @@ Darwin package jobs set `MACOSX_DEPLOYMENT_TARGET` before dependency
 installation and compilation so the runner image version does not become the
 minimum supported macOS version for the shipped Mach-O binary.
 
-Do not publish Windows packages until there is a Windows-native backend. The
-current POSIX backend uses `/bin/sh`, POSIX process groups, and POSIX signals;
-those details must remain behind `Runner_backend.t`.
+Do not publish Windows native packages until there is a Windows-native backend.
+The current POSIX backend uses `/bin/sh`, POSIX process groups, and POSIX
+signals; those details must remain behind `Runner_backend.t`. Until native
+Windows process supervision exists, the root npm bin shim routes Windows hosts
+to the pinned upstream `concurrently@9.2.1` CLI already included through the
+`concurrently-js` npm alias.
 
 ## Consequences
 
@@ -78,8 +81,10 @@ those details must remain behind `Runner_backend.t`.
   leaking Unix assumptions into `Command` or `Run_policy`.
 - Alpine/musl users do not accidentally execute a glibc binary. They install
   and smoke the dedicated `linux-*-musl` package instead.
-- Windows support is withheld until it is explicit backend work, not accidental
-  compatibility through shell strings and POSIX signal names.
+- Windows drop-in npm-script behavior is supported through the pinned upstream
+  JavaScript CLI route. Native Windows package publication remains withheld
+  until it is explicit backend work, not accidental compatibility through shell
+  strings and POSIX signal names.
 
 ## References
 

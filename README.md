@@ -53,8 +53,12 @@ That keeps existing `concurrently`/`conc` package scripts and
 root package plus matching platform package into a clean temporary npm project,
 installs the root package under the `concurrently` alias, and verifies the
 `conc` and `concurrently` bin shims resolve to the native binary. It supports
-macOS x64/arm64 plus Linux GNU and Linux musl x64/arm64. Windows remains
-withheld until a Windows-native runner backend exists.
+macOS x64/arm64 plus Linux GNU and Linux musl x64/arm64.
+
+On Windows, the npm bin shim runs the pinned upstream `concurrently@9.2.1` CLI
+through the `concurrently-js` npm alias. That keeps Windows installs drop-in
+compatible while native Windows process supervision remains blocked by the
+current Eio Windows backend.
 
 The packed root npm package is intentionally lean: it contains the native
 launcher, package metadata, JavaScript API facade, README, and LICENSE only.
@@ -64,7 +68,7 @@ the install payload.
 Linux platform packages are libc-specific. glibc hosts install
 `linux-*-gnu`, while Alpine/musl hosts install `linux-*-musl` through npm's
 `libc` package selector (`glibc` or `musl`). Windows platform packages are
-intentionally withheld until a Windows runner backend exists.
+intentionally withheld until a Windows-native runner backend exists.
 
 ## Library Scope
 
@@ -74,11 +78,12 @@ module accepts structured commands with command-local `name`, `cwd`, `env`,
 `Command.t`/`Run_spec.t` model as the CLI, and runs through the explicit
 `Runner_backend.t` seam.
 
-The npm package keeps the CLI path native while re-exporting the pinned
-`concurrently@9.2.1` JavaScript programmatic API through the npm alias
-`concurrently-js`. This preserves the upstream `require()`/ESM API shape for
-users who install this package under the `concurrently` name while keeping npm
-script execution on the OCaml binary.
+The npm package keeps the CLI path native on Unix-like platforms while
+re-exporting the pinned `concurrently@9.2.1` JavaScript programmatic API
+through the npm alias `concurrently-js`. This preserves the upstream
+`require()`/ESM API shape for users who install this package under the
+`concurrently` name. Windows npm-script execution uses the same pinned upstream
+CLI until a native Windows runner backend exists.
 
 ## Implemented CLI Surface
 
