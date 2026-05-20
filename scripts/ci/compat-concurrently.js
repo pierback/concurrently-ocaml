@@ -2622,7 +2622,7 @@ function normalizeSignal(testCase, signal) {
 }
 
 function normalizeVersionStdout(stdout) {
-  return stdout.replace(/^\d+\.\d+\.\d+\n$/, "<version>\n");
+  return stdout.replace(/^\d+\.\d+\.\d+\r?\n$/, "<version>\n");
 }
 
 function normalizeNpmLogPaths(stdout) {
