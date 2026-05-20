@@ -38,7 +38,7 @@ behavior:
 Distribute npm packages as:
 
 - Root package: `@pierback/concurrently-ml`, containing the JS launcher,
-  upstream JavaScript CLI route for Windows, and optional dependencies.
+  JavaScript API facade, and optional native platform dependencies.
 - POSIX-compatible platform packages:
   - `@pierback/concurrently-ml-linux-x64-gnu`
   - `@pierback/concurrently-ml-linux-arm64-gnu`
@@ -66,10 +66,10 @@ minimum supported macOS version for the shipped Mach-O binary.
 
 Do not publish Windows native packages until there is a Windows-native backend.
 The current POSIX backend uses `/bin/sh`, POSIX process groups, and POSIX
-signals; those details must remain behind `Runner_backend.t`. Until native
-Windows process supervision exists, the root npm bin shim routes Windows hosts
-to the pinned upstream `concurrently@9.2.1` CLI already included through the
-`concurrently-js` npm alias.
+signals; those details must remain behind `Runner_backend.t`. The root npm bin
+shim must not route Windows hosts to the pinned upstream JavaScript CLI; during
+the native Windows backend work, Windows hosts should either resolve a native
+platform binary or fail with a missing native binary.
 
 ## Consequences
 
@@ -81,10 +81,10 @@ to the pinned upstream `concurrently@9.2.1` CLI already included through the
   leaking Unix assumptions into `Command` or `Run_policy`.
 - Alpine/musl users do not accidentally execute a glibc binary. They install
   and smoke the dedicated `linux-*-musl` package instead.
-- Windows drop-in npm-script behavior is supported through the pinned upstream
-  JavaScript CLI route. Native Windows package publication remains withheld
-  until it is explicit backend work, not accidental compatibility through shell
-  strings and POSIX signal names.
+- Windows drop-in npm-script behavior remains withheld until native backend
+  work ships. Compatibility must come from explicit Windows process supervision,
+  not accidental compatibility through upstream JavaScript, shell strings, or
+  POSIX signal names.
 
 ## References
 

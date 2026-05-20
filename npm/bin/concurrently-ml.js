@@ -2,7 +2,6 @@
 
 const { constants } = require("node:os");
 const { runNative } = require("../lib/native");
-const { runUpstreamCli } = require("../lib/upstream-cli");
 
 const signalExitCodes = new Map([
   ["SIGHUP", 129],
@@ -55,9 +54,5 @@ child.on("exit", (code, signal) => {
 });
 
 function runForPlatform(args) {
-  if (process.platform === "win32") {
-    return runUpstreamCli(args);
-  }
-
   return runNative(args);
 }

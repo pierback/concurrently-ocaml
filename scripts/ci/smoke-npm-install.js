@@ -131,7 +131,6 @@ try {
   assertFile(join(installedRootDir, "index.d.ts"));
   assertFile(join(installedRootDir, "index.d.mts"));
   assertFile(join(installedRootDir, "npm", "lib", "native.js"));
-  assertFile(join(installedRootDir, "npm", "lib", "upstream-cli.js"));
   assertNoPackedSourceTree(installedRootDir);
 
   const native = require(join(installedRootDir, "npm", "lib", "native.js"));
@@ -275,37 +274,6 @@ try {
     "programmatic ESM API smoke stdout"
   );
   assertEqual(esmApiSmoke.stderr, "", "programmatic ESM API smoke stderr");
-
-  const upstreamCli = require(join(
-    installedRootDir,
-    "npm",
-    "lib",
-    "upstream-cli.js"
-  ));
-  const upstreamCliPath = upstreamCli.resolveUpstreamCliPath();
-  assertFile(upstreamCliPath);
-  const upstreamCliSmoke = spawnSync(
-    process.execPath,
-    [upstreamCliPath, "--no-color", "node -e \"console.log('upstream-js')\""],
-    { cwd: projectDir, encoding: "utf8" }
-  );
-  if (upstreamCliSmoke.error) {
-    throw upstreamCliSmoke.error;
-  }
-  if (upstreamCliSmoke.status !== 0) {
-    throw new Error(
-      `upstream CLI smoke exited ${upstreamCliSmoke.status}\nstdout:\n${upstreamCliSmoke.stdout}\nstderr:\n${upstreamCliSmoke.stderr}`
-    );
-  }
-  if (
-    !upstreamCliSmoke.stdout.includes("[0] upstream-js\n") ||
-    !upstreamCliSmoke.stdout.includes("exited with code 0\n")
-  ) {
-    throw new Error(
-      `upstream CLI smoke produced unexpected stdout\nstdout:\n${upstreamCliSmoke.stdout}\nstderr:\n${upstreamCliSmoke.stderr}`
-    );
-  }
-  assertEqual(upstreamCliSmoke.stderr, "", "upstream CLI smoke stderr");
 
   const helpSmoke = spawnSync(binPath, ["-h"], {
     cwd: projectDir,
