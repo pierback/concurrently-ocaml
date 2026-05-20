@@ -5,9 +5,11 @@ type read_error =
 let max_line_bytes = 1_048_576
 let read_buffer_bytes = 16_384
 
-let emit_output_chunk ~emit_event ~command ~attempt ~process_id ~stream ~chunk =
+let emit_output_chunk ~emit_event ~command ~attempt ~process_id ~stream ~chunk
+    ~line_terminated =
   match
     Output_event.output_chunk ~command ~attempt ~process_id ~stream ~chunk
+      ~line_terminated
   with
   | Ok event -> (
       match emit_event event with
@@ -15,11 +17,6 @@ let emit_output_chunk ~emit_event ~command ~attempt ~process_id ~stream ~chunk =
       | exception exn ->
           Error (`Unexpected_runner_error (Printexc.to_string exn)))
   | Error error -> Error (`Output_event_error (Command.index command, error))
-
-let drop_trailing_cr chunk =
-  let length = String.length chunk in
-  if length > 0 && chunk.[length - 1] = '\r' then String.sub chunk 0 (length - 1)
-  else chunk
 
 let read_raw_output ~emit_event ~command ~attempt ~process_id ~stream source =
   let read_buffer = Cstruct.create read_buffer_bytes in
@@ -29,7 +26,7 @@ let read_raw_output ~emit_event ~command ~attempt ~process_id ~stream source =
         let chunk = Cstruct.to_string (Cstruct.sub read_buffer 0 bytes_read) in
         match
           emit_output_chunk ~emit_event ~command ~attempt ~process_id ~stream
-            ~chunk
+            ~chunk ~line_terminated:false
         with
         | Ok () -> read_chunks ()
         | Error _ as error -> error)
@@ -42,23 +39,23 @@ let read_line_output ~emit_event ~command ~attempt ~process_id ~stream source =
   let read_buffer = Cstruct.create read_buffer_bytes in
   let line_buffer = Buffer.create read_buffer_bytes in
   let line_was_split = ref false in
-  let emit_chunk chunk =
+  let emit_chunk ~line_terminated chunk =
     emit_output_chunk ~emit_event ~command ~attempt ~process_id ~stream ~chunk
+      ~line_terminated
   in
   let flush_buffer ?(line_end = false) () =
     let chunk = Buffer.contents line_buffer in
     Buffer.clear line_buffer;
-    let chunk = if line_end then drop_trailing_cr chunk else chunk in
-    emit_chunk chunk
+    emit_chunk ~line_terminated:line_end chunk
   in
   let flush_oversized_line_part () =
     line_was_split := true;
-    flush_buffer ()
+    flush_buffer ~line_end:false ()
   in
   let flush_line () =
     if Buffer.length line_buffer = 0 && !line_was_split then (
       line_was_split := false;
-      Ok ())
+      emit_chunk ~line_terminated:true "")
     else
       match flush_buffer ~line_end:true () with
       | Ok () ->
@@ -67,7 +64,12 @@ let read_line_output ~emit_event ~command ~attempt ~process_id ~stream source =
       | Error _ as error -> error
   in
   let flush_final_partial_line () =
-    if Buffer.length line_buffer = 0 then Ok () else flush_buffer ()
+    if Buffer.length line_buffer = 0 then Ok ()
+    else flush_buffer ~line_end:false ()
+  in
+  let flush_available_partial_line () =
+    if Buffer.length line_buffer = 0 then Ok ()
+    else flush_buffer ~line_end:false ()
   in
   let process_byte byte =
     if byte = '\n' then flush_line ()
@@ -93,7 +95,10 @@ let read_line_output ~emit_event ~command ~attempt ~process_id ~stream source =
     | bytes_read -> (
         let chunk = Cstruct.to_string (Cstruct.sub read_buffer 0 bytes_read) in
         match process_chunk chunk with
-        | Ok () -> read_chunks ()
+        | Ok () -> (
+            match flush_available_partial_line () with
+            | Ok () -> read_chunks ()
+            | Error _ as error -> error)
         | Error _ as error -> error)
     | exception End_of_file -> flush_final_partial_line ()
     | exception exn -> Error (`Unexpected_runner_error (Printexc.to_string exn))

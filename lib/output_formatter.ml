@@ -33,7 +33,13 @@ type output = {
 type create_error =
   [ `Label_count_mismatch of int * int | `Non_positive_command_count ]
 
-type pending_status_message = { command_index : int; output : output }
+type pending_status_message = {
+  command_index : int;
+  stream : Output_event.stream;
+  chunk : string;
+}
+type last_write = { command_index : int option; last_char : char }
+type output_chunk = { text : string; line_terminated : bool }
 
 type t = {
   now : unit -> float;
@@ -52,6 +58,7 @@ type t = {
   group_stopped : bool array;
   retry_pending : bool array;
   restart_message_pending : bool array;
+  last_write : last_write option ref;
   mutable next_group_command_index : int;
 }
 
@@ -104,6 +111,7 @@ let create ~now ~wall_now ~commands (options : options) =
           group_stopped = Array.make command_count false;
           retry_pending = Array.make command_count false;
           restart_message_pending = Array.make command_count false;
+          last_write = ref None;
           next_group_command_index = 0;
         }
 
@@ -220,31 +228,128 @@ let format_lines t ~wall_time ~command ~process_id ~chunks =
         (first_formatted_line ^ newline
         ^ String.concat "\n" rest_formatted_lines)
 
+let command_key command = Some (Command.index command)
+
+let replace_newlines_with_prefix prefix text =
+  let length = String.length text in
+  let buffer = Buffer.create (length + String.length prefix) in
+  for index = 0 to length - 1 do
+    let byte = text.[index] in
+    Buffer.add_char buffer byte;
+    if byte = '\n' && index + 1 < length then Buffer.add_string buffer prefix
+  done;
+  Buffer.contents buffer
+
+let last_char text =
+  let length = String.length text in
+  if length = 0 then None else Some text.[length - 1]
+
+let block_lines_of_chunks chunks =
+  let lines = ref [] in
+  let line_buffer = Buffer.create 128 in
+  let flush_line () =
+    lines := Buffer.contents line_buffer :: !lines;
+    Buffer.clear line_buffer
+  in
+  List.iter
+    (fun chunk ->
+      let length = String.length chunk.text in
+      for index = 0 to length - 1 do
+        let byte = chunk.text.[index] in
+        if byte = '\n' then flush_line () else Buffer.add_char line_buffer byte
+      done;
+      if chunk.line_terminated then flush_line ())
+    chunks;
+  if Buffer.length line_buffer > 0 then flush_line ();
+  List.rev !lines
+
+let format_log_output t ~stream ~command_index ~prefix ~text ~line_terminated =
+  let interrupted =
+    match !(t.last_write) with
+    | Some previous ->
+        previous.command_index <> command_index && previous.last_char <> '\n'
+    | None -> false
+  in
+  let needs_prefix =
+    interrupted
+    ||
+    match !(t.last_write) with
+    | None -> true
+    | Some previous -> previous.last_char = '\n'
+  in
+  let text = replace_newlines_with_prefix prefix text in
+  let text =
+    (if interrupted then "\n" else "")
+    ^ (if needs_prefix then prefix else "")
+    ^ text
+  in
+  let last_char =
+    if line_terminated then Some '\n'
+    else match last_char text with Some char -> Some char | None -> None
+  in
+  Option.iter
+    (fun last_char ->
+      t.last_write := Some { command_index; last_char })
+    last_char;
+  { stream; text; trailing_newline = line_terminated }
+
+let format_command_log_output t ~wall_time ~command ~process_id ~chunk =
+  let tag = label_for_command t ~wall_time ~process_id command in
+  let prefix_label =
+    match t.prefix_mode with
+    | Output_prefix.No_prefix -> ""
+    | _ -> prefix_label t command tag
+  in
+  let prefix = if prefix_label = "" then "" else prefix_label ^ " " in
+  let text =
+    if t.options.spacious then
+      match t.prefix_mode with
+      | Output_prefix.No_prefix -> "\n" ^ chunk.text
+      | _ -> Printf.sprintf "\n%s:\n%s%s" prefix_label prefix chunk.text
+    else chunk.text
+  in
+  format_log_output t ~stream:Output_event.Stdout
+    ~command_index:(command_key command)
+    ~prefix ~text ~line_terminated:chunk.line_terminated
+
 let formatted_output t ~wall_time ~command ~process_id ~stream ~chunks =
   if Command.raw command then
     List.map
-      (fun chunk -> { stream; text = chunk; trailing_newline = false })
+      (fun chunk ->
+        { stream; text = chunk.text; trailing_newline = chunk.line_terminated })
       chunks
   else
     let stream = Output_event.Stdout in
     if block_format t then
-      match format_lines t ~wall_time ~command ~process_id ~chunks with
+      match format_lines t ~wall_time ~command ~process_id
+              ~chunks:(block_lines_of_chunks chunks) with
       | None -> []
-      | Some text -> [ { stream; text; trailing_newline = true } ]
+      | Some text ->
+          let line_terminated =
+            match List.rev chunks with
+            | [] -> true
+            | last :: _ -> last.line_terminated
+          in
+          [
+            format_log_output t ~stream ~command_index:(command_key command)
+              ~prefix:"" ~text ~line_terminated;
+          ]
     else
       chunks
-      |> List.filter_map (fun chunk ->
-          match
-            format_lines t ~wall_time ~command ~process_id ~chunks:[ chunk ]
-          with
-          | None -> None
-          | Some text -> Some { stream; text; trailing_newline = true })
+      |> List.map (fun chunk ->
+          format_command_log_output t ~wall_time ~command ~process_id ~chunk)
 
 let formatted_buffered_output t ~command runs =
   runs
   |> List.concat_map (fun run ->
+      let chunks =
+        List.map
+          (fun (chunk : Output_buffer.output_chunk) ->
+            { text = chunk.text; line_terminated = chunk.line_terminated })
+          run.Output_buffer.chunks
+      in
       formatted_output t ~wall_time:run.Output_buffer.wall_time ~command
-        ~process_id:run.process_id ~stream:run.stream ~chunks:run.chunks)
+        ~process_id:run.process_id ~stream:run.stream ~chunks)
 
 let close_message command status =
   Printf.sprintf "%s exited with code %s" (Command.text command)
@@ -307,7 +412,13 @@ let flush_status_messages_after_command t command_index =
       !(t.pending_status_messages)
   in
   t.pending_status_messages := remaining;
-  matching |> List.rev |> List.map (fun pending -> pending.output)
+  matching
+  |> List.rev
+  |> List.concat_map (fun pending ->
+         [
+           format_log_output t ~stream:pending.stream ~command_index:None
+             ~prefix:"" ~text:pending.chunk ~line_terminated:true;
+         ])
 
 let flush_grouped_output t =
   let rec flush_ready outputs =
@@ -333,7 +444,7 @@ let flush_grouped_output t =
   in
   flush_ready []
 
-let handle_output_chunk t event process_id stream chunk =
+let handle_output_chunk t event process_id stream chunk line_terminated =
   match Output_event.command event with
   | None -> []
   | Some command ->
@@ -349,34 +460,52 @@ let handle_output_chunk t event process_id stream chunk =
           && command_index > t.next_group_command_index
         then (
           Output_buffer.append t.output_buffers ~command_index
-            { process_id; stream; wall_time; text = chunk };
+            { process_id; stream; wall_time; text = chunk; line_terminated };
           [])
         else
           flush_command_output t command
           @ formatted_output t ~wall_time ~command ~process_id ~stream
-              ~chunks:[ chunk ]
+              ~chunks:[ { text = chunk; line_terminated } ]
       else if not command_in_range then
         formatted_output t ~wall_time ~command ~process_id ~stream
-          ~chunks:[ chunk ]
+          ~chunks:[ { text = chunk; line_terminated } ]
       else if buffered_format t command_index then (
         Output_buffer.append t.output_buffers ~command_index
-          { process_id; stream; wall_time; text = chunk };
+          { process_id; stream; wall_time; text = chunk; line_terminated };
         [])
       else
         formatted_output t ~wall_time ~command ~process_id ~stream
-          ~chunks:[ chunk ]
+          ~chunks:[ { text = chunk; line_terminated } ]
 
 let handle_status_message t ~stream ~chunk ~after_command =
-  let output = { stream; text = chunk; trailing_newline = true } in
   match after_command with
-  | None -> if t.options.raw then [] else [ output ]
+  | None ->
+      if t.options.raw then []
+      else
+        [
+          format_log_output t ~stream ~command_index:None ~prefix:"" ~text:chunk
+            ~line_terminated:true;
+        ]
   | Some command ->
       if Command.raw command then []
       else (
         t.pending_status_messages :=
-          { command_index = Command.index command; output }
+          { command_index = Command.index command; stream; chunk }
           :: !(t.pending_status_messages);
         [])
+
+let command_event_chunk t command chunk =
+  let command_index = Command.index command in
+  let buffered_partial_line =
+    match Output_buffer.last_chunk t.output_buffers ~command_index with
+    | Some previous -> not previous.line_terminated
+    | None -> false
+  in
+  match !(t.last_write) with
+  | Some { command_index = previous; last_char }
+    when previous = command_key command && last_char <> '\n' ->
+      "\n" ^ chunk
+  | Some _ | None -> if buffered_partial_line then "\n" ^ chunk else chunk
 
 let handle_timing_command_event t event message =
   match Output_event.command event with
@@ -386,9 +515,10 @@ let handle_timing_command_event t event message =
         (not t.options.timings) || Command.raw command || Command.hidden command
       then []
       else
+        let message = command_event_chunk t command message in
         handle_output_chunk t event
           (Output_event.process_id event)
-          Output_event.Stdout message
+          Output_event.Stdout message true
 
 let handle_stopped_status t event status =
   match Output_event.command event with
@@ -396,10 +526,13 @@ let handle_stopped_status t event status =
   | Some command ->
       if Command.raw command || Command.hidden command then []
       else
-        let chunk = close_message command status |> reset_colorize t in
+        let chunk =
+          close_message command status |> reset_colorize t
+          |> command_event_chunk t command
+        in
         handle_output_chunk t event
           (Output_event.process_id event)
-          Output_event.Stdout chunk
+          Output_event.Stdout chunk true
 
 let handle_restart_message t event =
   match Output_event.command event with
@@ -407,10 +540,13 @@ let handle_restart_message t event =
   | Some command ->
       if Command.raw command || Command.hidden command then []
       else
-        let chunk = Printf.sprintf "%s restarted" (Command.text command) in
+        let chunk =
+          Printf.sprintf "%s restarted" (Command.text command)
+          |> command_event_chunk t command
+        in
         handle_output_chunk t event
           (Output_event.process_id event)
-          Output_event.Stdout chunk
+          Output_event.Stdout chunk true
 
 let command_in_range t command_index =
   command_index >= 0 && command_index < Array.length t.group_stopped
@@ -498,8 +634,9 @@ let handle_lifecycle t event lifecycle =
 
 let handle_event t event =
   match Output_event.payload event with
-  | Output_event.Output_chunk_payload { process_id; stream; chunk } ->
-      handle_output_chunk t event process_id stream chunk
+  | Output_event.Output_chunk_payload
+      { process_id; stream; chunk; line_terminated } ->
+      handle_output_chunk t event process_id stream chunk line_terminated
   | Output_event.Lifecycle_payload lifecycle ->
       handle_lifecycle t event lifecycle
   | Output_event.Status_message_payload { stream; chunk; after_command } ->

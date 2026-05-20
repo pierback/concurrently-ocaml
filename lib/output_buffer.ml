@@ -3,13 +3,16 @@ type chunk = {
   stream : Output_event.stream;
   wall_time : float;
   text : string;
+  line_terminated : bool;
 }
+
+type output_chunk = { text : string; line_terminated : bool }
 
 type run = {
   process_id : string option;
   stream : Output_event.stream;
   wall_time : float;
-  chunks : string list;
+  chunks : output_chunk list;
 }
 
 type command_buffer = { mutable chunks : chunk list }
@@ -32,6 +35,13 @@ let append t ~command_index chunk =
   let buffer = command_buffer t command_index in
   buffer.chunks <- chunk :: buffer.chunks
 
+let last_chunk t ~command_index =
+  assert (command_index >= 0);
+  match Hashtbl.find_opt t command_index with
+  | None -> None
+  | Some buffer -> (
+      match buffer.chunks with [] -> None | chunk :: _ -> Some chunk)
+
 let same_run ~displayed_process_id (left : chunk) (right : chunk) =
   displayed_process_id left.process_id = displayed_process_id right.process_id
   && left.stream = right.stream
@@ -40,12 +50,21 @@ let run_of_chunks (chunks : chunk list) =
   match chunks with
   | [] -> invalid_arg "Output_buffer.run_of_chunks: empty chunk list"
   | first :: _ ->
-      {
-        process_id = first.process_id;
-        stream = first.stream;
-        wall_time = first.wall_time;
-        chunks = List.map (fun chunk -> chunk.text) chunks;
-      }
+      ({
+         process_id = first.process_id;
+         stream = first.stream;
+         wall_time = first.wall_time;
+         chunks =
+           List.map
+             (fun (chunk : chunk) ->
+               ({
+                  text = chunk.text;
+                  line_terminated = chunk.line_terminated;
+                }
+                 : output_chunk))
+             chunks;
+       }
+        : run)
 
 let one_chunk_runs (chunks : chunk list) =
   List.map (fun chunk -> run_of_chunks [ chunk ]) chunks

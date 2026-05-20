@@ -236,6 +236,24 @@ const cases = [
     args: ["--no-color", "definitely-not-a-command-xyz"],
   },
   {
+    name: "partial stdout without newline",
+    upstream: "dist/src/logger.js lastWrite partial-line behavior",
+    args: ["--no-color", "node -e \"process.stdout.write('partial')\""],
+  },
+  {
+    name: "crlf stdout preserves carriage returns",
+    upstream: "dist/src/logger.js lastWrite line-ending behavior",
+    args: ["--no-color", "node -e \"process.stdout.write('a\\r\\nb\\r\\n')\""],
+  },
+  {
+    name: "mixed partial stdout stderr stays on one line",
+    upstream: "dist/src/logger.js lastWrite partial-line behavior",
+    args: [
+      "--no-color",
+      "node -e \"process.stdout.write('out');process.stderr.write('err')\"",
+    ],
+  },
+  {
     name: "raw suppresses close notification",
     upstream: "bin/concurrently.spec.ts does not log extra output with --raw",
     args: ["--no-color", "--raw", "printf one"],
@@ -1785,6 +1803,19 @@ const cases = [
     ],
     input: "hello\n",
     inputDelayMs: inputReadyDelayMs,
+  },
+  {
+    name: "unknown default input target logs after partial output",
+    upstream: "src/logger.js logGlobalEvent lastWrite handling",
+    args: [
+      "--no-color",
+      "-i",
+      "--default-input-target",
+      "missing",
+      "node -e \"process.stdout.write('partial'); setTimeout(()=>process.exit(0),2500)\"",
+    ],
+    input: "hello\n",
+    inputDelayMs: 1500,
   },
 ];
 

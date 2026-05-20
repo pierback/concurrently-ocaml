@@ -22,6 +22,7 @@ type t =
       ; process_id : string option
       ; stream : stream
       ; chunk : string
+      ; line_terminated : bool
       }
   | Lifecycle of
       { command : Command.t
@@ -44,6 +45,7 @@ type payload =
       { process_id : string option
       ; stream : stream
       ; chunk : string
+      ; line_terminated : bool
       }
   | Lifecycle_payload of lifecycle
   | Status_message_payload of
@@ -79,10 +81,13 @@ let validate_lifecycle ~attempt = function
     else Ok ()
   | Started | Stopping | Stopped | Stopped_with_status _ -> Ok ()
 
-let output_chunk ~command ~attempt ~process_id ~stream ~chunk =
+let output_chunk ~command ~attempt ~process_id ~stream ~chunk ~line_terminated =
   match validate_attempt attempt with
   | Error error -> Error error
-  | Ok () -> Ok (Output_chunk { command; attempt; process_id; stream; chunk })
+  | Ok () ->
+      Ok
+        (Output_chunk
+           { command; attempt; process_id; stream; chunk; line_terminated })
 
 let lifecycle_internal ~process_id ~command ~attempt ~lifecycle =
   match validate_attempt attempt with
@@ -116,8 +121,8 @@ let attempt = function
   | Status_message _ | Runtime_warning _ -> 0
 
 let payload = function
-  | Output_chunk { process_id; stream; chunk; _ } ->
-    Output_chunk_payload { process_id; stream; chunk }
+  | Output_chunk { process_id; stream; chunk; line_terminated; _ } ->
+      Output_chunk_payload { process_id; stream; chunk; line_terminated }
   | Lifecycle { lifecycle; _ } -> Lifecycle_payload lifecycle
   | Status_message { stream; chunk; after_command } ->
     Status_message_payload { stream; chunk; after_command }

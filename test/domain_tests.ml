@@ -366,29 +366,39 @@ let test_output_event_validation () =
   let event =
     ok
       (Output_event.output_chunk ~command ~attempt:0 ~process_id:None
-         ~stream:Output_event.Stdout ~chunk:"ready")
+         ~stream:Output_event.Stdout ~chunk:"ready" ~line_terminated:true)
   in
   assert (Output_event.command event = Some command);
   assert (Output_event.attempt event = 0);
   assert (
     Output_event.payload event
     = Output_event.Output_chunk_payload
-        { process_id = None; stream = Output_event.Stdout; chunk = "ready" });
+        {
+          process_id = None;
+          stream = Output_event.Stdout;
+          chunk = "ready";
+          line_terminated = true;
+        });
   let pid_event =
     ok
       (Output_event.output_chunk ~command ~attempt:0 ~process_id:(Some "12345")
-         ~stream:Output_event.Stdout ~chunk:"ready")
+         ~stream:Output_event.Stdout ~chunk:"ready" ~line_terminated:true)
   in
   assert (Output_event.process_id pid_event = Some "12345");
   let blank_event =
     ok
       (Output_event.output_chunk ~command ~attempt:0 ~process_id:None
-         ~stream:Output_event.Stderr ~chunk:"")
+         ~stream:Output_event.Stderr ~chunk:"" ~line_terminated:true)
   in
   assert (
     Output_event.payload blank_event
     = Output_event.Output_chunk_payload
-        { process_id = None; stream = Output_event.Stderr; chunk = "" });
+        {
+          process_id = None;
+          stream = Output_event.Stderr;
+          chunk = "";
+          line_terminated = true;
+        });
   let status_event =
     Output_event.status_message ~after_command:None ~stream:Output_event.Stdout
       ~chunk:"--> Sending SIGTERM to other processes.."
@@ -450,8 +460,10 @@ let output_texts outputs =
 let output_streams outputs =
   List.map (fun output -> output.Output_formatter.stream) outputs
 
-let output_event ?process_id command stream chunk =
-  ok (Output_event.output_chunk ~command ~attempt:0 ~process_id ~stream ~chunk)
+let output_event ?process_id ?(line_terminated = true) command stream chunk =
+  ok
+    (Output_event.output_chunk ~command ~attempt:0 ~process_id ~stream ~chunk
+       ~line_terminated)
 
 let lifecycle_event ?process_id ?(attempt = 0) command lifecycle =
   match process_id with
@@ -497,6 +509,110 @@ let test_output_formatter_streams_unbuffered_output () =
   in
   assert (output_texts stderr_outputs = [ "[0] failed" ]);
   assert (output_streams stderr_outputs = [ Output_event.Stdout ])
+
+let test_output_formatter_preserves_partial_line_state () =
+  let command = command 0 "node -e partial" in
+  let formatter = ok (create_formatter [ command ]) in
+  let stdout_outputs =
+    Output_formatter.handle_event formatter
+      (output_event ~line_terminated:false command Output_event.Stdout "out")
+  in
+  assert (output_texts stdout_outputs = [ "[0] out" ]);
+  assert (
+    List.map
+      (fun output -> output.Output_formatter.trailing_newline)
+      stdout_outputs
+    = [ false ]);
+  let stderr_outputs =
+    Output_formatter.handle_event formatter
+      (output_event ~line_terminated:false command Output_event.Stderr "err")
+  in
+  assert (output_texts stderr_outputs = [ "err" ]);
+  assert (
+    List.map
+      (fun output -> output.Output_formatter.trailing_newline)
+      stderr_outputs
+    = [ false ]);
+  assert (
+    Output_formatter.handle_event formatter (stopped_with_status command)
+    |> output_texts
+    = [ "\n[0] node -e partial exited with code 0" ])
+
+let test_output_formatter_separates_global_status_after_partial_line () =
+  let command = command 0 "node -e partial" in
+  let formatter = ok (create_formatter [ command ]) in
+  assert (
+    Output_formatter.handle_event formatter
+      (output_event ~line_terminated:false command Output_event.Stdout
+         "partial")
+    |> output_texts
+    = [ "[0] partial" ]);
+  assert (
+    Output_formatter.handle_event formatter
+      (status_message Output_event.Stdout
+         "--> Unable to find command \"missing\", or it has no stdin open\n--> ")
+    |> output_texts
+    = [
+        "\n\
+         --> Unable to find command \"missing\", or it has no stdin open\n\
+         --> ";
+      ]);
+  assert (
+    Output_formatter.handle_event formatter (stopped_with_status command)
+    |> output_texts
+    = [ "[0] node -e partial exited with code 0" ])
+
+let test_output_formatter_separates_grouped_partial_close_status () =
+  let blocker = command 0 "sleep" in
+  let command = command 1 "printf fast" in
+  let formatter = ok (create_formatter ~group:true [ blocker; command ]) in
+  assert (
+    Output_formatter.handle_event formatter
+      (output_event ~line_terminated:false command Output_event.Stdout "fast")
+    = []);
+  assert (
+    Output_formatter.handle_event formatter (stopped_with_status command) = []);
+  assert (
+    Output_formatter.handle_event formatter (stopped_with_status blocker)
+    |> output_texts
+    = [
+        "[0] sleep exited with code 0";
+        "[1] fast";
+        "\n[1] printf fast exited with code 0";
+      ])
+
+let test_output_formatter_spacious_preserves_partial_chunks () =
+  let command = command 0 "printf partial" in
+  let formatter = ok (create_formatter ~spacious:true [ command ]) in
+  assert (
+    Output_formatter.handle_event formatter
+      (output_event ~line_terminated:false command Output_event.Stdout "part")
+    = []);
+  assert (
+    Output_formatter.handle_event formatter
+      (output_event ~line_terminated:false command Output_event.Stdout "ial")
+    = []);
+  assert (
+    Output_formatter.handle_event formatter (stopped_with_status command)
+    |> output_texts |> String.concat "\n"
+    = "\n\
+       [0]:\n\
+       [0] partial\n\
+       [0] printf partial exited with code 0")
+
+let test_output_formatter_preserves_crlf_lines () =
+  let command = command 0 "printf crlf" in
+  let formatter = ok (create_formatter [ command ]) in
+  let outputs =
+    Output_formatter.handle_event formatter
+      (output_event command Output_event.Stdout "a\r")
+  in
+  assert (output_texts outputs = [ "[0] a\r" ]);
+  assert (
+    List.map
+      (fun output -> output.Output_formatter.trailing_newline)
+      outputs
+    = [ true ])
 
 let test_output_formatter_prints_close_status () =
   let command = command 0 "printf ok" in
@@ -1253,7 +1369,8 @@ let test_output_formatter_streams_teardown_output_outside_group () =
   in
   let outputs =
     Output_formatter.handle_event formatter
-      (output_event teardown_command Output_event.Stdout "clean")
+      (output_event ~line_terminated:false teardown_command Output_event.Stdout
+         "clean")
   in
   assert (output_texts outputs = [ "clean" ]);
   assert (
@@ -1269,7 +1386,7 @@ let test_output_formatter_raw_and_hidden_commands () =
   let formatter = ok (create_formatter [ raw_command; hidden_command ]) in
   let raw_outputs =
     Output_formatter.handle_event formatter
-      (output_event raw_command Output_event.Stderr "raw")
+      (output_event ~line_terminated:false raw_command Output_event.Stderr "raw")
   in
   assert (output_texts raw_outputs = [ "raw" ]);
   assert (output_streams raw_outputs = [ Output_event.Stderr ]);
@@ -3807,6 +3924,11 @@ let () =
   test_output_event_validation ();
   test_output_formatter_validation ();
   test_output_formatter_streams_unbuffered_output ();
+  test_output_formatter_preserves_partial_line_state ();
+  test_output_formatter_separates_global_status_after_partial_line ();
+  test_output_formatter_separates_grouped_partial_close_status ();
+  test_output_formatter_spacious_preserves_partial_chunks ();
+  test_output_formatter_preserves_crlf_lines ();
   test_output_formatter_prints_close_status ();
   test_output_formatter_prints_run_status_messages ();
   test_output_formatter_prints_restart_after_close_status ();
