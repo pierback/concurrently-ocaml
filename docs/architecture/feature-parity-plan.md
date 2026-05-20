@@ -20,11 +20,11 @@ The target is not a thin CLI wrapper. The library should own the core run model,
 and the executable should only parse CLI input, call the library, and translate
 the final run result to a process exit code.
 
-The JavaScript programmatic API from npm `concurrently` is an explicit
-non-goal. This package should not ship CommonJS or ESM import entrypoints,
-command observables, Node IPC shims, or custom JavaScript spawn/kill hooks.
-JavaScript is limited to npm install, launcher, packaging, and compatibility
-test glue.
+The JavaScript programmatic API from npm `concurrently` is preserved by
+re-exporting pinned upstream `concurrently@9.2.1` through an npm alias. The CLI
+path remains native OCaml; JavaScript importers receive the upstream
+CommonJS/ESM entrypoints, command observables, Node IPC shims, and custom
+JavaScript spawn/kill hooks.
 
 The core domain model must stay OS-neutral. Process supervision is a backend
 concern: Unix-like runners and Windows runners should share the same
@@ -63,15 +63,19 @@ signal, process-tree teardown, and pipe implementations.
 - The npm launcher prefers the local Dune binary inside a source checkout and
   prefers optional native platform packages from installed package roots. The
   root npm package exposes npm-compatible `concurrently` and `conc` binary
-  aliases plus the project-specific `concml` alias.
+  aliases plus the project-specific `concml` alias, and the package import
+  entrypoints re-export pinned upstream `concurrently@9.2.1` as a compatibility
+  facade for JavaScript callers.
 - GitHub Actions now includes a native package matrix for Linux GNU x64/arm64
   and macOS x64/arm64. Each native package job now packs the platform package and
   root package into a clean npm project, verifies that the root tarball did not
   leak OCaml source/build/test files, asserts that the installed launcher
   resolves the optional platform package's native binary, verifies the platform
-  package `SHA256SUMS` manifest against the installed native binary, and runs
-  `conc`/`concurrently` from that install. Windows packaging is deliberately
-  withheld until a Windows-native runner backend exists.
+  package `SHA256SUMS` manifest against the installed native binary, installs
+  the root tarball under the public `concurrently` alias, verifies CommonJS and
+  ESM programmatic imports, and runs `conc`/`concurrently` from that install.
+  Windows packaging is deliberately withheld until a Windows-native runner
+  backend exists.
 - `npm run perf:concurrently` provides repeatable native-vs-pinned-npm timing
   evidence for startup/version output, many short commands, and streaming
   output. The harness validates both CLIs on the same bounded workloads and
@@ -358,7 +362,8 @@ Known divergences and deferred scope:
 | Timing table row order for runtime-dependent signal durations | npm sorts the timing table by measured duration. When one command is killed after another exits, relative durations can legitimately differ by runtime and platform. | Kill-on-fail and success-triggered kill timing now match npm under normalized timestamps, durations, and duration-derived table row order. This is intentionally normalized compatibility evidence rather than byte-stable output, because the upstream sort key is runtime duration. |
 | Shell job-control diagnostics for trapped shell children | For shell commands such as `trap 'exit 129' HUP; sleep 1`, npm's process-tree kill path can race between surfacing and omitting shell diagnostics like `Hangup: 1` or `Terminated: 15` before the command close notification. | The native POSIX backend signals the process group directly to bound descendants. Deterministic close status and lifecycle output match upstream; shell-emitted job-control diagnostics are normalized in targeted evidence because upstream output is runtime-dependent. |
 | Unsupported kill-signal stderr when used | Upstream forwards the exact `--kill-signal` string to Node/tree-kill. Bare aliases such as `TERM`/`HUP`, and unsupported names such as `SIGFOO`, print a partial shutdown log and then throw Node's `ERR_UNKNOWN_SIGNAL` stack when used. | The native CLI now matches the exit status, shutdown status line text, and `ERR_UNKNOWN_SIGNAL` headline for deterministic unsupported values. It still does not reproduce Node's environment-specific stack frames. |
-| JavaScript programmatic API | Upstream `concurrently()` can be imported from JavaScript. | Explicit non-goal for this project. CLI parity for `concurrently`/`conc` in package scripts is the product surface; npm package JavaScript remains launcher and install glue only. |
+| JavaScript programmatic API | Upstream `concurrently()` can be imported from JavaScript. | The npm package now ships CommonJS/ESM/type entrypoints that re-export pinned upstream `concurrently@9.2.1` through the `concurrently-js` npm alias. Programmatic callers get the upstream JS API; npm-script callers use the native OCaml bin. |
+| Linux musl packaging | Upstream runs on Alpine/musl through Node. | Musl package names are reserved by the launcher contract, but musl packages remain withheld until a real musl/static native build target and smoke job exist. |
 | Windows backend | Upstream supports Windows process semantics. | Windows npm packages are withheld until a Windows-native runner backend exists. |
 
 ## Current Verification Snapshot

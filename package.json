@@ -1,9 +1,28 @@
 {
   "name": "@pierback/concurrently-ml",
-  "version": "0.0.13",
+  "version": "0.0.14",
   "description": "Native OCaml CLI binary targeting feature parity with npm concurrently",
   "type": "commonjs",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./index.d.mts",
+        "default": "./index.mjs"
+      },
+      "require": {
+        "types": "./index.d.ts",
+        "default": "./index.js"
+      }
+    },
+    "./package.json": "./package.json"
+  },
   "files": [
+    "index.js",
+    "index.mjs",
+    "index.d.ts",
+    "index.d.mts",
     "npm/bin/",
     "npm/lib/",
     "README.md",
@@ -34,11 +53,14 @@
   ],
   "author": "Franz Pieringer",
   "license": "MIT",
+  "dependencies": {
+    "concurrently-js": "npm:concurrently@9.2.1"
+  },
   "optionalDependencies": {
-    "@pierback/concurrently-ml-darwin-arm64": "0.0.13",
-    "@pierback/concurrently-ml-darwin-x64": "0.0.13",
-    "@pierback/concurrently-ml-linux-arm64-gnu": "0.0.13",
-    "@pierback/concurrently-ml-linux-x64-gnu": "0.0.13"
+    "@pierback/concurrently-ml-darwin-arm64": "0.0.14",
+    "@pierback/concurrently-ml-darwin-x64": "0.0.14",
+    "@pierback/concurrently-ml-linux-arm64-gnu": "0.0.14",
+    "@pierback/concurrently-ml-linux-x64-gnu": "0.0.14"
   },
   "directories": {
     "doc": "docs",

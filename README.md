@@ -39,16 +39,27 @@ platform packages containing native `concurrently-ml` binaries. During local
 development the launcher can also fall back to `_build/default/bin/main.exe`
 after `npm run compile`.
 
+For drop-in npm-script usage, install this package under the public
+`concurrently` package name:
+
+```sh
+npm install --save-dev concurrently@npm:@pierback/concurrently-ml
+```
+
+That keeps existing `concurrently`/`conc` package scripts and
+`require("concurrently")` imports pointed at this package.
+
 `npm run smoke:npm-install:host` packages the current host binary, installs the
 root package plus matching platform package into a clean temporary npm project,
-and verifies the `conc` and `concurrently` bin shims resolve to the native
-binary. It currently supports macOS x64/arm64 and Linux GNU x64/arm64; musl and
-Windows remain withheld until real build/backend targets exist.
+installs the root package under the `concurrently` alias, and verifies the
+`conc` and `concurrently` bin shims resolve to the native binary. It currently
+supports macOS x64/arm64 and Linux GNU x64/arm64; musl and Windows remain
+withheld until real build/backend targets exist.
 
-The packed root npm package is intentionally lean: it contains the launcher,
-package metadata, README, and LICENSE only. It does not expose a JavaScript
-programmatic API. OCaml source, Dune/opam metadata, tests, and development
-scripts stay out of the install payload.
+The packed root npm package is intentionally lean: it contains the native
+launcher, package metadata, JavaScript API facade, README, and LICENSE only.
+OCaml source, Dune/opam metadata, tests, and development scripts stay out of
+the install payload.
 
 Windows platform packages are intentionally withheld until a Windows runner
 backend exists.
@@ -61,8 +72,11 @@ module accepts structured commands with command-local `name`, `cwd`, `env`,
 `Command.t`/`Run_spec.t` model as the CLI, and runs through the explicit
 `Runner_backend.t` seam.
 
-The npm package is binary-only by design. JavaScript in this repository is
-limited to install, launcher, packaging, and test glue.
+The npm package keeps the CLI path native while re-exporting the pinned
+`concurrently@9.2.1` JavaScript programmatic API through the npm alias
+`concurrently-js`. This preserves the upstream `require()`/ESM API shape for
+users who install this package under the `concurrently` name while keeping npm
+script execution on the OCaml binary.
 
 ## Implemented CLI Surface
 
