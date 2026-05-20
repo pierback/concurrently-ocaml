@@ -32,6 +32,8 @@ concern: Unix-like runners and Windows runners should share the same
 signal, process-tree teardown, and pipe implementations.
 The POSIX backend is now packaged as `concurrentlyocaml_posix`, keeping
 `eio_posix` and POSIX C stubs out of the OS-neutral core library.
+The Windows backend is packaged as `concurrentlyocaml_windows`, using native
+Win32 process creation, stdio handle inheritance, and job-object teardown.
 
 ## Current State
 
@@ -50,6 +52,12 @@ The POSIX backend is now packaged as `concurrentlyocaml_posix`, keeping
   signalling, and close-status mapping. Runner backend-boundary tests cover
   spawn exceptions, retry after spawn failure, and teardown spawn failure
   isolation.
+- `lib/windows_runner_backend.ml` owns Windows shell selection, `cmd.exe`
+  command-line construction, Eio pipe handoff, inherited stdio handles,
+  `CreateProcessW`, process identity exposure, process exit-code mapping, and
+  Win32 job-object termination. The companion C stubs create the shell process
+  suspended, assign it to a job object before resuming it, and terminate the job
+  for runner cancellation.
 - The blocking `Unix.open_process_full` / `Unix.fork` / `Unix.waitpid`
   orchestration has been removed from the executable.
 - Output now flows through structured `Output_event.t` callbacks as bounded
@@ -69,21 +77,22 @@ The POSIX backend is now packaged as `concurrentlyocaml_posix`, keeping
   aliases plus the project-specific `concml` alias, and the package import
   entrypoints re-export pinned upstream `concurrently@9.2.1` as a compatibility
   facade for JavaScript callers. Windows npm-script execution no longer routes
-  to the pinned upstream CLI; native Windows package publication is withheld
-  until `Runner_backend.t` has a Windows process-tree implementation.
+  to the pinned upstream CLI; it uses the native Windows runner backend.
 - GitHub Actions now includes native package jobs for Linux GNU x64/arm64,
-  Linux musl x64/arm64, and macOS x64/arm64. Each native package job now packs
-  the platform package and root package into a clean npm project, verifies that
-  the root tarball did not leak OCaml source/build/test files, asserts that the
-  installed launcher resolves the optional platform package's native binary,
-  verifies the platform package `SHA256SUMS` manifest against the installed
-  native binary, installs the root tarball under the public `concurrently`
-  alias, verifies CommonJS and ESM programmatic imports, audits the packed root
-  package's `bin` aliases, `exports` condition shape, and runtime export keys
-  against pinned
-  `concurrently@9.2.1`, and runs `conc`/`concurrently` from that install.
-  Windows native package publication is deliberately withheld until a
-  Windows-native runner backend exists.
+  Linux musl x64/arm64, macOS x64/arm64, and Windows x64/arm64. Each native
+  package job now packs the platform package and root package into a clean npm
+  project, verifies that the root tarball did not leak OCaml source/build/test
+  files, asserts that the installed launcher resolves the optional platform
+  package's native binary, verifies the platform package `SHA256SUMS` manifest
+  against the installed native binary, installs the root tarball under the
+  public `concurrently` alias, verifies CommonJS and ESM programmatic imports,
+  audits the packed root package's `bin` aliases, `exports` condition shape,
+  and runtime export keys against pinned `concurrently@9.2.1`, and runs
+  `conc`/`concurrently` from that install. Windows package jobs also run the
+  pinned compatibility harness with Windows-specific command fixtures and a
+  native smoke that checks cwd/env propagation, stdout/stderr capture, stdin
+  forwarding, exit-code mapping, and job-object cleanup of a spawned
+  descendant.
 - `npm run perf:concurrently` provides repeatable native-vs-pinned-npm timing
   evidence for startup/version output, many short commands, and streaming
   output. The harness validates both CLIs on the same bounded workloads and
@@ -370,9 +379,9 @@ Known divergences and deferred scope:
 | Timing table row order for runtime-dependent signal durations | npm sorts the timing table by measured duration. When one command is killed after another exits, relative durations can legitimately differ by runtime and platform. | Kill-on-fail and success-triggered kill timing now match npm under normalized timestamps, durations, and duration-derived table row order. This is intentionally normalized compatibility evidence rather than byte-stable output, because the upstream sort key is runtime duration. |
 | Shell job-control diagnostics for trapped shell children | For shell commands such as `trap 'exit 129' HUP; sleep 1`, npm's process-tree kill path can race between surfacing and omitting shell diagnostics like `Hangup: 1` or `Terminated: 15` before the command close notification. Trap cleanup output emitted while the shell is being torn down can also appear or disappear by runtime timing. | The native POSIX backend signals the process group directly to bound descendants. Deterministic close status and lifecycle output match upstream; shell-emitted job-control diagnostics and signal-trap cleanup output are normalized in targeted evidence because upstream output is runtime-dependent. |
 | Unsupported kill-signal stderr when used | Upstream forwards the exact `--kill-signal` string to Node/tree-kill. Bare aliases such as `TERM`/`HUP`, and unsupported names such as `SIGFOO`, print a partial shutdown log and then throw Node's `ERR_UNKNOWN_SIGNAL` stack when used. | The native CLI now matches the exit status, shutdown status line text, and `ERR_UNKNOWN_SIGNAL` headline for deterministic unsupported values. It still does not reproduce Node's environment-specific stack frames. |
-| JavaScript programmatic API | Upstream `concurrently()` can be imported from JavaScript. | The npm package now ships CommonJS/ESM/type entrypoints that re-export pinned upstream `concurrently@9.2.1` through the `concurrently-js` npm alias. Programmatic callers get the upstream JS API; Unix-like npm-script callers use the native OCaml bin. |
+| JavaScript programmatic API | Upstream `concurrently()` can be imported from JavaScript. | The npm package now ships CommonJS/ESM/type entrypoints that re-export pinned upstream `concurrently@9.2.1` through the `concurrently-js` npm alias. Programmatic callers get the upstream JS API; npm-script callers use the native OCaml bin. |
 | Linux musl packaging | Upstream runs on Alpine/musl through Node. | Linux musl packages are built and smoke-installed on Alpine through npm's `libc` package selector. |
-| Windows backend | Upstream supports Windows process semantics. | Windows npm-script callers no longer fall back to the pinned upstream JavaScript CLI. Native Windows npm packages remain withheld until `Runner_backend.t` has a Windows process-tree implementation. |
+| Windows backend | Upstream supports Windows process semantics. | Windows npm-script callers no longer fall back to the pinned upstream JavaScript CLI. The native Windows backend uses `CreateProcessW`, inherited stdio handles, exit-code mapping, and job-object process-tree termination. Windows x64/arm64 package smoke gates are wired in CI, including a Windows-selected pinned compatibility harness and native process-tree cleanup smoke. Full compatibility parity still needs the first Windows CI run results and any follow-up fixtures they expose. |
 
 ## Current Verification Snapshot
 
@@ -579,9 +588,9 @@ As of May 20, 2026, the current `master` worktree has the following local proof:
    parity requires ready-to-run native binaries or platform-specific binary
    packages so `conc` works immediately after npm install.
 
-   Status: complete for supported Unix-like package targets currently shipped
-   by CI. The root package now declares optional platform
-   packages for Linux GNU, Linux musl, and macOS targets, exposes
+   Status: complete for native package targets currently shipped by CI. The
+   root package now declares optional platform packages for Linux GNU, Linux
+   musl, macOS, and Windows targets, exposes
    `concurrently`, `conc`, and `concml` npm binaries, and the launcher resolves
    the matching native package before falling back to a local development build.
    The Linux resolver is libc-aware: glibc hosts select `linux-*-gnu` packages,
@@ -594,17 +603,18 @@ As of May 20, 2026, the current `master` worktree has the following local proof:
    binary, and the npm install smoke test verifies the manifest before running
    the installed CLI. `npm run smoke:npm-install:host` packages the current host
    binary and runs the same install proof locally for supported macOS, Linux
-   GNU, and Linux musl hosts.
+   GNU, Linux musl, and Windows hosts.
    GitHub Actions builds platform packages, smoke-installs the packed root and
    platform package into a clean npm project, asserts the lean root package
    surface, asserts that the installed launcher resolves the optional platform
    package's native binary, verifies the platform package checksum manifest,
    executes both `conc` and `concurrently` through the installed npm bin shims,
    audits the packed npm API surface against pinned `concurrently@9.2.1`, and
-   publishes packages on version tags with npm provenance. Windows native
-   packaging is withheld until a Windows backend exists.
-   Deferred distribution scope: implement then package native Windows runner
-   behavior.
+   publishes packages on version tags with npm provenance. Windows jobs also
+   run `npm run compat:concurrently` with Windows command fixtures and
+   `npm run smoke:windows-native` against the local binary before packaging.
+   Deferred distribution scope: prove the Windows backend against the broader
+   compatibility suite on Windows CI.
 
 10. Platform backend split
 
@@ -674,4 +684,5 @@ reported ratios on the target build hosts. Recorded sample runs live in
 
 ## Open Questions
 
-- Which Windows process-tree and shell strategy should the future backend use?
+- Which additional Windows-only command parsing and console-control cases need
+  targeted parity fixtures after the first CI run?

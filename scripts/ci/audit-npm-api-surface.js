@@ -210,7 +210,7 @@ function npmPack(path, destination) {
 
 function npmRun(args, cwd) {
   const npm = process.platform === "win32" ? "npm.cmd" : "npm";
-  const result = spawnSync(npm, args, {
+  const result = spawnFileSync(npm, args, {
     cwd,
     encoding: "utf8",
     env: { ...process.env, npm_config_cache: npmCacheDir },
@@ -225,6 +225,17 @@ function npmRun(args, cwd) {
     );
   }
   return result;
+}
+
+function spawnFileSync(command, args, options) {
+  return spawnSync(command, args, {
+    ...options,
+    shell: windowsCommandScript(command),
+  });
+}
+
+function windowsCommandScript(command) {
+  return process.platform === "win32" && command.toLowerCase().endsWith(".cmd");
 }
 
 function readJson(path) {

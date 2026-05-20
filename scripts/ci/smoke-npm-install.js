@@ -140,7 +140,8 @@ try {
     "native resolver binary path"
   );
 
-  const smoke = spawnSync(binPath, ["--no-color", "printf smoke"], {
+  const smokeCommand = platformCommand("smoke");
+  const smoke = spawnFileSync(binPath, ["--no-color", smokeCommand], {
     cwd: projectDir,
     encoding: "utf8",
   });
@@ -152,16 +153,13 @@ try {
       `conc smoke exited ${smoke.status}\nstdout:\n${smoke.stdout}\nstderr:\n${smoke.stderr}`
     );
   }
-  assertEqual(
-    smoke.stdout,
-    "[0] smoke\n[0] printf smoke exited with code 0\n",
-    "conc smoke stdout"
-  );
+  assertSmokeOutput(smoke.stdout, "smoke", smokeCommand, "conc smoke stdout");
   assertEqual(smoke.stderr, "", "conc smoke stderr");
 
-  const concurrentlySmoke = spawnSync(
+  const concurrentlyCommand = platformCommand("concurrently");
+  const concurrentlySmoke = spawnFileSync(
     concurrentlyBinPath,
-    ["--no-color", "printf concurrently"],
+    ["--no-color", concurrentlyCommand],
     {
       cwd: projectDir,
       encoding: "utf8",
@@ -175,14 +173,15 @@ try {
       `concurrently smoke exited ${concurrentlySmoke.status}\nstdout:\n${concurrentlySmoke.stdout}\nstderr:\n${concurrentlySmoke.stderr}`
     );
   }
-  assertEqual(
+  assertSmokeOutput(
     concurrentlySmoke.stdout,
-    "[0] concurrently\n[0] printf concurrently exited with code 0\n",
+    "concurrently",
+    concurrentlyCommand,
     "concurrently smoke stdout"
   );
   assertEqual(concurrentlySmoke.stderr, "", "concurrently smoke stderr");
 
-  const versionSmoke = spawnSync(binPath, ["--version"], {
+  const versionSmoke = spawnFileSync(binPath, ["--version"], {
     cwd: projectDir,
     encoding: "utf8",
   });
@@ -275,7 +274,7 @@ try {
   );
   assertEqual(esmApiSmoke.stderr, "", "programmatic ESM API smoke stderr");
 
-  const helpSmoke = spawnSync(binPath, ["-h"], {
+  const helpSmoke = spawnFileSync(binPath, ["-h"], {
     cwd: projectDir,
     encoding: "utf8",
   });
@@ -293,7 +292,7 @@ try {
     );
   }
 
-  const concurrentlyHelpSmoke = spawnSync(concurrentlyBinPath, ["--help"], {
+  const concurrentlyHelpSmoke = spawnFileSync(concurrentlyBinPath, ["--help"], {
     cwd: projectDir,
     encoding: "utf8",
   });
@@ -344,6 +343,9 @@ function assertNoFile(path) {
 }
 
 function assertExecutable(path) {
+  if (process.platform === "win32") {
+    return;
+  }
   const mode = statSync(path).mode;
   if ((mode & 0o111) === 0) {
     throw new Error(`expected executable file mode: ${path}`);
@@ -365,6 +367,24 @@ function assertEqual(actual, expected, label) {
   if (actual !== expected) {
     throw new Error(`${label}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
   }
+}
+
+function assertSmokeOutput(actual, label, command, context) {
+  const expectedOutput = `[0] ${label}\n`;
+  const expectedClose = `[0] ${command} exited with code 0\n`;
+  const expected = expectedOutput + expectedClose;
+  if (actual !== expected) {
+    throw new Error(
+      `${context}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`
+    );
+  }
+}
+
+function platformCommand(label) {
+  if (process.platform === "win32") {
+    return `node -e "console.log('${label}')"`;
+  }
+  return `printf ${label}`;
 }
 
 function assertArrayEqual(actual, expected, label) {
@@ -445,7 +465,7 @@ function npmPack(path, destination) {
 
 function npmRun(args, cwd) {
   const npm = process.platform === "win32" ? "npm.cmd" : "npm";
-  const result = spawnSync(npm, args, {
+  const result = spawnFileSync(npm, args, {
     cwd,
     encoding: "utf8",
     env: { ...process.env, npm_config_cache: npmCacheDir },
@@ -460,4 +480,15 @@ function npmRun(args, cwd) {
     );
   }
   return result;
+}
+
+function spawnFileSync(command, args, options) {
+  return spawnSync(command, args, {
+    ...options,
+    shell: windowsCommandScript(command),
+  });
+}
+
+function windowsCommandScript(command) {
+  return process.platform === "win32" && command.toLowerCase().endsWith(".cmd");
 }

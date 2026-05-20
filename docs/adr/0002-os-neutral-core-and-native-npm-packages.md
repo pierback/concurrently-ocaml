@@ -15,9 +15,10 @@ process-group and signal behavior. Windows needs a different process tree and
 console-control strategy. The domain model should not encode either strategy.
 
 GitHub-hosted runner labels are available for Linux x64/arm64, macOS x64/arm64,
-and Windows x64. The 2026 GitHub-hosted runner reference lists Linux arm64
-labels such as `ubuntu-24.04-arm`, macOS arm64 labels including `macos-26`, and
-Windows x64 labels including `windows-latest`.
+and Windows x64/arm64. The 2026 GitHub-hosted runner reference lists Linux
+arm64 labels such as `ubuntu-24.04-arm`, macOS arm64 labels including
+`macos-26`, Windows x64 labels including `windows-latest`, and Windows arm64
+labels including `windows-11-arm`.
 
 ## Decision
 
@@ -37,6 +38,8 @@ behavior:
   library remains the OS-neutral CLI/domain model and runner orchestration.
 - Windows implementations must use Windows-native process tree teardown instead
   of pretending POSIX signals are portable.
+- The Windows backend uses `cmd.exe /d /s /c` for shell command execution and a
+  Win32 job object to terminate the shell process tree.
 
 Distribute npm packages as:
 
@@ -49,6 +52,8 @@ Distribute npm packages as:
   - `@pierback/concurrently-ml-linux-arm64-musl`
   - `@pierback/concurrently-ml-darwin-x64`
   - `@pierback/concurrently-ml-darwin-arm64`
+  - `@pierback/concurrently-ml-win32-x64`
+  - `@pierback/concurrently-ml-win32-arm64`
 
 Each platform package contains exactly one native binary under `bin/`. The root
 launcher resolves the matching optional dependency first when run from an
@@ -60,19 +65,17 @@ source checkout, the launcher prefers
 `_build/default/bin/main.exe` so local npm smoke tests exercise the current Dune
 build before falling back to an optional package.
 
-GitHub Actions builds and tests each POSIX-compatible target from source with
-OCaml 5.4.1, packs the platform package, uploads it as an artifact, and
-publishes platform packages before the root package on version tags.
+GitHub Actions builds and tests each native target from source with OCaml
+5.4.1, packs the platform package, uploads it as an artifact, and publishes
+platform packages before the root package on version tags.
 Darwin package jobs set `MACOSX_DEPLOYMENT_TARGET` before dependency
 installation and compilation so the runner image version does not become the
 minimum supported macOS version for the shipped Mach-O binary.
-
-Do not publish Windows native packages until there is a Windows-native backend.
-The current POSIX backend uses `/bin/sh`, POSIX process groups, and POSIX
-signals; those details must remain behind `Runner_backend.t`. The root npm bin
-shim must not route Windows hosts to the pinned upstream JavaScript CLI; during
-the native Windows backend work, Windows hosts should either resolve a native
-platform binary or fail with a missing native binary.
+Windows package jobs build and smoke-install `win32-x64` and `win32-arm64`
+native packages. They also compare Windows-safe CLI fixtures against pinned
+`concurrently@9.2.1` and run a native job-object cleanup smoke against the
+local binary. The root npm bin shim must not route Windows hosts to the pinned
+upstream JavaScript CLI.
 
 ## Consequences
 
@@ -87,10 +90,9 @@ platform binary or fail with a missing native binary.
   progress; they do not route to upstream JavaScript.
 - Alpine/musl users do not accidentally execute a glibc binary. They install
   and smoke the dedicated `linux-*-musl` package instead.
-- Windows drop-in npm-script behavior remains withheld until native backend
-  work ships. Compatibility must come from explicit Windows process supervision,
-  not accidental compatibility through upstream JavaScript, shell strings, or
-  POSIX signal names.
+- Windows drop-in npm-script behavior comes from explicit Windows process
+  supervision, not accidental compatibility through upstream JavaScript, POSIX
+  shell strings, or POSIX signal names.
 
 ## References
 

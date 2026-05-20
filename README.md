@@ -54,12 +54,11 @@ That keeps existing `concurrently`/`conc` package scripts and
 root package plus matching platform package into a clean temporary npm project,
 installs the root package under the `concurrently` alias, and verifies the
 `conc` and `concurrently` bin shims resolve to the native binary. It supports
-macOS x64/arm64 plus Linux GNU and Linux musl x64/arm64.
+macOS x64/arm64, Linux GNU and Linux musl x64/arm64, and Windows x64/arm64.
 
-Windows npm-script execution no longer falls back to upstream JavaScript. Native
-Windows package publication is withheld until a Windows runner backend exists;
-Windows installs fail with a missing native binary instead of silently running a
-different implementation.
+Windows npm-script execution no longer falls back to upstream JavaScript. The
+Windows backend uses a native `cmd.exe` shell launch path and Windows job
+objects for process-tree teardown behind `Runner_backend.t`.
 
 The packed root npm package is intentionally lean: it contains the native
 launcher, package metadata, JavaScript API facade, README, and LICENSE only.
@@ -68,8 +67,8 @@ the install payload.
 
 Linux platform packages are libc-specific. glibc hosts install
 `linux-*-gnu`, while Alpine/musl hosts install `linux-*-musl` through npm's
-`libc` package selector (`glibc` or `musl`). Windows platform packages are
-intentionally withheld until a Windows-native runner backend exists.
+`libc` package selector (`glibc` or `musl`). Windows platform packages ship
+`concurrently-ml.exe`.
 
 ## Library Scope
 
@@ -83,7 +82,7 @@ The npm package keeps the CLI path native on supported platforms while
 re-exporting the pinned `concurrently@9.2.1` JavaScript programmatic API
 through the npm alias `concurrently-js`. This preserves the upstream
 `require()`/ESM API shape for users who install this package under the
-`concurrently` name. Native Windows npm-script execution remains pending a
+`concurrently` name. Native Windows npm-script execution runs through the
 Windows `Runner_backend.t` implementation.
 
 ## Implemented CLI Surface

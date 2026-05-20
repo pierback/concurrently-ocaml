@@ -52,9 +52,12 @@ function hostTarget() {
     };
   }
 
-  throw new Error(
-    `host native package smoke is not supported on ${process.platform}; native Windows packaging is pending a Windows runner backend`
-  );
+  if (process.platform === "win32") {
+    assertSupportedArch();
+    return { name: `win32-${process.arch}`, libcArgs: [] };
+  }
+
+  throw new Error(`host native package smoke is not supported on ${process.platform}`);
 }
 
 function assertSupportedArch() {
@@ -77,7 +80,7 @@ function linuxLibc() {
 
 function runNpmScript(script, args) {
   const npm = process.platform === "win32" ? "npm.cmd" : "npm";
-  const result = spawnSync(npm, ["run", script, ...args], {
+  const result = spawnFileSync(npm, ["run", script, ...args], {
     cwd: resolve("."),
     encoding: "utf8",
     stdio: "inherit",
@@ -88,4 +91,15 @@ function runNpmScript(script, args) {
   if (result.status !== 0) {
     throw new Error(`npm run ${script} exited ${result.status}`);
   }
+}
+
+function spawnFileSync(command, args, options) {
+  return spawnSync(command, args, {
+    ...options,
+    shell: windowsCommandScript(command),
+  });
+}
+
+function windowsCommandScript(command) {
+  return process.platform === "win32" && command.toLowerCase().endsWith(".cmd");
 }

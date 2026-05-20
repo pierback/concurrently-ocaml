@@ -184,12 +184,72 @@ jobs:
           name: npm-${{ matrix.target }}
           path: dist/npm/
 
+  native-packages-windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: win32-x64
+            npm_cpu: x64
+          - os: windows-11-arm
+            target: win32-arm64
+            npm_cpu: arm64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout tree
+        uses: actions/checkout@v4
+
+      - name: Set up OCaml 5.4.1
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: "5.4.1"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - run: opam install . --deps-only --with-test
+
+      - run: opam exec -- dune build @install @runtest
+
+      - run: npm run audit:npm-api
+
+      - run: npm run compat:concurrently
+
+      - run: npm run smoke:windows-native
+
+      - name: Create npm platform package
+        run: >-
+          npm run package:platform --
+          --target ${{ matrix.target }}
+          --platform win32
+          --arch ${{ matrix.npm_cpu }}
+          --binary _build/default/bin/main.exe
+
+      - name: Smoke npm install
+        run: >-
+          npm run smoke:npm-install --
+          --target ${{ matrix.target }}
+          --platform win32
+          --arch ${{ matrix.npm_cpu }}
+
+      - name: Upload npm package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-${{ matrix.target }}
+          path: dist/npm/
+
   publish-npm:
     if: startsWith(github.ref, 'refs/tags/v')
     needs:
       - build
       - native-packages
       - native-packages-musl
+      - native-packages-windows
     runs-on: ubuntu-latest
     permissions:
       contents: read

@@ -31,6 +31,10 @@
    (and
     (>= 1.3)
     (<> :os "win32")))
+  (eio_windows
+   (and
+    (>= 1.3)
+    (= :os "win32")))
   (eio_main
    (>= 1.3))
   (cmdliner
