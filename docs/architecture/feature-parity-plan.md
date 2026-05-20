@@ -49,11 +49,14 @@ signal, process-tree teardown, and pipe implementations.
   failure, and teardown spawn failure isolation.
 - The blocking `Unix.open_process_full` / `Unix.fork` / `Unix.waitpid`
   orchestration has been removed from the executable.
-- Output now flows through structured `Output_event.t` callbacks as lines are
-  read from child pipes. `lib/output_formatter.ml` owns prefix modes, prefix
-  padding, command-prefix truncation, timestamp prefixes, ANSI color rendering,
-  internal block formatting, timings output, and command-level buffering for
-  the currently exposed flags.
+- Output now flows through structured `Output_event.t` callbacks as bounded
+  chunks are read from child pipes. Output events carry explicit
+  line-termination metadata so `lib/output_formatter.ml` can mirror npm's
+  `lastWrite` behavior for partial lines, CRLF output, global status messages,
+  command lifecycle messages, grouped output, and spacious block formatting.
+  The formatter also owns prefix modes, prefix padding, command-prefix
+  truncation, timestamp prefixes, ANSI color rendering, timings output, and
+  command-level buffering for the currently exposed flags.
 - Kill-others now starts each POSIX command in its own process group and signals
   the group so shell children are cancelled with their parent shell.
 - The npm launcher prefers the local Dune binary inside a source checkout and
@@ -185,7 +188,7 @@ signal, process-tree teardown, and pipe implementations.
 | Default input target | Input router | Implemented through `--default-input-target` by index or name, including npm-compatible runtime handling for unresolved default targets and empty-target coercion to command `0` |
 | Teardown commands | CLI config, Run policy, Runner | Implemented for sequential cleanup commands, empty teardown shell commands, raw output, and exit-code isolation |
 | `CONCURRENTLY_*` environment defaults and boolean coercion | CLI env options, CLI argv, CLI config | Implemented for pinned npm CLI flags and aliases through argv normalization; explicit CLI arguments override env defaults, and yargs-style boolean `--flag=true/false`, non-true inline false, `--no-flag` negation, known short boolean groups like `-kg`/`-rg`, and mixed unknown/known short groups like `-xg`/`-xr`/`-rx` are supported |
-| Timings output and close-event timings | Runner, Output formatter | Partial: npm-style lifecycle timing messages and summary tables are implemented for deterministic success, failure, restart, hidden, raw, named, grouped, custom timestamp, and kill-on-fail cases |
+| Timings output and close-event timings | Runner, Output formatter | Implemented for deterministic success, failure, restart, hidden, raw, named, grouped, custom timestamp, kill-on-fail, and kill-on-success cases; runtime timestamps, durations, and duration-derived row order are normalized in compatibility evidence because upstream sorts by measured duration |
 | Help and version flags | CLI argv, CLI config, npm distribution | Implemented for `--version`, `-v`, `-V`, `--help`, `-h`, yargs-style built-in aliases before separate option values, and no-command default help on stderr after npm-compatible unknown-option normalization; deterministic help output is pinned byte-for-byte against npm `concurrently@9.2.1`, and npm install smoke verifies matching `concurrently`/`conc` help aliases |
 | OCaml run API | Run API, Runner | Implemented for structured OCaml callers; not shipped as a JavaScript package API |
 
@@ -212,11 +215,16 @@ Currently mirrored deterministic behavior:
   condition, including failed-command exit projection; deterministic serialized
   `first`, `last`, `command-{index}`, `command-{name}`, and `!command-{name}`
   selectors project exit status like upstream.
-- `src/logger.spec.ts` and `bin/concurrently.spec.ts`: raw/hidden suppression,
-  formatted child stderr-to-stdout routing, grouped stderr-to-stdout routing,
-  name prefixes, deprecated name separator warnings, empty separator name splitting, command prefixes,
-  npm-compatible prefix-length coercion and truncation, template prefixes, PID
-  prefixes, no-prefix mode, and prefix padding.
+- `src/logger.spec.ts`, published `dist/src/logger.js`, and
+  `bin/concurrently.spec.ts`: raw/hidden suppression, formatted child
+  stderr-to-stdout routing, grouped stderr-to-stdout routing, name prefixes,
+  deprecated name separator warnings, empty separator name splitting, command
+  prefixes, npm-compatible prefix-length coercion and truncation, template
+  prefixes, PID prefixes, no-prefix mode, prefix padding, CRLF preservation,
+  partial stdout without trailing newline, same-command mixed stdout/stderr
+  partial-line concatenation, global status messages after partial command
+  output, grouped partial-line close notifications, spacious partial chunks,
+  and exact-size line-split termination.
 - Published `dist/bin/concurrently.js` and `docs/cli/configuration.md`:
   `CONCURRENTLY_*` environment defaults for deterministic flags and aliases,
   including explicit CLI boolean false overriding env true, non-true inline
@@ -326,9 +334,10 @@ Currently mirrored deterministic behavior:
   cancellation condition fires.
 - `src/flow-control/input-handler.spec.ts` and `bin/concurrently.spec.ts`:
   `--handle-input`, explicit index and command-name routing,
-  `--default-input-target` behavior with bounded delayed stdin writes, and
-  runtime logging for unresolved default input targets, including empty-target
-  coercion to command `0`.
+  `--default-input-target` behavior with bounded delayed stdin writes, whole
+  stdin chunk routing, runtime logging for unresolved default input targets,
+  unresolved default target logging after partial command output, and
+  empty-target coercion to command `0`.
 - `lib/flow-control/log-timings.ts` and `lib/flow-control/log-timings.spec.ts`:
   `--timings` start/stop lifecycle messages and final summary tables for
   success, failure, named commands, hidden commands, raw-mode suppression, and
@@ -338,7 +347,7 @@ Currently mirrored deterministic behavior:
   measured durations, and duration-derived row order normalized because they
   are inherently runtime-dependent.
 
-Known divergences tracked as incomplete work:
+Known divergences and deferred scope:
 
 | Area | Upstream behavior | Current status |
 | --- | --- | --- |
@@ -347,6 +356,20 @@ Known divergences tracked as incomplete work:
 | Unsupported kill-signal stderr when used | Upstream forwards the exact `--kill-signal` string to Node/tree-kill. Bare aliases such as `TERM`/`HUP`, and unsupported names such as `SIGFOO`, print a partial shutdown log and then throw Node's `ERR_UNKNOWN_SIGNAL` stack when used. | The native CLI now matches the exit status, shutdown status line text, and `ERR_UNKNOWN_SIGNAL` headline for deterministic unsupported values. It still does not reproduce Node's environment-specific stack frames. |
 | JavaScript programmatic API | Upstream `concurrently()` can be imported from JavaScript. | Explicit non-goal for this project. CLI parity for `concurrently`/`conc` in package scripts is the product surface; npm package JavaScript remains launcher and install glue only. |
 | Windows backend | Upstream supports Windows process semantics. | Windows npm packages are withheld until a Windows-native runner backend exists. |
+
+## Current Verification Snapshot
+
+As of May 20, 2026, the current `master` worktree has the following local proof:
+
+- `opam exec -- dune build @install @runtest` passes against the repo-local
+  OCaml 5.4.1 opam switch.
+- `npm run compat:concurrently` passes against pinned `concurrently@9.2.1`.
+- `npm run smoke:npm-install:host` passes on the host macOS arm64 target,
+  packing the root npm package plus the native platform package, verifying the
+  native package checksum manifest, and executing both npm-installed bin shims.
+- Root npm package contents remain constrained to launcher/package metadata,
+  README, and LICENSE; OCaml source, tests, Dune files, and development scripts
+  stay outside the root package surface.
 
 ## Implementation Slices
 
@@ -390,9 +413,10 @@ Known divergences tracked as incomplete work:
    true concurrent execution, bounded `max_processes`, real-time stdout/stderr
    events, and close-event collection.
 
-   Status: partially complete. The executable now calls `Runner.run` with
-   `Posix_runner_backend.backend`, and the blocking Unix orchestration has been
-   deleted. The Runner executes commands concurrently with Eio fibers, bounds
+   Status: complete for the current Unix-like POSIX backend. The executable now
+   calls `Runner.run` with `Posix_runner_backend.backend`, and the blocking Unix
+   orchestration has been deleted. The Runner executes commands concurrently
+   with Eio fibers, bounds
    fan-out with `Run_policy.max_processes`, emits structured output events,
    collects close events, and constructs `Run_result.t`. Restart attempts and
    retry delays keep the command's `max_processes` slot until the command
@@ -403,9 +427,9 @@ Known divergences tracked as incomplete work:
    POSIX backend conformance tests now directly exercise the backend contract
    below the Runner. Runner backend-boundary tests now prove spawn exceptions
    become close events, retry through the same close-event path, and teardown
-   spawn failures remain isolated from main command exit projection. Remaining
-   Runner work: stronger process-level parity tests for scheduler and
-   cancellation edge cases.
+   spawn failures remain isolated from main command exit projection. Additional
+   backend evidence can still be added for platform-specific signal labels; the
+   remaining implementation gap is the deferred Windows backend.
 
 5. Output formatter parity
 
@@ -413,18 +437,20 @@ Known divergences tracked as incomplete work:
    timestamp format, and hidden output. Test formatter behavior without running
    processes.
 
-   Status: partially complete. `lib/output_formatter.ml` now owns labels,
+   Status: complete for deterministic pinned CLI behavior currently covered by
+   the compatibility harness. `lib/output_formatter.ml` now owns labels,
    prefix modes, command-prefix truncation, prefix padding, timestamp prefixes,
    explicit prefix colors, npm-style reset-colored default prefixes, ANSI color
    rendering, no-color mode, internal block formatting, timings output through
    npm's `--timings` flag, global raw output, hidden command output,
    command-level buffering, npm-style command close notifications, PID prefixes
-   and `{pid}`
-   template placeholders from backend process identity, and deterministic
-   no-color and pinned color compatibility tests. Per-command raw flags are
-   supported when commands are constructed through `Run_api`. Remaining
-   formatter work: broader chalk compatibility and more golden CLI
-   compatibility tests.
+   and `{pid}` template placeholders from backend process identity, CRLF
+   preservation, partial-line `lastWrite` handling across command and global
+   output, and deterministic no-color and pinned color compatibility tests.
+   Per-command raw flags are supported when commands are constructed through
+   `Run_api`. Additional golden tests may still be added as evidence, but there
+   is no known deterministic formatter divergence outside the documented
+   process-tree and runtime-dependent cases above.
 
 6. Run policy parity
 
@@ -432,7 +458,8 @@ Known divergences tracked as incomplete work:
    restart delay, exponential restart, signal propagation, and no-start-after
    cancellation semantics.
 
-   Status: partially complete. `--success` now supports `all`, `first`, `last`,
+   Status: complete for POSIX deterministic CLI behavior covered by the current
+   compatibility harness. `--success` now supports `all`, `first`, `last`,
    `command-{index}`, `command-{name}`, and `!command-{index/name}` through the
    OS-neutral `Run_policy` module. `--restart-tries` and `--restart-after` now
    support finite retry counts, fractional/invalid retry-count status
@@ -450,24 +477,25 @@ Known divergences tracked as incomplete work:
    observed status projection, including non-`SIGINT` children that trap a
    signal and exit successfully, and queued commands that never started are
    skipped under bounded `max_processes`. Non-`SIGINT` parent signals preserve
-   restart-policy completion; parent `SIGINT` suppresses retries. Remaining run
-   policy work: broader cancellation parity around platform-specific signals and
-   Windows process-tree behavior.
+   restart-policy completion; parent `SIGINT` suppresses retries. Remaining
+   behavior outside this scope is Windows process-tree behavior and the
+   documented shell diagnostic difference above.
 
 7. Input and teardown
 
    Implement input routing, default input target, stdin shutdown behavior, and
    teardown commands.
 
-   Status: partially complete. `--teardown` now accepts repeated cleanup
-   commands through `Cli_config`, stores validated raw cleanup commands on
-   `Run_policy`, and executes them through the same `Runner_backend` seam after
-   the main command run drains. Cleanup output is raw and cleanup exit status is
-   deliberately excluded from `Run_result` success calculation. `-i`/`--handle-input`
-   and `--default-input-target` now route bounded stdin chunks through
+   Status: complete for the current POSIX CLI surface. `--teardown` now accepts
+   repeated cleanup commands through `Cli_config`, stores validated raw cleanup
+   commands on `Run_policy`, and executes them through the same
+   `Runner_backend` seam after the main command run drains. Cleanup output is
+   raw and cleanup exit status is deliberately excluded from `Run_result`
+   success calculation. `-i`/`--handle-input` and `--default-input-target` now
+   route bounded stdin chunks through
    `Input_router` to command stdin, including npm-compatible `index:` and
-   `name:` prefixes.
-   Remaining work: broader compatibility tests against npm `concurrently`.
+   `name:` prefixes, whole-chunk routing, unresolved target logging, and partial
+   output/global-status ordering.
 
 8. Compatibility test suite
 
@@ -475,7 +503,8 @@ Known divergences tracked as incomplete work:
    `concurrently` v9.2.1 where practical, plus unit tests for policy and
    formatting.
 
-   Status: partially complete. `npm run compat:concurrently` now compares the
+   Status: complete as the current pinned deterministic parity gate.
+   `npm run compat:concurrently` now compares the
    native binary against pinned `concurrently@9.2.1` for deterministic close
    notifications, failure status, raw/hidden suppression, name prefixes, command
    prefixes, template prefixes, no-prefix mode, prefix padding, grouped
@@ -512,12 +541,15 @@ Known divergences tracked as incomplete work:
    kill-on-success/failure, parent `SIGINT`/`SIGTERM`/`SIGHUP` forwarding and
    parent exit projection including skipped queued commands and restart-policy
    projection, input forwarding, explicit index and command-name input routing,
-   whole-stdin-chunk input routing, version and help flag aliases, and default
-   input target routing. The Ubuntu CI build runs this harness after
-   `dune build @install @runtest`. Remaining compatibility work: translate more
-   upstream behavior tests for broader wildcard and shortcut edge cases, deeper
-   package CLI behavior tests, and add backend conformance tests that do not
-   depend on npm availability.
+   whole-stdin-chunk input routing, unresolved default target logging after
+   partial output, version and help flag aliases, default input target routing,
+   partial lines, CRLF preservation, same-command stdout/stderr partial-line
+   concatenation, grouped partial close notifications, spacious partial chunks,
+   and exact-size line-split termination. The Ubuntu CI build runs this harness
+   after `dune build @install @runtest`. More upstream tests can still be
+   translated as additional evidence, especially for wildcard and shortcut
+   catalog breadth, but the remaining known CLI differences are the documented
+   runtime/platform-dependent or non-goal items above.
 
 9. Npm binary distribution
 
@@ -525,7 +557,8 @@ Known divergences tracked as incomplete work:
    parity requires ready-to-run native binaries or platform-specific binary
    packages so `conc` works immediately after npm install.
 
-   Status: partially complete. The root package now declares optional platform
+   Status: complete for supported Unix-like package targets currently shipped
+   by CI. The root package now declares optional platform
    packages for Linux GNU and macOS targets, exposes `concurrently`, `conc`, and
    `concml` npm binaries, and the launcher resolves the matching native package
    before falling back to a local development build. The Linux resolver is
@@ -547,7 +580,7 @@ Known divergences tracked as incomplete work:
    executes both `conc` and `concurrently` through the installed npm bin shims,
    and publishes packages on version tags with npm provenance. Windows
    packaging is withheld until a Windows backend exists.
-   Remaining distribution work: add musl/static packages only when a real musl
+   Deferred distribution scope: add musl/static packages only when a real musl
    build target exists, and implement then package Windows runner behavior.
 
 10. Platform backend split
@@ -564,7 +597,7 @@ Known divergences tracked as incomplete work:
    identity, and process close-status mapping. POSIX backend conformance tests
    cover the current backend contract without depending on npm availability,
    while Runner backend-boundary tests cover spawn-failure projection above the
-   backend seam. Remaining backend work: add a Windows backend with native shell
+   backend seam. Deferred backend scope: add a Windows backend with native shell
    and process-tree semantics, plus broader conformance for platform-specific
    signal labels.
 
