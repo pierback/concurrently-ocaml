@@ -25,6 +25,10 @@ const firstChunkInputCommand =
   "node -e \"process.stdin.on('data',d=>process.stdout.write('first:'+d)); setTimeout(()=>process.exit(0),500)\"";
 const secondChunkInputCommand =
   "node -e \"process.stdin.on('data',d=>process.stdout.write('second:'+d)); setTimeout(()=>process.exit(0),500)\"";
+const signalReadyCommand =
+  "node -e \"process.stdout.write('ready\\n'); setTimeout(()=>process.exit(0),5000)\"";
+const signalTrappedSuccessCommand =
+  "node -e \"process.on('SIGTERM',()=>process.exit(0)); process.stdout.write('ready\\n'); setTimeout(()=>process.exit(99),5000)\"";
 const delayedOneCommand =
   "node -e \"setTimeout(()=>process.stdout.write('one'),1200)\"";
 const forceNoColorEnv = { NO_COLOR: null, FORCE_COLOR: "0" };
@@ -1265,6 +1269,97 @@ const cases = [
     args: ["--no-color", "-k", "-s", "first", "printf ok", "sleep 1"],
   },
   {
+    name: "parent sigint forwards signal and exits zero",
+    upstream: "dist/src/flow-control/kill-on-signal.js SIGINT exit projection",
+    args: ["--no-color", signalReadyCommand],
+    parentSignal: {
+      signal: "SIGINT",
+      afterStdout: "ready\n",
+      delayMs: 100,
+    },
+  },
+  {
+    name: "parent sigterm forwards signal and exits one",
+    upstream: "dist/src/flow-control/kill-on-signal.js SIGTERM forwarding",
+    args: ["--no-color", signalReadyCommand],
+    parentSignal: {
+      signal: "SIGTERM",
+      afterStdout: "ready\n",
+      delayMs: 100,
+    },
+  },
+  {
+    name: "parent sigterm preserves trapped success",
+    upstream: "dist/src/flow-control/kill-on-signal.js non-SIGINT exit projection",
+    args: ["--no-color", "--timings", signalTrappedSuccessCommand],
+    normalizeStdout: normalizeTimingsStdout,
+    parentSignal: {
+      signal: "SIGTERM",
+      afterStdout: "ready\n",
+      delayMs: 100,
+    },
+  },
+  {
+    name: "parent sigterm skips queued commands",
+    upstream: "dist/src/flow-control/kill-on-signal.js aborts unstarted commands",
+    args: ["--no-color", "-m", "1", signalTrappedSuccessCommand, signalReadyCommand],
+    parentSignal: {
+      signal: "SIGTERM",
+      afterStdout: "ready\n",
+      delayMs: 0,
+    },
+  },
+  {
+    name: "parent sigterm preserves restart policy",
+    upstream: "dist/src/flow-control/kill-on-signal.js non-SIGINT restart projection",
+    cwd: restartFixture.cwd,
+    args: [
+      "--no-color",
+      "--restart-tries",
+      "1",
+      "--restart-after",
+      "0",
+      restartFixture.signalCommand,
+    ],
+    env: { CONCURRENTLY_RESTART_MARKER: restartFixture.marker },
+    prepare: restartFixture.reset,
+    parentSignal: {
+      signal: "SIGTERM",
+      afterStdout: "ready\n",
+      delayMs: 100,
+    },
+  },
+  {
+    name: "parent sigint suppresses restart policy",
+    upstream: "dist/src/flow-control/kill-on-signal.js SIGINT abort projection",
+    cwd: restartFixture.cwd,
+    args: [
+      "--no-color",
+      "--restart-tries",
+      "1",
+      "--restart-after",
+      "0",
+      restartFixture.signalCommand,
+    ],
+    env: { CONCURRENTLY_RESTART_MARKER: restartFixture.marker },
+    prepare: restartFixture.reset,
+    parentSignal: {
+      signal: "SIGINT",
+      afterStdout: "ready\n",
+      delayMs: 100,
+    },
+  },
+  {
+    name: "parent sighup forwards signal and exits one",
+    upstream: "dist/src/flow-control/kill-on-signal.js SIGHUP forwarding",
+    args: ["--no-color", signalReadyCommand],
+    parentSignal: {
+      signal: "SIGHUP",
+      afterStdout: "ready\n",
+      delayMs: 100,
+    },
+  },
+  {
     name: "kill signal sigint reaches sibling",
     upstream: "dist/src/flow-control/kill-others.js configured killSignal",
     args: [
@@ -1836,7 +1931,11 @@ function run(command, args, testCase) {
     testCase.prepare();
   }
 
-  if (testCase.inputDelayMs !== undefined || testCase.inputWrites !== undefined) {
+  if (
+    testCase.inputDelayMs !== undefined ||
+    testCase.inputWrites !== undefined ||
+    testCase.parentSignal !== undefined
+  ) {
     return runAsync(command, args, testCase);
   }
 
@@ -1872,19 +1971,41 @@ function runAsync(command, args, testCase) {
     let stderr = "";
     let settled = false;
     let inputTimers = [];
+    let signalTimer;
     const timeout = setTimeout(() => {
       if (settled) {
         return;
       }
       settled = true;
+      if (signalTimer) {
+        clearTimeout(signalTimer);
+      }
       child.kill("SIGKILL");
       rejectPromise(new Error(`${testCase.name}: timed out`));
     }, testCase.timeoutMs ?? 5000);
+    const clearSignalTimer = () => {
+      if (signalTimer) {
+        clearTimeout(signalTimer);
+      }
+    };
+    const maybeSendParentSignal = () => {
+      const parentSignal = testCase.parentSignal;
+      if (!parentSignal || signalTimer) {
+        return;
+      }
+      if (!stdout.includes(parentSignal.afterStdout)) {
+        return;
+      }
+      signalTimer = setTimeout(() => {
+        child.kill(parentSignal.signal);
+      }, parentSignal.delayMs);
+    };
 
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
       stdout += chunk;
+      maybeSendParentSignal();
     });
     child.stderr.on("data", (chunk) => {
       stderr += chunk;
@@ -1900,6 +2021,7 @@ function runAsync(command, args, testCase) {
       }
       settled = true;
       clearTimeout(timeout);
+      clearSignalTimer();
       inputTimers.forEach(clearTimeout);
       rejectPromise(new Error(`${testCase.name}: stdin ${error.message}`));
     });
@@ -1909,6 +2031,7 @@ function runAsync(command, args, testCase) {
       }
       settled = true;
       clearTimeout(timeout);
+      clearSignalTimer();
       inputTimers.forEach(clearTimeout);
       rejectPromise(new Error(`${testCase.name}: ${error.message}`));
     });
@@ -1918,20 +2041,28 @@ function runAsync(command, args, testCase) {
       }
       settled = true;
       clearTimeout(timeout);
+      clearSignalTimer();
       inputTimers.forEach(clearTimeout);
       resolvePromise({ status, signal, stdout, stderr });
     });
 
-    const inputWrites =
-      testCase.inputWrites ?? [ { delayMs: testCase.inputDelayMs, input: testCase.input ?? "" } ];
-    inputWrites.forEach((write, index) => {
-      inputTimers.push(setTimeout(() => {
-        child.stdin.write(write.input);
-        if (index === inputWrites.length - 1) {
-          child.stdin.end();
-        }
-      }, write.delayMs));
-    });
+    if (
+      testCase.inputDelayMs !== undefined ||
+      testCase.inputWrites !== undefined
+    ) {
+      const inputWrites =
+        testCase.inputWrites ?? [ { delayMs: testCase.inputDelayMs, input: testCase.input ?? "" } ];
+      inputWrites.forEach((write, index) => {
+        inputTimers.push(setTimeout(() => {
+          child.stdin.write(write.input);
+          if (index === inputWrites.length - 1) {
+            child.stdin.end();
+          }
+        }, write.delayMs));
+      });
+    } else {
+      child.stdin.end();
+    }
   });
 }
 
@@ -2143,10 +2274,13 @@ function createRestartFixture() {
   const marker = resolve(cwd, "attempt.state");
   const command =
     "node -e 'const fs=require(\"fs\");const p=process.env.CONCURRENTLY_RESTART_MARKER;if(fs.existsSync(p)){process.stdout.write(\"ok\");process.exit(0)}fs.writeFileSync(p,\"1\");process.exit(1)'";
+  const signalCommand =
+    "node -e 'const fs=require(\"fs\");const p=process.env.CONCURRENTLY_RESTART_MARKER;if(fs.existsSync(p)){process.stdout.write(\"ok\");process.exit(0)}fs.writeFileSync(p,\"1\");process.stdout.write(\"ready\\n\");setTimeout(()=>process.exit(1),5000)'";
   return {
     cwd,
     marker,
     command,
+    signalCommand,
     reset() {
       rmSync(marker, { force: true });
     },
