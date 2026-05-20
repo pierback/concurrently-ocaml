@@ -29,6 +29,7 @@ npm run build
 npm test
 npm run compile
 npm run compat:concurrently
+npm run smoke:npm-install:host
 ```
 
 ## Current Packaging State
@@ -37,6 +38,12 @@ The root npm package ships a JavaScript launcher plus optional Linux and macOS
 platform packages containing native `concurrently-ml` binaries. During local
 development the launcher can also fall back to `_build/default/bin/main.exe`
 after `npm run compile`.
+
+`npm run smoke:npm-install:host` packages the current host binary, installs the
+root package plus matching platform package into a clean temporary npm project,
+and verifies the `conc` and `concurrently` bin shims resolve to the native
+binary. It currently supports macOS x64/arm64 and Linux GNU x64/arm64; musl and
+Windows remain withheld until real build/backend targets exist.
 
 The packed root npm package is intentionally lean: it contains the launcher,
 package metadata, README, and LICENSE only. It does not expose a JavaScript
