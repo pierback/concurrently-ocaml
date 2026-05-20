@@ -165,7 +165,7 @@ jobs:
 
       - run: opam install . --deps-only --with-test --yes
 
-      - run: opam exec -- dune build @install
+      - run: opam exec -- dune build @install @runtest
 
       - name: Create npm platform package
         run: >-
@@ -220,7 +220,7 @@ jobs:
 
       - run: opam install . --deps-only --with-test
 
-      - run: opam exec -- dune build @install @runtest
+      - run: opam exec -- dune build @install
 
       - run: npm run audit:npm-api
 
