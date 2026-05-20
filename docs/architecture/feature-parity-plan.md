@@ -537,7 +537,9 @@ Known divergences tracked as incomplete work:
    development scripts, or a JavaScript programmatic API.
    Each platform package now ships a `SHA256SUMS` manifest for the native
    binary, and the npm install smoke test verifies the manifest before running
-   the installed CLI.
+   the installed CLI. `npm run smoke:npm-install:host` packages the current host
+   binary and runs the same install proof locally for supported macOS and Linux
+   GNU hosts.
    GitHub Actions builds platform packages, smoke-installs the packed root and
    platform package into a clean npm project, asserts the lean root package
    surface, asserts that the installed launcher resolves the optional platform

@@ -21,6 +21,7 @@
     "compile": "opam exec -- dune build bin/main.exe",
     "package:platform": "node scripts/ci/package-platform.js",
     "smoke:npm-install": "node scripts/ci/smoke-npm-install.js",
+    "smoke:npm-install:host": "node scripts/ci/smoke-npm-install-host.js",
     "compat:concurrently": "node scripts/ci/compat-concurrently.js",
     "perf:concurrently": "node scripts/ci/perf-concurrently.js"
   },
