@@ -107,7 +107,7 @@ let teardown_spawn_error_event ~command ~message =
   let chunk = "teardown command failed to spawn: " ^ message in
   match
     Output_event.output_chunk ~command ~attempt:0 ~process_id:None
-      ~stream:Output_event.Stderr ~chunk
+      ~stream:Output_event.Stderr ~chunk ~line_terminated:true
   with
   | Ok event -> event
   | Error error -> impossible_output_event "teardown_spawn_error_event" error

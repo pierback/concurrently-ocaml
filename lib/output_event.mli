@@ -22,6 +22,7 @@ type payload =
       { process_id : string option
       ; stream : stream
       ; chunk : string
+      ; line_terminated : bool
       }
   | Lifecycle_payload of lifecycle
   | Status_message_payload of
@@ -46,6 +47,7 @@ val output_chunk :
   process_id:string option ->
   stream:stream ->
   chunk:string ->
+  line_terminated:bool ->
   (t, create_error) result
 
 val lifecycle :
