@@ -1417,6 +1417,45 @@ const cases = [
     normalizeStdout: normalizeSignalTrapCloseStatus,
   },
   {
+    name: "kill signal sigterm trapped shell child preserves close status",
+    upstream: "tree-kill shell diagnostic ordering is runtime-dependent",
+    args: [
+      "--no-color",
+      "-k",
+      "--kill-signal",
+      "SIGTERM",
+      "trap 'exit 0' TERM; sleep 1",
+      "printf ok",
+    ],
+    normalizeStdout: normalizeShellSignalDiagnosticStdout,
+  },
+  {
+    name: "kill signal sigterm trapped shell cleanup is not interrupted",
+    upstream: "tree-kill does not signal shell cleanup trap twice",
+    args: [
+      "--no-color",
+      "-k",
+      "--kill-signal",
+      "SIGTERM",
+      "trap 'printf \"term\\n\"; sleep 0.05; exit 0' TERM; sleep 1",
+      "printf ok",
+    ],
+    normalizeStdout: normalizeShellSignalDiagnosticStdout,
+  },
+  {
+    name: "kill signal sighup trapped shell child preserves close status",
+    upstream: "tree-kill shell diagnostic ordering is runtime-dependent",
+    args: [
+      "--no-color",
+      "-k",
+      "--kill-signal",
+      "SIGHUP",
+      "trap 'exit 129' HUP; sleep 1",
+      "printf ok",
+    ],
+    normalizeStdout: normalizeShellSignalDiagnosticStdout,
+  },
+  {
     name: "env kill signal full name reaches sibling",
     upstream: "dist/bin/concurrently.js yargs .env('CONCURRENTLY') full option name",
     args: [
@@ -2449,6 +2488,13 @@ function normalizeSignalTrapCloseStatus(stdout) {
   return stdout
     .replace(/exited with code (?:130|SIGINT)/g, "exited with code <SIGINT>")
     .replace(/exited with code (?:138|SIGUSR1)/g, "exited with code <SIGUSR1>");
+}
+
+function normalizeShellSignalDiagnosticStdout(stdout) {
+  return stdout.replace(
+    /^\[\d+\] (?:Hangup|Terminated|User defined signal 1): \d+\n/gm,
+    ""
+  );
 }
 
 function normalizeTimingsTableRow(line) {
