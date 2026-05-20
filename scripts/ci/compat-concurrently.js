@@ -76,6 +76,7 @@ const posixCases = [
     name: "help long option",
     upstream: "bin/concurrently.spec.ts --help",
     args: ["--help"],
+    normalizeStdout: normalizeHelpStdout,
   },
   {
     name: "help short option",
@@ -1887,6 +1888,7 @@ const windowsCases = [
     name: "help long option",
     upstream: "bin/concurrently.spec.ts --help",
     args: ["--help"],
+    normalizeStdout: normalizeHelpStdout,
   },
   {
     name: "single success close notification",
@@ -2623,6 +2625,12 @@ function normalizeSignal(testCase, signal) {
 
 function normalizeVersionStdout(stdout) {
   return stdout.replace(/^\d+\.\d+\.\d+\r?\n$/, "<version>\n");
+}
+
+function normalizeHelpStdout(stdout) {
+  return stdout
+    .replace(/\r\n/g, "\n")
+    .replace(/^concurrently(?:\.js)? /, "concurrently.js ");
 }
 
 function normalizeNpmLogPaths(stdout) {
