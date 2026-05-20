@@ -53,22 +53,26 @@ jobs:
             target: linux-x64-gnu
             npm_os: linux
             npm_cpu: x64
+            npm_libc: gnu
             binary: _build/default/bin/main.exe
           - os: ubuntu-24.04-arm
             target: linux-arm64-gnu
             npm_os: linux
             npm_cpu: arm64
+            npm_libc: gnu
             binary: _build/default/bin/main.exe
           - os: macos-13
             target: darwin-x64
             npm_os: darwin
             npm_cpu: x64
+            npm_libc: ""
             binary: _build/default/bin/main.exe
             macosx_deployment_target: "13.0"
           - os: macos-26
             target: darwin-arm64
             npm_os: darwin
             npm_cpu: arm64
+            npm_libc: ""
             binary: _build/default/bin/main.exe
             macosx_deployment_target: "14.0"
 
@@ -97,19 +101,80 @@ jobs:
       - run: opam exec -- dune build @install @runtest
 
       - name: Create npm platform package
+        run: |
+          libc_args=()
+          if [ -n "${{ matrix.npm_libc }}" ]; then
+            libc_args=(--libc "${{ matrix.npm_libc }}")
+          fi
+          npm run package:platform -- \
+            --target "${{ matrix.target }}" \
+            --platform "${{ matrix.npm_os }}" \
+            --arch "${{ matrix.npm_cpu }}" \
+            "${libc_args[@]}" \
+            --binary "${{ matrix.binary }}"
+
+      - name: Smoke npm install
+        run: |
+          libc_args=()
+          if [ -n "${{ matrix.npm_libc }}" ]; then
+            libc_args=(--libc "${{ matrix.npm_libc }}")
+          fi
+          npm run smoke:npm-install -- \
+            --target "${{ matrix.target }}" \
+            --platform "${{ matrix.npm_os }}" \
+            --arch "${{ matrix.npm_cpu }}" \
+            "${libc_args[@]}"
+
+      - name: Upload npm package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-${{ matrix.target }}
+          path: dist/npm/
+
+  native-packages-musl:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x64-musl
+            npm_cpu: x64
+          - os: ubuntu-24.04-arm
+            target: linux-arm64-musl
+            npm_cpu: arm64
+
+    runs-on: ${{ matrix.os }}
+    container: ocaml/opam:alpine-3.22-ocaml-5.4
+
+    steps:
+      - name: Checkout tree
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        run: sudo apk add --no-cache nodejs npm
+
+      - run: opam update
+
+      - run: opam install . --deps-only --with-test --yes
+
+      - run: opam exec -- dune build @install @runtest
+
+      - name: Create npm platform package
         run: >-
           npm run package:platform --
           --target ${{ matrix.target }}
-          --platform ${{ matrix.npm_os }}
+          --platform linux
           --arch ${{ matrix.npm_cpu }}
-          --binary ${{ matrix.binary }}
+          --libc musl
+          --binary _build/default/bin/main.exe
 
       - name: Smoke npm install
         run: >-
           npm run smoke:npm-install --
           --target ${{ matrix.target }}
-          --platform ${{ matrix.npm_os }}
+          --platform linux
           --arch ${{ matrix.npm_cpu }}
+          --libc musl
 
       - name: Upload npm package artifact
         uses: actions/upload-artifact@v4
@@ -122,6 +187,7 @@ jobs:
     needs:
       - build
       - native-packages
+      - native-packages-musl
     runs-on: ubuntu-latest
     permissions:
       contents: read
