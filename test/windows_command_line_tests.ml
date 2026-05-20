@@ -22,7 +22,7 @@ let test_shell_command_line_uses_cmd_flags () =
   assert (
     Windows_command_line.shell_command_line ~shell_path:"cmd.exe"
       ~command_text:"node -e \"console.log(1)\""
-    = "cmd.exe /d /s /c \"node -e \"console.log(1)\"\"")
+    = "cmd.exe /d /s /c node -e \"console.log(1)\"")
 
 let () =
   test_quote_arg_preserves_simple_arguments ();
