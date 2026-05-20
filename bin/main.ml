@@ -2,7 +2,6 @@ module Cli_argv = Concurrentlyocaml.Cli_argv
 module Cli_config = Concurrentlyocaml.Cli_config
 module Output_event = Concurrentlyocaml.Output_event
 module Output_formatter = Concurrentlyocaml.Output_formatter
-module Posix_runner_backend = Concurrentlyocaml.Posix_runner_backend
 module Runner = Concurrentlyocaml.Runner
 module Runner_backend = Concurrentlyocaml.Runner_backend
 module Version = Concurrentlyocaml.Version
@@ -217,17 +216,22 @@ let run_config env config =
         Printf.eprintf "Error: %s\n" (Output_formatter.error_message error);
         1
     | Ok formatter -> (
-        match
-          Runner.run ~input:(Cli_config.input config)
-            ~input_source:(Some (Eio.Stdenv.stdin env :> Runner_backend.source))
-            ~backend:Posix_runner_backend.backend ~now ~sleep ~spec
-            ~on_output_event:(fun event ->
-              Output_formatter.handle_event formatter event |> print_outputs)
-        with
-        | Ok result -> Concurrentlyocaml.Run_result.exit_code result
-        | Error error ->
-            print_runner_error error;
-            1)
+        match Native_backend.load () with
+        | Error message ->
+            Printf.eprintf "Error: %s\n" message;
+            1
+        | Ok backend -> (
+            match
+              Runner.run ~input:(Cli_config.input config)
+                ~input_source:
+                  (Some (Eio.Stdenv.stdin env :> Runner_backend.source))
+                ~backend ~now ~sleep ~spec ~on_output_event:(fun event ->
+                  Output_formatter.handle_event formatter event |> print_outputs)
+            with
+            | Ok result -> Concurrentlyocaml.Run_result.exit_code result
+            | Error error ->
+                print_runner_error error;
+                1))
 
 let run ~passthrough_argv_arguments ~deprecated_name_separator_used
     command_texts names_csv name_separator timings group raw hide_csv no_color

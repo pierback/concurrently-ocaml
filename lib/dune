@@ -1,6 +1,13 @@
 (library
  (name concurrentlyocaml)
+ (modules (:standard \ posix_process_group posix_runner_backend))
+ (libraries eio str unix))
+
+(library
+ (name concurrentlyocaml_posix)
+ (modules posix_process_group posix_runner_backend)
+ (enabled_if (<> %{os_type} "Win32"))
  (foreign_stubs
   (language c)
   (names posix_process_group_stubs))
- (libraries eio eio.unix eio_posix str unix))
+ (libraries concurrentlyocaml eio eio.unix eio_posix unix))
