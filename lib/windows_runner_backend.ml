@@ -212,11 +212,11 @@ let spawn ~sw ~command =
       in
       close_child_sources ();
       close_child_sinks ();
-      let signal signal =
+      let signal _signal =
         if Eio.Promise.is_resolved exit_status then Ok false
         else
           try
-            terminate_job (128 + Sys.signal_to_int signal);
+            terminate_job 1;
             Ok true
           with exn -> Error (Printexc.to_string exn)
       in
