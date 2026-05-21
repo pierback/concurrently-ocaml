@@ -202,11 +202,10 @@ try {
   );
   assertEqual(versionSmoke.stderr, "", "conc version stderr");
 
-  const apiSmoke = spawnSync(
-    process.execPath,
-    [
-      "-e",
-      `
+  const apiSmoke = spawnNodeSmoke(
+    projectDir,
+    "api-smoke.cjs",
+    `
       const concurrently = require(${JSON.stringify(publicPackageName)});
       const { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } = require("node:fs");
       const { tmpdir } = require("node:os");
@@ -1087,9 +1086,7 @@ try {
         console.error(error);
         process.exit(1);
       });
-      `,
-    ],
-    { cwd: projectDir, encoding: "utf8" }
+      `
   );
   if (apiSmoke.error) {
     throw apiSmoke.error;
@@ -1106,12 +1103,10 @@ try {
   );
   assertEqual(apiSmoke.stderr, "", "programmatic API smoke stderr");
 
-  const esmApiSmoke = spawnSync(
-    process.execPath,
-    [
-      "--input-type=module",
-      "-e",
-      `
+  const esmApiSmoke = spawnNodeSmoke(
+    projectDir,
+    "esm-api-smoke.mjs",
+    `
       import concurrently, { createConcurrently } from ${JSON.stringify(publicPackageName)};
       if (typeof concurrently !== "function") {
         throw new Error("default ESM export is not callable");
@@ -1125,9 +1120,7 @@ try {
         throw new Error("invalid concurrently ESM result events");
       }
       process.stdout.write("esm api smoke ok\\n");
-      `,
-    ],
-    { cwd: projectDir, encoding: "utf8" }
+      `
   );
   if (esmApiSmoke.error) {
     throw esmApiSmoke.error;
@@ -1384,6 +1377,15 @@ function npmRun(args, cwd) {
     );
   }
   return result;
+}
+
+function spawnNodeSmoke(projectDir, filename, source) {
+  const scriptPath = join(projectDir, filename);
+  writeFileSync(scriptPath, source);
+  return spawnSync(process.execPath, [scriptPath], {
+    cwd: projectDir,
+    encoding: "utf8",
+  });
 }
 
 function spawnFileSync(command, args, options) {
