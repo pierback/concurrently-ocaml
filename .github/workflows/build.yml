@@ -146,42 +146,46 @@ jobs:
             npm_cpu: arm64
 
     runs-on: ${{ matrix.os }}
-    container:
-      image: ocaml/opam:alpine-3.22-ocaml-5.4
-      options: --user root
 
     steps:
       - name: Checkout tree
         uses: actions/checkout@v4
 
-      - name: Prepare musl workspace
-        run: chown -R opam:opam "$GITHUB_WORKSPACE"
-
-      - name: Set up Node
-        run: apk add --no-cache nodejs npm
-
-      - run: sudo -u opam sh -lc "cd '$GITHUB_WORKSPACE' && opam update"
-
-      - run: sudo -u opam sh -lc "cd '$GITHUB_WORKSPACE' && opam install . --deps-only --with-test --yes"
-
-      - run: sudo -u opam sh -lc "cd '$GITHUB_WORKSPACE' && opam exec -- dune build @install @runtest"
-
-      - name: Create npm platform package
-        run: >-
-          npm run package:platform --
-          --target ${{ matrix.target }}
-          --platform linux
-          --arch ${{ matrix.npm_cpu }}
-          --libc musl
-          --binary _build/default/bin/main.exe
-
-      - name: Smoke npm install
-        run: >-
-          npm run smoke:npm-install --
-          --target ${{ matrix.target }}
-          --platform linux
-          --arch ${{ matrix.npm_cpu }}
-          --libc musl
+      - name: Build and smoke musl package
+        env:
+          TARGET: ${{ matrix.target }}
+          NPM_CPU: ${{ matrix.npm_cpu }}
+        run: |
+          host_uid="$(id -u)"
+          host_gid="$(id -g)"
+          docker run --rm \
+            -e HOST_UID="$host_uid" \
+            -e HOST_GID="$host_gid" \
+            -e TARGET="$TARGET" \
+            -e NPM_CPU="$NPM_CPU" \
+            -v "$PWD":/work \
+            -w /work \
+            ocaml/opam:alpine-3.22-ocaml-5.4 \
+            sh -lc '
+              set -eu
+              trap '\''sudo chown -R "$HOST_UID:$HOST_GID" /work'\'' EXIT
+              sudo apk add --no-cache nodejs npm
+              sudo chown -R opam:opam /work
+              opam update
+              opam install . --deps-only --with-test --yes
+              opam exec -- dune build @install @runtest
+              npm run package:platform -- \
+                --target "$TARGET" \
+                --platform linux \
+                --arch "$NPM_CPU" \
+                --libc musl \
+                --binary _build/default/bin/main.exe
+              npm run smoke:npm-install -- \
+                --target "$TARGET" \
+                --platform linux \
+                --arch "$NPM_CPU" \
+                --libc musl
+            '
 
       - name: Upload npm package artifact
         uses: actions/upload-artifact@v4
