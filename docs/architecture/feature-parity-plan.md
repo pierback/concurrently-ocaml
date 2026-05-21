@@ -212,7 +212,7 @@ Win32 process creation, stdio handle inheritance, and job-object teardown.
 | `CONCURRENTLY_*` environment defaults and boolean coercion | CLI env options, CLI argv, CLI config | Implemented for pinned npm CLI flags and aliases through argv normalization; explicit CLI arguments override env defaults, and yargs-style boolean `--flag=true/false`, non-true inline false, `--no-flag` negation, known short boolean groups like `-kg`/`-rg`, and mixed unknown/known short groups like `-xg`/`-xr`/`-rx` are supported |
 | Timings output and close-event timings | Runner, Output formatter | Implemented for deterministic success, failure, restart, hidden, raw, named, grouped, custom timestamp, kill-on-fail, and kill-on-success cases; runtime timestamps, durations, and duration-derived row order are normalized in compatibility evidence because upstream sorts by measured duration |
 | Help and version flags | CLI argv, CLI config, npm distribution | Implemented for `--version`, `-v`, `-V`, `--help`, `-h`, yargs-style built-in aliases before separate option values, and no-command default help on stderr after npm-compatible unknown-option normalization; deterministic help output is pinned byte-for-byte against npm `concurrently@9.2.1`, and npm install smoke verifies matching `concurrently`/`conc` help aliases |
-| OCaml run API and JavaScript API facade | Run API, Runner, npm distribution | Structured OCaml callers use `Concurrentlyocaml.Run_api`; JavaScript callers receive the pinned upstream `concurrently@9.2.1` CommonJS/ESM/type API through the root package facade |
+| OCaml run API and JavaScript API facade | Run API, Runner, npm distribution | Structured OCaml callers use `Concurrentlyocaml.Run_api`; JavaScript callers receive a repo-owned CommonJS/ESM/type facade with top-level export names audited against pinned `concurrently@9.2.1` and execution backed by the native binary |
 
 ## Compatibility Evidence And Divergence Ledger
 
@@ -385,7 +385,7 @@ Known divergences and deferred scope:
 
 ## Current Verification Snapshot
 
-As of May 20, 2026, the current `master` worktree has the following local proof:
+As of May 21, 2026, the current `master` worktree has the following proof:
 
 - `opam exec -- dune build @install @runtest` passes against the repo-local
   OCaml 5.4.1 opam switch.
@@ -396,6 +396,11 @@ As of May 20, 2026, the current `master` worktree has the following local proof:
 - Root npm package contents remain constrained to launcher/package metadata,
   README, and LICENSE; OCaml source, tests, Dune files, and development scripts
   stay outside the root package surface.
+- GitHub Actions run `26202424763` passed the target native package gates for
+  Windows x64, Linux x64 musl, and Linux arm64 musl. The Windows x64 gate builds
+  `bin/main.exe`, audits the npm API surface, runs the Windows-native process
+  smoke, creates the `win32-x64` package, and smoke-installs the packed npm
+  package.
 
 ## Implementation Slices
 
@@ -592,7 +597,8 @@ As of May 20, 2026, the current `master` worktree has the following local proof:
    root package now declares optional platform packages for Linux GNU, Linux
    musl, macOS, and Windows targets, exposes
    `concurrently`, `conc`, and `concml` npm binaries, and the launcher resolves
-   the matching native package before falling back to a local development build.
+   the matching native package before using a local development build in source
+   checkouts.
    The Linux resolver is libc-aware: glibc hosts select `linux-*-gnu` packages,
    while musl hosts select `linux-*-musl` packages instead of accidentally
    executing a glibc binary. The packed root package is restricted to the JS
@@ -613,8 +619,8 @@ As of May 20, 2026, the current `master` worktree has the following local proof:
    publishes packages on version tags with npm provenance. Windows jobs also
    run `npm run compat:concurrently` with Windows command fixtures and
    `npm run smoke:windows-native` against the local binary before packaging.
-   Deferred distribution scope: prove the Windows backend against the broader
-   compatibility suite on Windows CI.
+   Windows ARM64 is intentionally not advertised until OCaml/opam provisioning
+   exists for `windows/arm64` on the runner.
 
 10. Platform backend split
 
@@ -623,16 +629,17 @@ As of May 20, 2026, the current `master` worktree has the following local proof:
    signal, process-tree teardown, stdio pipe capture, stdin writes, and platform
    error mapping.
 
-   Status: partial implementation complete. `Runner.run` now takes an explicit
-   `Runner_backend.t`, and the CLI selects a native backend through Dune. The
-   POSIX backend owns `/bin/sh`, Eio POSIX spawning, process-group signalling,
-   pipe creation, stdin writes, process identity, and process close-status
-   mapping from the separate `concurrentlyocaml_posix` library. POSIX backend
-   conformance tests cover the current backend contract without depending on npm
-   availability, while Runner backend-boundary tests cover spawn-failure
-   projection above the backend seam. Deferred backend scope: add a Windows
-   backend with native shell and process-tree semantics, plus broader conformance
-   for platform-specific signal labels.
+   Status: complete for the currently shipped POSIX and Windows package
+   targets. `Runner.run` takes an explicit `Runner_backend.t`, and the CLI
+   selects a native backend through Dune. The POSIX backend owns `/bin/sh`, Eio
+   POSIX spawning, process-group signalling, pipe creation, stdin writes,
+   process identity, and process close-status mapping from the separate
+   `concurrentlyocaml_posix` library. The Windows backend owns `cmd.exe /d /s
+   /c` process creation, inherited stdio handles, blocking pipe resources,
+   stdin writes, process identity, exit-code mapping, and job-object process
+   tree termination from the separate `concurrentlyocaml_windows` library.
+   Unsupported platforms select an explicit native-backend error and do not
+   route to upstream JavaScript.
 
 ## Test Strategy
 
