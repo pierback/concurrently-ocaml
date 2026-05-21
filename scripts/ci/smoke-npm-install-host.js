@@ -53,7 +53,7 @@ function hostTarget() {
   }
 
   if (process.platform === "win32") {
-    assertSupportedArch();
+    assertSupportedWindowsArch();
     return { name: `win32-${process.arch}`, libcArgs: [] };
   }
 
@@ -63,6 +63,12 @@ function hostTarget() {
 function assertSupportedArch() {
   if (process.arch !== "x64" && process.arch !== "arm64") {
     throw new Error(`unsupported npm smoke architecture: ${process.arch}`);
+  }
+}
+
+function assertSupportedWindowsArch() {
+  if (process.arch !== "x64") {
+    throw new Error(`unsupported Windows npm smoke architecture: ${process.arch}`);
   }
 }
 
