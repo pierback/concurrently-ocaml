@@ -14,7 +14,7 @@ const { spawn, spawnSync } = require("node:child_process");
 
 const npmConcurrentlyVersion = "9.2.1";
 const localBinary = resolve("_build", "default", "bin", "main.exe");
-const npmConcurrentlyBinary = resolveNpmConcurrentlyBinary();
+const npmConcurrentlyCommand = resolveNpmConcurrentlyCommand();
 const inputEchoCommand =
   "node -e \"process.stdin.once('data',d=>{process.stdout.write(d);process.exit(0)})\"";
 const firstInputEchoCommand =
@@ -2043,13 +2043,13 @@ function runLocal(testCase) {
 }
 
 function runNpm(testCase) {
-  return run(npmConcurrentlyBinary, testCase.args, testCase);
+  return run(npmConcurrentlyCommand, testCase.args, testCase);
 }
 
-function resolveNpmConcurrentlyBinary() {
+function resolveNpmConcurrentlyCommand() {
   const local = resolveLocalPinnedConcurrentlyBinary();
   if (local) {
-    return local;
+    return commandForConcurrentlyBinary(local);
   }
 
   const result = spawnFileSync(npmCommand(), [
@@ -2079,7 +2079,7 @@ function resolveNpmConcurrentlyBinary() {
   if (!binary) {
     throw new Error(`${commandLocator()} concurrently returned no binary path`);
   }
-  return binary;
+  return commandForConcurrentlyBinary(binary);
 }
 
 function resolveLocalPinnedConcurrentlyBinary() {
@@ -2180,20 +2180,45 @@ function assertPinnedConcurrentlyVersion(binary) {
   return true;
 }
 
-function run(command, args, testCase) {
+function commandForConcurrentlyBinary(binary) {
+  if (process.platform === "win32" && binary.toLowerCase().endsWith(".cmd")) {
+    const jsBinary = resolve(
+      dirname(binary),
+      "..",
+      "concurrently",
+      "dist",
+      "bin",
+      "concurrently.js"
+    );
+    if (existsSync(jsBinary)) {
+      return { command: process.execPath, args: [jsBinary] };
+    }
+  }
+
+  return { command: binary, args: [] };
+}
+
+function run(commandInput, args, testCase) {
   if (testCase.prepare) {
     testCase.prepare();
   }
+
+  const commandSpec =
+    typeof commandInput === "string"
+      ? { command: commandInput, args: [] }
+      : commandInput;
+  const command = commandSpec.command;
+  const commandArgs = [...commandSpec.args, ...args];
 
   if (
     testCase.inputDelayMs !== undefined ||
     testCase.inputWrites !== undefined ||
     testCase.parentSignal !== undefined
   ) {
-    return runAsync(command, args, testCase);
+    return runAsync(command, commandArgs, testCase);
   }
 
-  const result = spawnFileSync(command, args, {
+  const result = spawnFileSync(command, commandArgs, {
     cwd: testCase.cwd ?? resolve("."),
     encoding: "utf8",
     env: environmentFor(testCase),

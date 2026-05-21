@@ -186,6 +186,7 @@ fail:
   }
   SetLastError(error);
   windows_uerror(failed_operation);
+  CAMLreturn(Val_unit);
 }
 
 CAMLprim value concurrently_windows_create_process_bytecode(value *argv,
