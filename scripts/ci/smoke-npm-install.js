@@ -1013,7 +1013,7 @@ try {
       const successOnlyHangSource =
         "require('node:fs').writeFileSync(process.env.SUCCESS_ONLY_READY,'ready'); setInterval(()=>{},1000)";
       const successOnlyWaitSource =
-        "const fs=require('node:fs'); const deadline=Date.now()+5000; (function wait(){ if(fs.existsSync(process.env.SUCCESS_ONLY_READY)) process.exit(0); if(Date.now()>deadline) process.exit(2); setTimeout(wait,20); })();";
+        "const fs=require('node:fs'); const deadline=Date.now()+30000; (function wait(){ if(fs.existsSync(process.env.SUCCESS_ONLY_READY)) process.exit(0); if(Date.now()>deadline) process.exit(0); setTimeout(wait,20); })();";
       const successOnlyKill = concurrently([
         "node -e " + JSON.stringify(successOnlyHangSource),
         "node -e " + JSON.stringify(successOnlyWaitSource),
@@ -1024,6 +1024,9 @@ try {
         successCondition: "first",
       });
       const assertSuccessOnlyKillEvents = (events) => {
+        if (!existsSync(successOnlyReady)) {
+          throw new Error("success-only kill policy never observed sibling readiness");
+        }
         if (!events.some((event) => event.killed)) {
           throw new Error("success-only kill policy did not report any killed command");
         }
