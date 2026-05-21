@@ -172,6 +172,8 @@ jobs:
               sudo apk add --no-cache nodejs npm
               sudo chown -R opam:opam /work
               opam update
+              opam switch create . ocaml-base-compiler.5.4.1 --yes
+              eval "$(opam env --switch=. --set-switch)"
               opam install . --deps-only --with-test --yes
               opam exec -- dune build @install @runtest
               npm run package:platform -- \
