@@ -195,7 +195,11 @@ try {
       `conc --version exited ${versionSmoke.status}\nstdout:\n${versionSmoke.stdout}\nstderr:\n${versionSmoke.stderr}`
     );
   }
-  assertEqual(versionSmoke.stdout, `${rootPackage.version}\n`, "conc version stdout");
+  assertOutputEqual(
+    versionSmoke.stdout,
+    `${rootPackage.version}\n`,
+    "conc version stdout"
+  );
   assertEqual(versionSmoke.stderr, "", "conc version stderr");
 
   const apiSmoke = spawnSync(
@@ -1095,7 +1099,11 @@ try {
       `programmatic API smoke exited ${apiSmoke.status}\nstdout:\n${apiSmoke.stdout}\nstderr:\n${apiSmoke.stderr}`
     );
   }
-  assertEqual(apiSmoke.stdout, "api smoke ok\n", "programmatic API smoke stdout");
+  assertOutputEqual(
+    apiSmoke.stdout,
+    "api smoke ok\n",
+    "programmatic API smoke stdout"
+  );
   assertEqual(apiSmoke.stderr, "", "programmatic API smoke stderr");
 
   const esmApiSmoke = spawnSync(
@@ -1129,7 +1137,7 @@ try {
       `programmatic ESM API smoke exited ${esmApiSmoke.status}\nstdout:\n${esmApiSmoke.stdout}\nstderr:\n${esmApiSmoke.stderr}`
     );
   }
-  assertEqual(
+  assertOutputEqual(
     esmApiSmoke.stdout,
     "esm api smoke ok\n",
     "programmatic ESM API smoke stdout"
@@ -1241,6 +1249,10 @@ function assertEqual(actual, expected, label) {
   if (actual !== expected) {
     throw new Error(`${label}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
   }
+}
+
+function assertOutputEqual(actual, expected, label) {
+  assertEqual(normalizeLineEndings(actual), expected, label);
 }
 
 function assertSmokeOutput(actual, label, command, context) {
