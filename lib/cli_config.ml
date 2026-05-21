@@ -219,21 +219,21 @@ let success_condition_of_string ~command_count ~names success =
 let restart_delay_of_string restart_after =
   let value = String.trim restart_after in
   match String.lowercase_ascii value with
-	  | "exponential" -> (Run_policy.Exponential_backoff, None)
-	  | _ ->
-	      let number =
-	        if String.equal value "" then Some 0.0 else float_of_string_opt value
-	      in
-	      match number with
-	      | Some number
-	        when (match classify_float number with
+  | "exponential" -> (Run_policy.Exponential_backoff, None)
+  | _ ->
+      let number =
+        if String.equal value "" then Some 0.0 else float_of_string_opt value
+      in
+      (match number with
+      | Some number
+        when (match classify_float number with
               | FP_nan | FP_infinite -> false
               | FP_normal | FP_subnormal | FP_zero -> true)
              && number >= float_of_int min_int
              && number <= float_of_int max_int ->
-          (Run_policy.Fixed_delay_ms (int_of_float number), None)
+          (Run_policy.Fixed_delay_ms (max 0 (int_of_float number)), None)
       | Some _ | None ->
-          (Run_policy.Fixed_delay_ms 0, Some Run_policy.Timeout_nan)
+          (Run_policy.Fixed_delay_ms 0, Some Run_policy.Timeout_nan))
 
 let ends_with ~suffix value =
   let suffix_length = String.length suffix in
