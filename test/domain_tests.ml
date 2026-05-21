@@ -2508,7 +2508,7 @@ let test_cli_config_validation () =
   in
   assert (
     Run_policy.restart_delay (Cli_config.policy negative_restart_after_config)
-    = Run_policy.Fixed_delay_ms (-1));
+    = Run_policy.Fixed_delay_ms 0);
   let short_name_config =
     ok
       (Cli_config.create ~passthrough_arguments:None ~cwd:None

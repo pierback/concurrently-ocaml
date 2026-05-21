@@ -393,6 +393,7 @@ let skip_json_value text index =
   let length = String.length text in
   let rec loop depth index =
     if index = length then length
+    else if depth > json_nesting_limit then length
     else
       match text.[index] with
       | '"' ->
@@ -410,9 +411,8 @@ let skip_json_value text index =
 
 let json_string_utf16_length text start =
   let length = String.length text in
-  assert (start >= 0);
-  assert (start < length);
-  assert (text.[start] = '"');
+  if start < 0 || start >= length || text.[start] <> '"' then None
+  else
   let utf8_advance_and_width index =
     let byte = Char.code text.[index] in
     if byte < 0x80 then (index + 1, 1)
@@ -453,9 +453,8 @@ let decimal_indices count =
 
 let array_indices text array_start =
   let length = String.length text in
-  assert (array_start >= 0);
-  assert (array_start < length);
-  assert (text.[array_start] = '[');
+  if array_start < 0 || array_start >= length || text.[array_start] <> '[' then []
+  else
   let rec loop index count =
     let index = skip_whitespace text index in
     if index >= length || text.[index] = ']' then decimal_indices count
@@ -541,9 +540,8 @@ let object_key_names keys =
 
 let object_keys text object_start =
   let length = String.length text in
-  assert (object_start >= 0);
-  assert (object_start < length);
-  assert (text.[object_start] = '{');
+  if object_start < 0 || object_start >= length || text.[object_start] <> '{' then []
+  else
   let rec loop index seen insertion_index keys =
     let index = skip_whitespace text index in
     if index >= length || text.[index] = '}' then object_key_names keys

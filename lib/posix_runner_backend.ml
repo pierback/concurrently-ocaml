@@ -8,7 +8,7 @@ let shell_args command =
 let close_status = function
   | Unix.WEXITED code -> Close_event.Exited code
   | Unix.WSIGNALED signal -> Close_event.Signaled (string_of_int signal)
-  | Unix.WSTOPPED signal -> Close_event.Signaled (string_of_int signal)
+  | Unix.WSTOPPED signal -> Close_event.Signaled ("STOP:" ^ string_of_int signal)
 
 let split_env_entry entry =
   match String.index_opt entry '=' with
@@ -87,7 +87,8 @@ let spawn ~sw ~command =
     ; await =
         (fun () ->
           let status = Eio.Promise.await exit_status in
-          ignore (Posix_process_group.signal_group ~pid Sys.sigkill);
+          (match Posix_process_group.signal_group ~pid Sys.sigkill with
+          | Ok _ | Error _ -> ());
           close_status status)
     }
   | exception exn ->

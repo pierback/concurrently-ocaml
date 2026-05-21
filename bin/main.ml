@@ -75,10 +75,16 @@ let color_mode_of_force_color = function
       | Some _ -> Output_formatter.Truecolor
       | None -> Output_formatter.Never)
 
+let stdout_is_tty () =
+  try Unix.isatty Unix.stdout with _ -> false
+
 let color_mode ~no_color =
   match Sys.getenv_opt "FORCE_COLOR" with
   | Some value -> color_mode_of_force_color value
-  | None -> if no_color then Output_formatter.Never else Output_formatter.Truecolor
+  | None ->
+      if no_color then Output_formatter.Never
+      else if stdout_is_tty () then Output_formatter.Truecolor
+      else Output_formatter.Never
 
 let npm_compatible_help =
   {help|concurrently [options] <command ...>

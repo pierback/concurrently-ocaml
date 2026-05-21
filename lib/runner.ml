@@ -18,12 +18,17 @@ let output_event_create_error_message = function
   | `Negative_delay_ms -> "negative delay"
 
 let impossible_output_event context error =
-  invalid_arg
-    (Printf.sprintf "Runner.%s: %s" context
-       (output_event_create_error_message error))
+  raise
+    (Fatal_runner_error
+       (`Unexpected_runner_error
+          (Printf.sprintf "Runner.%s: %s" context
+             (output_event_create_error_message error))))
 
 let impossible_command_result context =
-  invalid_arg (Printf.sprintf "Runner.%s: skipped command result" context)
+  raise
+    (Fatal_runner_error
+       (`Unexpected_runner_error
+          (Printf.sprintf "Runner.%s: skipped command result" context)))
 
 let with_parent_termination_signals ~cleanup run =
   let previous_handlers = ref [] in
@@ -329,19 +334,30 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
             record_failure (`Unexpected_runner_error (Printexc.to_string exn))
           else ()
     in
+    let missing_input_target_emitted = Hashtbl.create 4 in
     let emit_missing_input_target target =
-      Output_event.status_message ~after_command:None
-        ~stream:Output_event.Stdout
-        ~chunk:
-          (Printf.sprintf
-             "--> Unable to find command \"%s\", or it has no stdin open\n--> "
-             target)
-      |> emit_best_effort
+      let count =
+        match Hashtbl.find_opt missing_input_target_emitted target with
+        | Some n -> n
+        | None -> 0
+      in
+      if count < 3 then (
+        Hashtbl.replace missing_input_target_emitted target (count + 1);
+        Output_event.status_message ~after_command:None
+          ~stream:Output_event.Stdout
+          ~chunk:
+            (Printf.sprintf
+               "--> Unable to find command \"%s\", or it has no stdin open\n--> "
+               target)
+        |> emit_best_effort)
     in
     let close_process_stdin process =
       match process.Runner_backend.close_stdin () with
       | () -> ()
-      | exception _ -> ()
+      | exception exn ->
+          record_failure
+            (`Unexpected_runner_error
+               ("close_stdin failed: " ^ Printexc.to_string exn))
     in
     let write_input route =
       match process_for_input route.Input_router.target_index with
@@ -1019,7 +1035,6 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
                     remove_active command_index;
                     `Done))
     in
-    let retry_sleep_quantum_seconds = 0.05 in
     let sleep_until_retry_or_close command delay_ms =
       let command_index = Command.index command in
       let deadline = now () +. (float_of_int delay_ms /. 1000.0) in
@@ -1031,9 +1046,14 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
         else
           let remaining_seconds = deadline -. now () in
           if remaining_seconds <= 0.0 then not (command_is_closed command_index)
-          else (
-            sleep (min remaining_seconds retry_sleep_quantum_seconds);
-            loop ())
+          else
+            let quantum =
+              if remaining_seconds > 5.0 then 1.0
+              else if remaining_seconds > 1.0 then 0.25
+              else 0.05
+            in
+            sleep (min remaining_seconds quantum);
+            loop ()
       in
       loop ()
     in
