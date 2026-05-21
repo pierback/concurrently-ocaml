@@ -204,9 +204,6 @@ jobs:
           - os: windows-latest
             target: win32-x64
             npm_cpu: x64
-          - os: windows-11-arm
-            target: win32-arm64
-            npm_cpu: arm64
 
     runs-on: ${{ matrix.os }}
 

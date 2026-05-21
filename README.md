@@ -54,7 +54,7 @@ That keeps existing `concurrently`/`conc` package scripts and
 root package plus matching platform package into a clean temporary npm project,
 installs the root package under the `concurrently` alias, and verifies the
 `conc` and `concurrently` bin shims resolve to the native binary. It supports
-macOS x64/arm64, Linux GNU and Linux musl x64/arm64, and Windows x64/arm64.
+macOS x64/arm64, Linux GNU and Linux musl x64/arm64, and Windows x64.
 
 Windows npm-script execution no longer falls back to upstream JavaScript. The
 Windows backend uses a native `cmd.exe` shell launch path and Windows job

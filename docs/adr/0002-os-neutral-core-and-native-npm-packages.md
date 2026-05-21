@@ -18,7 +18,9 @@ GitHub-hosted runner labels are available for Linux x64/arm64, macOS x64/arm64,
 and Windows x64/arm64. The 2026 GitHub-hosted runner reference lists Linux
 arm64 labels such as `ubuntu-24.04-arm`, macOS arm64 labels including
 `macos-26`, Windows x64 labels including `windows-latest`, and Windows arm64
-labels including `windows-11-arm`.
+labels including `windows-11-arm`. Native Windows ARM64 packaging is not part
+of the supported surface because `ocaml/setup-ocaml@v3` cannot provision opam
+for `windows/arm64`.
 
 ## Decision
 
@@ -54,7 +56,6 @@ Distribute npm packages as:
   - `@pierback/concurrently-ml-darwin-x64`
   - `@pierback/concurrently-ml-darwin-arm64`
   - `@pierback/concurrently-ml-win32-x64`
-  - `@pierback/concurrently-ml-win32-arm64`
 
 Each platform package contains exactly one native binary under `bin/`. The root
 launcher resolves the matching optional dependency first when run from an
@@ -72,8 +73,8 @@ platform packages before the root package on version tags.
 Darwin package jobs set `MACOSX_DEPLOYMENT_TARGET` before dependency
 installation and compilation so the runner image version does not become the
 minimum supported macOS version for the shipped Mach-O binary.
-Windows package jobs build and smoke-install `win32-x64` and `win32-arm64`
-native packages. They also compare Windows-safe CLI fixtures against pinned
+Windows package jobs build and smoke-install the `win32-x64` native package.
+They also compare Windows-safe CLI fixtures against pinned
 `concurrently@9.2.1` and run a native job-object cleanup smoke against the
 local binary. The root npm bin shim must not route Windows hosts to the pinned
 upstream JavaScript CLI.

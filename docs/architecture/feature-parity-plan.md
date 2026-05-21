@@ -79,7 +79,7 @@ Win32 process creation, stdio handle inheritance, and job-object teardown.
   npm-script execution no longer routes to the pinned upstream CLI; it uses the
   native Windows runner backend.
 - GitHub Actions now includes native package jobs for Linux GNU x64/arm64,
-  Linux musl x64/arm64, macOS x64/arm64, and Windows x64/arm64. Each native
+  Linux musl x64/arm64, macOS x64/arm64, and Windows x64. Each native
   package job now packs the platform package and root package into a clean npm
   project, verifies that the root tarball did not leak OCaml source/build/test
   files, asserts that the installed launcher resolves the optional platform
@@ -381,7 +381,7 @@ Known divergences and deferred scope:
 | Unsupported kill-signal stderr when used | Upstream forwards the exact `--kill-signal` string to Node/tree-kill. Bare aliases such as `TERM`/`HUP`, and unsupported names such as `SIGFOO`, print a partial shutdown log and then throw Node's `ERR_UNKNOWN_SIGNAL` stack when used. | The native CLI now matches the exit status, shutdown status line text, and `ERR_UNKNOWN_SIGNAL` headline for deterministic unsupported values. It still does not reproduce Node's environment-specific stack frames. |
 | JavaScript programmatic API | Upstream `concurrently()` can be imported from JavaScript. | The npm package now ships CommonJS/ESM/type entrypoints backed by the native binary, with matching top-level export names and explicit failures for unsupported lower-level hooks such as custom controllers, custom spawn/kill functions, and command IPC. |
 | Linux musl packaging | Upstream runs on Alpine/musl through Node. | Linux musl packages are built and smoke-installed on Alpine through npm's `libc` package selector. |
-| Windows backend | Upstream supports Windows process semantics. | Windows npm-script callers no longer fall back to the pinned upstream JavaScript CLI. The native Windows backend uses `CreateProcessW`, inherited stdio handles, exit-code mapping, and job-object process-tree termination. Windows x64/arm64 package smoke gates are wired in CI, including a Windows-selected pinned compatibility harness and native process-tree cleanup smoke. Full compatibility parity still needs the first Windows CI run results and any follow-up fixtures they expose. |
+| Windows backend | Upstream supports Windows process semantics. | Windows npm-script callers no longer fall back to the pinned upstream JavaScript CLI. The native Windows backend uses `CreateProcessW`, inherited stdio handles, exit-code mapping, and job-object process-tree termination. Windows x64 package smoke gates pass in CI, including a Windows-selected pinned compatibility harness and native process-tree cleanup smoke. Windows ARM64 packaging is not advertised because the GitHub runner cannot provision an opam binary for `windows/arm64`. |
 
 ## Current Verification Snapshot
 
