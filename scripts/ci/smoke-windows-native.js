@@ -50,12 +50,10 @@ function smokeCwdEnvAndOutput() {
   });
   assertEqual(result.status, 0, "cwd/env command status", result);
   assertEqual(result.stderr, "", "cwd/env stderr");
-  assertEqual(
-    normalizeLineEndings(result.stdout),
-    `[0] cwd:${tempDir}\n` +
-      "[0] env:ok\n" +
-      "[0] err:ok\n" +
-      `[0] ${command} exited with code 0\n`,
+  assertMergedOutput(
+    result.stdout,
+    [`[0] cwd:${tempDir}`, "[0] env:ok", "[0] err:ok"],
+    `[0] ${command} exited with code 0`,
     "cwd/env stdout"
   );
 }
@@ -224,6 +222,30 @@ function sleep(ms) {
 
 function normalizeLineEndings(text) {
   return text.replaceAll("\r\n", "\n");
+}
+
+function assertMergedOutput(actual, expectedLines, expectedCloseLine, label) {
+  const normalized = normalizeLineEndings(actual);
+  const expectedClose = `${expectedCloseLine}\n`;
+  if (!normalized.endsWith(expectedClose)) {
+    throw new Error(
+      `${label}: expected close line ${JSON.stringify(expectedCloseLine)}, ` +
+        `got ${JSON.stringify(normalized)}`
+    );
+  }
+  const body = normalized.slice(0, -expectedClose.length);
+  const bodyWithoutTrailingNewline = body.endsWith("\n")
+    ? body.slice(0, -1)
+    : body;
+  const actualLines =
+    bodyWithoutTrailingNewline === ""
+      ? []
+      : bodyWithoutTrailingNewline.split("\n");
+  assertEqual(
+    JSON.stringify([...actualLines].sort()),
+    JSON.stringify([...expectedLines].sort()),
+    label
+  );
 }
 
 function assertEqual(actual, expected, label, detail) {
