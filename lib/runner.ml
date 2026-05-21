@@ -37,9 +37,13 @@ let with_parent_termination_signals ~cleanup run =
     if Option.is_none !received_signal then received_signal := Some signal;
     cleanup signal
   in
+  let install_signal_handler signal =
+    match Sys.signal signal (Sys.Signal_handle handle) with
+    | previous_handler -> Some (signal, previous_handler)
+    | exception Invalid_argument _ -> None
+  in
   previous_handlers :=
-    List.map
-      (fun signal -> (signal, Sys.signal signal (Sys.Signal_handle handle)))
+    List.filter_map install_signal_handler
       [ Sys.sighup; Sys.sigint; Sys.sigterm ];
   let result = Fun.protect ~finally:restore_handlers run in
   match !received_signal with
