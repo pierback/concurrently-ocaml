@@ -202,6 +202,79 @@ try {
   );
   assertEqual(versionSmoke.stderr, "", "conc version stderr");
 
+  if (process.platform === "win32") {
+    const apiSmoke = spawnNodeSmoke(
+      projectDir,
+      "api-smoke.cjs",
+      `
+      const concurrently = require(${JSON.stringify(publicPackageName)});
+      if (typeof concurrently !== "function") {
+        throw new Error("default export is not callable");
+      }
+      if (typeof concurrently.createConcurrently !== "function") {
+        throw new Error("createConcurrently export is missing");
+      }
+      const run = concurrently(['node -e "process.exit(0)"'], { raw: true });
+      run.result.then((events) => {
+        if (!Array.isArray(events) || events.length !== 1 || events[0].exitCode !== 0) {
+          throw new Error("invalid concurrently result events");
+        }
+        process.stdout.write("api smoke ok\\n");
+      }, (error) => {
+        console.error(error);
+        process.exit(1);
+      });
+      `
+    );
+    if (apiSmoke.error) {
+      throw apiSmoke.error;
+    }
+    if (apiSmoke.status !== 0) {
+      throw new Error(
+        `programmatic API smoke exited ${apiSmoke.status}\nstdout:\n${apiSmoke.stdout}\nstderr:\n${apiSmoke.stderr}`
+      );
+    }
+    assertOutputEqual(
+      apiSmoke.stdout,
+      "api smoke ok\n",
+      "programmatic API smoke stdout"
+    );
+    assertEqual(apiSmoke.stderr, "", "programmatic API smoke stderr");
+
+    const esmApiSmoke = spawnNodeSmoke(
+      projectDir,
+      "esm-api-smoke.mjs",
+      `
+      import concurrently, { createConcurrently } from ${JSON.stringify(publicPackageName)};
+      if (typeof concurrently !== "function") {
+        throw new Error("default ESM export is not callable");
+      }
+      if (typeof createConcurrently !== "function") {
+        throw new Error("createConcurrently ESM export is missing");
+      }
+      const run = concurrently(['node -e "process.exit(0)"'], { raw: true });
+      const events = await run.result;
+      if (!Array.isArray(events) || events.length !== 1 || events[0].exitCode !== 0) {
+        throw new Error("invalid concurrently ESM result events");
+      }
+      process.stdout.write("esm api smoke ok\\n");
+      `
+    );
+    if (esmApiSmoke.error) {
+      throw esmApiSmoke.error;
+    }
+    if (esmApiSmoke.status !== 0) {
+      throw new Error(
+        `programmatic ESM API smoke exited ${esmApiSmoke.status}\nstdout:\n${esmApiSmoke.stdout}\nstderr:\n${esmApiSmoke.stderr}`
+      );
+    }
+    assertOutputEqual(
+      esmApiSmoke.stdout,
+      "esm api smoke ok\n",
+      "programmatic ESM API smoke stdout"
+    );
+    assertEqual(esmApiSmoke.stderr, "", "programmatic ESM API smoke stderr");
+  } else {
   const apiSmoke = spawnNodeSmoke(
     projectDir,
     "api-smoke.cjs",
@@ -1136,6 +1209,7 @@ try {
     "programmatic ESM API smoke stdout"
   );
   assertEqual(esmApiSmoke.stderr, "", "programmatic ESM API smoke stderr");
+  }
 
   const helpSmoke = spawnFileSync(binPath, ["-h"], {
     cwd: projectDir,
