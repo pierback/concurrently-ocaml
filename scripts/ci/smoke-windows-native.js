@@ -51,7 +51,7 @@ function smokeCwdEnvAndOutput() {
   assertEqual(result.status, 0, "cwd/env command status", result);
   assertEqual(result.stderr, "", "cwd/env stderr");
   assertEqual(
-    result.stdout,
+    normalizeLineEndings(result.stdout),
     `[0] cwd:${tempDir}\n` +
       "[0] env:ok\n" +
       "[0] err:ok\n" +
@@ -70,7 +70,7 @@ function smokeStdin() {
   assertEqual(result.status, 0, "stdin command status", result);
   assertEqual(result.stderr, "", "stdin stderr");
   assertEqual(
-    result.stdout,
+    normalizeLineEndings(result.stdout),
     `[0] stdin-ok\n[0] ${command} exited with code 0\n`,
     "stdin stdout"
   );
@@ -82,7 +82,7 @@ function smokeFailureExitStatus() {
   assertEqual(result.status, 1, "failure command status", result);
   assertEqual(result.stderr, "", "failure stderr");
   assertEqual(
-    result.stdout,
+    normalizeLineEndings(result.stdout),
     `[0] ${command} exited with code 7\n`,
     "failure stdout"
   );
@@ -220,6 +220,10 @@ function sleep(ms) {
   return new Promise((resolvePromise) => {
     setTimeout(resolvePromise, ms);
   });
+}
+
+function normalizeLineEndings(text) {
+  return text.replaceAll("\r\n", "\n");
 }
 
 function assertEqual(actual, expected, label, detail) {
