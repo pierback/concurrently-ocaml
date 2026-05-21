@@ -171,6 +171,7 @@ jobs:
               trap '\''sudo chown -R "$HOST_UID:$HOST_GID" /work'\'' EXIT
               sudo apk add --no-cache nodejs npm
               sudo chown -R opam:opam /work
+              opam repository set-url default https://opam.ocaml.org
               opam update
               opam switch create . ocaml-base-compiler.5.4.1 --yes
               eval "$(opam env --switch=. --set-switch)"
