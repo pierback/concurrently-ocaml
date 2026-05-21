@@ -396,12 +396,12 @@ As of May 21, 2026, the current `master` worktree has the following proof:
 - Root npm package contents remain constrained to launcher/package metadata,
   README, and LICENSE; OCaml source, tests, Dune files, and development scripts
   stay outside the root package surface.
-- GitHub Actions run `26204682042` passed the target native package gates for
-  Windows x64, Linux x64 musl, and Linux arm64 musl. The Windows x64 gate builds
-  `bin/main.exe`, audits the npm API surface, runs pinned `concurrently@9.2.1`
-  compatibility on Windows command fixtures, runs the Windows-native process
-  smoke, creates the `win32-x64` package, and smoke-installs the packed npm
-  package.
+- GitHub Actions run `26220505748` passed the Windows x64 native package gate
+  for commit `bf3d9c8`. The gate builds `bin/main.exe`, audits the npm API
+  surface, runs pinned `concurrently@9.2.1` compatibility on Windows command
+  fixtures, runs the Windows-native process smoke, creates the `win32-x64`
+  package, smoke-installs the packed npm package, and uploads the package
+  artifact.
 
 ## Implementation Slices
 
