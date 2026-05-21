@@ -1244,6 +1244,7 @@ function assertEqual(actual, expected, label) {
 }
 
 function assertSmokeOutput(actual, label, command, context) {
+  actual = normalizeLineEndings(actual);
   const expectedOutput = `[0] ${label}\n`;
   const expectedClose = `[0] ${command} exited with code 0\n`;
   const expected = expectedOutput + expectedClose;
@@ -1374,12 +1375,34 @@ function npmRun(args, cwd) {
 }
 
 function spawnFileSync(command, args, options) {
+  if (windowsCommandScript(command)) {
+    return spawnSync(windowsCommandLine(command, args), {
+      ...options,
+      shell: true,
+    });
+  }
   return spawnSync(command, args, {
     ...options,
-    shell: windowsCommandScript(command),
+    shell: false,
   });
 }
 
 function windowsCommandScript(command) {
   return process.platform === "win32" && command.toLowerCase().endsWith(".cmd");
+}
+
+function windowsCommandLine(command, args) {
+  return [command, ...args].map(quoteWindowsCommandArgument).join(" ");
+}
+
+function quoteWindowsCommandArgument(value) {
+  const text = String(value);
+  if (!/[ \t"&|<>^]/.test(text)) {
+    return text;
+  }
+  return `"${text.replaceAll('"', '\\"')}"`;
+}
+
+function normalizeLineEndings(text) {
+  return text.replaceAll("\r\n", "\n");
 }
