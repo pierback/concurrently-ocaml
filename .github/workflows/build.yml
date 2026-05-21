@@ -227,6 +227,8 @@ jobs:
 
       - run: npm run audit:npm-api
 
+      - run: npm run compat:concurrently
+
       - run: npm run smoke:windows-native
 
       - name: Create npm platform package
