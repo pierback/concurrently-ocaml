@@ -6,6 +6,11 @@ module Runner = Concurrentlyocaml.Runner
 module Runner_backend = Concurrentlyocaml.Runner_backend
 module Version = Concurrentlyocaml.Version
 
+let configure_binary_stdio () =
+  set_binary_mode_in stdin true;
+  set_binary_mode_out stdout true;
+  set_binary_mode_out stderr true
+
 let print_output output =
   let channel =
     match output.Output_formatter.stream with
@@ -461,6 +466,7 @@ let command ~passthrough_argv_arguments ~deprecated_name_separator_used =
       $ restart_tries $ restart_after $ teardown)
 
 let () =
+  configure_binary_stdio ();
   if Cli_argv.requests_help_before_separator Sys.argv then (
     print_string npm_compatible_help;
     exit 0);
