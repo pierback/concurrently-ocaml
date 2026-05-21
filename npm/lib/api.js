@@ -701,9 +701,11 @@ function readCommandEvents({
       runKilled ||
       (eventMissing && missingEventIsKilled);
     const exitCode =
-      event?.signal ??
-      event?.code ??
-      (killed ? command.killSignal ?? runKillSignal : runExitCode);
+      command.killed && runExitCode === 0
+        ? event?.code ?? 0
+        : event?.signal ??
+          event?.code ??
+          (killed ? command.killSignal ?? runKillSignal : runExitCode);
     command.exited = true;
     command.killed = killed;
     command.state = "exited";
