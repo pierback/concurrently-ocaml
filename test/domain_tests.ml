@@ -26,11 +26,19 @@ let test_argument_expander_replaces_passthrough_placeholders () =
     Argument_expander.expand
       ~additional_arguments:[ "--watch"; "client build"; "quote's" ]
   in
+  let client_build = if Sys.win32 then "\"client build\"" else "'client build'" in
+  let quote =
+    if Sys.win32 then "\"quote's\"" else "'quote'\\''s'"
+  in
+  let joined =
+    if Sys.win32 then "\"--watch client build quote's\""
+    else "'--watch client build quote'\\''s'"
+  in
   assert (expand "run {1}" = "run --watch");
-  assert (expand "run {2}" = "run 'client build'");
+  assert (expand "run {2}" = "run " ^ client_build);
   assert (expand "run {9}" = "run ");
-  assert (expand "run {@}" = "run --watch 'client build' 'quote'\\''s'");
-  assert (expand "run {*}" = "run '--watch client build quote'\\''s'");
+  assert (expand "run {@}" = "run --watch " ^ client_build ^ " " ^ quote);
+  assert (expand "run {*}" = "run " ^ joined);
   assert (expand "run \\{1}" = "run {1}");
   assert (expand "run {0} {abc}" = "run {0} {abc}")
 
