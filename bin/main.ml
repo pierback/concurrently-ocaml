@@ -247,10 +247,11 @@ let run_config env config =
 let run ~passthrough_argv_arguments ~deprecated_name_separator_used
     command_texts display_command_texts names_csv api_empty_expansion
     name_separator api_name_separator timings group raw hide_csv api_hide_indexes_csv
-    no_color passthrough_arguments handle_input default_input_target success prefix
-    prefix_colors_csv prefix_length timestamp_format pad_prefix kill_others
-    kill_others_on_success kill_others_on_fail kill_signal kill_timeout_ms
-    max_processes restart_tries restart_after teardown_texts =
+    api_raw_indexes_csv api_formatted_indexes_csv no_color passthrough_arguments
+    handle_input default_input_target success prefix prefix_colors_csv
+    prefix_length timestamp_format pad_prefix kill_others kill_others_on_success
+    kill_others_on_fail kill_signal kill_timeout_ms max_processes restart_tries
+    restart_after teardown_texts =
   let prefix_length =
     match float_of_string_opt (String.trim prefix_length) with
     | Some value
@@ -266,10 +267,11 @@ let run ~passthrough_argv_arguments ~deprecated_name_separator_used
       ~force_empty_expansion:api_empty_expansion
       ~name_separator:(Option.value api_name_separator ~default:name_separator)
       ~spacious:false ~timings ~group ~raw ~hide_csv ~no_color ~prefix
-      ~api_hide_indexes_csv ~prefix_colors_csv ~prefix_length ~pad_prefix
-      ~timestamp_format ~handle_input ~default_input_target ~success
-      ~kill_others_on_success ~kill_others ~kill_others_on_fail ~kill_signal
-      ~kill_timeout_ms ~max_processes ~restart_tries ~restart_after
+      ~api_hide_indexes_csv ~api_raw_indexes_csv ~api_formatted_indexes_csv
+      ~prefix_colors_csv ~prefix_length ~pad_prefix ~timestamp_format
+      ~handle_input ~default_input_target ~success ~kill_others_on_success
+      ~kill_others ~kill_others_on_fail ~kill_signal ~kill_timeout_ms
+      ~max_processes ~restart_tries ~restart_after
   with
   | Error error ->
       Printf.eprintf "Error: %s\n" (Cli_config.error_message error);
@@ -320,6 +322,20 @@ let api_hide_indexes =
     value
     & opt (some string) None
     & info [ "api-hide-indexes" ] ~docv:"INDEXES" ~doc)
+
+let api_raw_indexes =
+  let doc = "Internal API facade command indexes whose output is raw." in
+  Cmdliner.Arg.(
+    value
+    & opt (some string) None
+    & info [ "api-raw-indexes" ] ~docv:"INDEXES" ~doc)
+
+let api_formatted_indexes =
+  let doc = "Internal API facade command indexes whose output is formatted." in
+  Cmdliner.Arg.(
+    value
+    & opt (some string) None
+    & info [ "api-formatted-indexes" ] ~docv:"INDEXES" ~doc)
 
 let no_color =
   let doc = "Disable ANSI colors in formatted output." in
@@ -465,11 +481,12 @@ let command ~passthrough_argv_arguments ~deprecated_name_separator_used =
       const (run ~passthrough_argv_arguments ~deprecated_name_separator_used)
       $ command_texts $ api_display_commands $ names $ api_empty_expansion
       $ name_separator $ api_name_separator $ timings $ group $ raw $ hide
-      $ api_hide_indexes $ no_color $ passthrough_arguments $ handle_input
-      $ default_input_target $ success $ prefix $ prefix_colors $ prefix_length
-      $ timestamp_format $ pad_prefix $ kill_others $ kill_others_on_success
-      $ kill_others_on_fail $ kill_signal $ kill_timeout $ max_processes
-      $ restart_tries $ restart_after $ teardown)
+      $ api_hide_indexes $ api_raw_indexes $ api_formatted_indexes $ no_color
+      $ passthrough_arguments $ handle_input $ default_input_target $ success
+      $ prefix $ prefix_colors $ prefix_length $ timestamp_format $ pad_prefix
+      $ kill_others $ kill_others_on_success $ kill_others_on_fail
+      $ kill_signal $ kill_timeout $ max_processes $ restart_tries
+      $ restart_after $ teardown)
 
 let () =
   configure_binary_stdio ();

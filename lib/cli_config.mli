@@ -34,6 +34,8 @@ val create :
   raw:bool ->
   hide_csv:string option ->
   api_hide_indexes_csv:string option ->
+  api_raw_indexes_csv:string option ->
+  api_formatted_indexes_csv:string option ->
   no_color:bool ->
   prefix:string option ->
   prefix_colors_csv:string option ->
@@ -68,6 +70,8 @@ val create_with_display :
   raw:bool ->
   hide_csv:string option ->
   api_hide_indexes_csv:string option ->
+  api_raw_indexes_csv:string option ->
+  api_formatted_indexes_csv:string option ->
   no_color:bool ->
   prefix:string option ->
   prefix_colors_csv:string option ->

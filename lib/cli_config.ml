@@ -27,6 +27,7 @@ type expanded_commands = {
   no_op : bool;
   effective_names : string list option;
   hidden_by_index : bool array;
+  raw_by_index : bool array;
   prefix_palette : prefix_palette;
 }
 
@@ -136,6 +137,23 @@ let hidden_indexes ~command_count ~names ~api_hide_indexes_csv hide_csv =
     | Some csv -> indexes_for_csv ~command_count csv
   in
   List.sort_uniq Int.compare (hidden_from_indexes @ hidden_from_identifiers)
+
+let indexed_booleans ~command_count ~default ~true_indexes_csv
+    ~false_indexes_csv =
+  let values = Array.make command_count default in
+  let apply csv value =
+    match csv with
+    | None -> ()
+    | Some csv ->
+        indexes_for_csv ~command_count csv
+        |> List.iter (fun index ->
+               assert (index >= 0);
+               assert (index < command_count);
+               values.(index) <- value)
+  in
+  apply true_indexes_csv true;
+  apply false_indexes_csv false;
+  values
 
 let split_csv = function
   | None -> []
@@ -332,7 +350,8 @@ let max_processes_of_string ~cpu_count ~command_count = function
 let option_of_name name = if String.equal name "" then None else Some name
 
 let expand_command_inputs ~cwd ~passthrough_arguments ~command_texts ~names
-    ~hide_csv ~api_hide_indexes_csv ~prefix_colors_csv ~teardown_texts =
+    ~raw ~hide_csv ~api_hide_indexes_csv ~api_raw_indexes_csv
+    ~api_formatted_indexes_csv ~prefix_colors_csv ~teardown_texts =
   match
     Cli_command_inputs.expand ~cwd ~passthrough_arguments ~command_texts ~names
   with
@@ -353,6 +372,11 @@ let expand_command_inputs ~cwd ~passthrough_arguments ~command_texts ~names
       assert (index < command_count);
       hidden_by_index.(index) <- true)
     hidden_indexes;
+  let raw_by_index =
+    indexed_booleans ~command_count ~default:raw
+      ~true_indexes_csv:api_raw_indexes_csv
+      ~false_indexes_csv:api_formatted_indexes_csv
+  in
   let prefix_palette = prefix_palette prefix_colors_csv in
   Ok {
     command_inputs;
@@ -361,6 +385,7 @@ let expand_command_inputs ~cwd ~passthrough_arguments ~command_texts ~names
     no_op;
     effective_names;
     hidden_by_index;
+    raw_by_index;
     prefix_palette;
   }
 
@@ -395,7 +420,7 @@ let display_command_text_at display_command_texts index =
       assert (index < Array.length values);
       Some values.(index)
 
-let create_commands ?cwd ~raw ~hidden_by_index ~prefix_palette
+let create_commands ?cwd ~raw_by_index ~hidden_by_index ~prefix_palette
     ?display_command_texts command_inputs =
   let rec create index commands = function
     | [] -> Ok (List.rev commands)
@@ -409,7 +434,8 @@ let create_commands ?cwd ~raw ~hidden_by_index ~prefix_palette
             ?cwd ~env:[]
             ?prefix_color:(prefix_color_at prefix_palette index)
             ?display_text:(display_command_text_at display_command_texts index)
-            ~raw ~hidden:hidden_by_index.(index) ~index command_text
+            ~raw:raw_by_index.(index) ~hidden:hidden_by_index.(index) ~index
+            command_text
         with
         | Error error -> Error (`Command_error (index, error))
         | Ok command -> create (index + 1) (command :: commands) rest)
@@ -485,7 +511,7 @@ let create_command_config ~cwd ~teardown_texts ~policy_input ~display
   | Error error -> Error error
   | Ok display_command_texts -> (
       match
-        create_commands ?cwd ~raw:display.raw
+        create_commands ?cwd ~raw_by_index:expanded.raw_by_index
           ~hidden_by_index:expanded.hidden_by_index
           ~prefix_palette:expanded.prefix_palette ?display_command_texts
           expanded.command_inputs
@@ -515,8 +541,9 @@ let create_command_config ~cwd ~teardown_texts ~policy_input ~display
 let create_with_display ~cwd ~passthrough_arguments ~teardown_texts
     ~command_texts ~display_command_texts ~names_csv
     ~force_empty_expansion ~name_separator ~spacious ~timings ~group ~raw
-    ~hide_csv ~api_hide_indexes_csv ~no_color ~prefix
-    ~prefix_colors_csv ~prefix_length ~pad_prefix ~timestamp_format ~handle_input
+    ~hide_csv ~api_hide_indexes_csv ~api_raw_indexes_csv
+    ~api_formatted_indexes_csv ~no_color ~prefix ~prefix_colors_csv
+    ~prefix_length ~pad_prefix ~timestamp_format ~handle_input
     ~default_input_target ~success ~kill_others_on_success ~kill_others
     ~kill_others_on_fail ~kill_signal ~kill_timeout_ms ~max_processes
     ~restart_tries ~restart_after =
@@ -586,6 +613,7 @@ let create_with_display ~cwd ~passthrough_arguments ~teardown_texts
             no_op = teardown_texts = [];
             effective_names = None;
             hidden_by_index = [||];
+            raw_by_index = [||];
             prefix_palette = prefix_palette prefix_colors_csv;
           }
         in
@@ -593,21 +621,24 @@ let create_with_display ~cwd ~passthrough_arguments ~teardown_texts
       else
       (match
         expand_command_inputs ~cwd ~passthrough_arguments ~command_texts ~names
-          ~hide_csv ~api_hide_indexes_csv ~prefix_colors_csv ~teardown_texts
+          ~raw ~hide_csv ~api_hide_indexes_csv ~api_raw_indexes_csv
+          ~api_formatted_indexes_csv ~prefix_colors_csv ~teardown_texts
        with
        | Error error -> Error error
        | Ok expanded -> create_from_expansion expanded))
 
 let create ~cwd ~passthrough_arguments ~teardown_texts ~command_texts ~names_csv
     ~name_separator ~spacious ~timings ~group ~raw ~hide_csv
-    ~api_hide_indexes_csv ~no_color ~prefix ~prefix_colors_csv ~prefix_length
-    ~pad_prefix ~timestamp_format ~handle_input ~default_input_target ~success
+    ~api_hide_indexes_csv ~api_raw_indexes_csv ~api_formatted_indexes_csv
+    ~no_color ~prefix ~prefix_colors_csv ~prefix_length ~pad_prefix
+    ~timestamp_format ~handle_input ~default_input_target ~success
     ~kill_others_on_success ~kill_others ~kill_others_on_fail ~kill_signal
     ~kill_timeout_ms ~max_processes ~restart_tries ~restart_after =
   create_with_display ~cwd ~passthrough_arguments ~teardown_texts
     ~command_texts ~display_command_texts:[] ~names_csv
     ~force_empty_expansion:false ~name_separator
-    ~spacious ~timings ~group ~raw ~hide_csv ~api_hide_indexes_csv ~no_color ~prefix
+    ~spacious ~timings ~group ~raw ~hide_csv ~api_hide_indexes_csv
+    ~api_raw_indexes_csv ~api_formatted_indexes_csv ~no_color ~prefix
     ~prefix_colors_csv ~prefix_length ~pad_prefix ~timestamp_format
     ~handle_input ~default_input_target ~success ~kill_others_on_success
     ~kill_others ~kill_others_on_fail ~kill_signal ~kill_timeout_ms

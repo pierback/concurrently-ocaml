@@ -23,7 +23,9 @@ the final run result to a process exit code.
 The JavaScript programmatic API must not be implemented by falling back to
 upstream `concurrently`. The root package owns a native-backed CommonJS/ESM
 facade that preserves the public entrypoint names and runs through the native
-binary. Lower-level JavaScript-only extension hooks that would require upstream
+binary. Command-local JavaScript API metadata such as `cwd`, `env`, `raw`,
+`prefixColor`, and `hidden` is translated into native run configuration.
+Lower-level JavaScript-only extension hooks that would require upstream
 internals fail explicitly until they are replaced by repo-owned behavior.
 
 The core domain model must stay OS-neutral. Process supervision is a backend
@@ -192,12 +194,12 @@ Win32 process creation, stdio handle inheritance, and job-object teardown.
 | Prefix modes: index, pid, time, command, name, none, template | Output formatter | Implemented for formatter output; PID comes from backend process identity on output events |
 | Prefix colors and auto colors | CLI config, Output formatter | Implemented for pinned npm-published reset defaults, named colors, modifiers, bright colors, backgrounds, `auto`, `reset`, invalid-color fallback, function-style fallback, and short/full `#RGB`/`#RRGGBB` foregrounds |
 | Prefix length and padding | Output formatter | Implemented via `--prefix-length` and `--pad-prefix`, including npm-compatible default fallback, compact numeric `-lN` values, and JavaScript slicing semantics for zero, invalid, finite fractional, negative, and `Infinity` prefix lengths |
-| Raw output | CLI config, Run API, Output formatter | Global `--raw` support plus per-command raw mode through structured `Run_api` inputs |
+| Raw output | CLI config, Run API, Output formatter, npm API facade | Global `--raw` support plus per-command raw mode through structured `Run_api` inputs and the JavaScript API facade |
 | Hide selected command output | CLI config, Output formatter | Implemented for `--hide` by index, name, and comma-separated selectors |
 | Grouped output | CLI config, Output formatter | Implemented via `-g`/`--group`; non-raw command output is emitted on stdout and released in command index order |
 | Command close notifications | Runner, Output formatter, Run result | Implemented for default formatted output, grouped output, signal labels, cancellation status lines, raw/hidden suppression, and `-k` killed-sibling exit calculation like npm |
-| Cwd per run and per command | Run API, Runner | CLI `--cwd` is not exposed by pinned `concurrently@9.2.1`; structured OCaml `Run_api` commands can still provide cwd values before they reach the Runner |
-| Env per command | Run API, Runner | Structured `Run_api` commands support per-command env merged by `Runner`; CLI env flags are not an npm surface |
+| Cwd per run and per command | Run API, Runner, npm API facade | CLI `--cwd` is not exposed by pinned `concurrently@9.2.1`; structured OCaml `Run_api` commands and JavaScript API commands can provide command-local cwd values |
+| Env per command | Run API, Runner, npm API facade | Structured `Run_api` commands and JavaScript API commands support per-command env values merged with run-level env |
 | Kill others on success/failure | Run policy, Runner | Implemented for POSIX process groups |
 | Signal choice and kill timeout | Run policy, Runner | Implemented for OCaml/POSIX-supported signal names and aliases through `--kill-signal`, npm alias `--ks`, and `CONCURRENTLY_KILL_SIGNAL`/`CONCURRENTLY_KS`, including deterministic `SIGINT` and `SIGUSR1` sibling cancellation parity plus parent `SIGINT`/`SIGTERM`/`SIGHUP` forwarding and exit projection; `--kill-timeout` accepts npm-style numeric coercion for invalid, sub-millisecond fractional, fractional, and negative values, emits npm-compatible Node timer warning text for negative values when used, emits force-kill status after the timeout window, and force-kills still-running POSIX process groups with `SIGKILL` |
 | Max running processes | CLI config, Run policy, Runner | Implemented via `-m`/`--max-processes` for exact counts, compact numeric `-mN` values, and percent-of-detected-CPU values |
