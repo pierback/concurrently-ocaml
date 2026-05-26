@@ -280,7 +280,7 @@ try {
     "api-smoke.cjs",
     `
       const concurrently = require(${JSON.stringify(publicPackageName)});
-      const { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } = require("node:fs");
+      const { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } = require("node:fs");
       const { tmpdir } = require("node:os");
       const { delimiter, join } = require("node:path");
       const { PassThrough, Writable } = require("node:stream");
@@ -543,20 +543,316 @@ try {
           throw new Error("empty wildcard teardown did not run");
         }
       });
-      const eventTempDirs = () => readdirSync(tmpdir()).filter((name) => name.startsWith("concurrently-ml-api-")).sort();
-      const unsupportedDirsBefore = eventTempDirs();
+      let controllerFinished = false;
+      const controllerCloseEvents = [];
+      const controllerStateChanges = [];
+      const controllerRun = concurrently(['node -e "process.exit(0)"'], {
+        raw: true,
+        outputStream: shortcutOutputSink,
+        controllers: [
+          {
+            handle(commands) {
+              if (commands.length !== 1 || commands[0].command.indexOf("process.exit(0)") === -1) {
+                throw new Error("controller did not receive normalized commands: " + JSON.stringify(commands));
+              }
+              commands[0].close.subscribe((event) => controllerCloseEvents.push(event));
+              commands[0].stateChange.subscribe((state) => controllerStateChanges.push(state));
+              return {
+                commands,
+                onFinish() {
+                  controllerFinished = true;
+                },
+              };
+            },
+          },
+        ],
+      });
+      const controllerResult = controllerRun.result.then((events) => {
+        if (!controllerFinished) {
+          throw new Error("controller onFinish did not run before result settled");
+        }
+        if (
+          controllerCloseEvents.length !== 1 ||
+          controllerCloseEvents[0].exitCode !== 0 ||
+          controllerCloseEvents[0] !== events[0]
+        ) {
+          throw new Error("controller close subject did not receive native close event");
+        }
+        if (!controllerStateChanges.includes("started") || !controllerStateChanges.includes("exited")) {
+          throw new Error("controller stateChange subject missed lifecycle states: " + JSON.stringify(controllerStateChanges));
+        }
+      });
+      const multiControllerStateChanges = new Map();
+      const multiControllerRun = concurrently([
+        'node -e "process.exit(0)"',
+        'node -e "process.exit(0)"',
+      ], {
+        raw: true,
+        outputStream: shortcutOutputSink,
+        controllers: [
+          {
+            handle(commands) {
+              for (const command of commands) {
+                multiControllerStateChanges.set(command.index, []);
+                command.stateChange.subscribe((state) => {
+                  multiControllerStateChanges.get(command.index).push(state);
+                });
+              }
+              return { commands };
+            },
+          },
+        ],
+      });
+      const multiControllerResult = multiControllerRun.result.then((events) => {
+        if (!Array.isArray(events) || events.length !== 2) {
+          throw new Error("multi-command controller returned wrong event count: " + JSON.stringify(events));
+        }
+        for (const event of events) {
+          const states = multiControllerStateChanges.get(event.index) || [];
+          if (!states.includes("started") || !states.includes("exited")) {
+            throw new Error("multi-command controller missed lifecycle states: " + JSON.stringify([...multiControllerStateChanges]));
+          }
+        }
+      });
+      const queuedControllerTransitions = [];
+      const queuedControllerRun = concurrently([
+        'node -e "setTimeout(()=>process.exit(0),80)"',
+        'node -e "process.exit(0)"',
+      ], {
+        raw: true,
+        maxProcesses: 1,
+        outputStream: shortcutOutputSink,
+        controllers: [
+          {
+            handle(commands) {
+              for (const command of commands) {
+                command.stateChange.subscribe((state) => {
+                  queuedControllerTransitions.push(command.index + ":" + state);
+                });
+              }
+              return { commands };
+            },
+          },
+        ],
+      });
+      const queuedControllerResult = queuedControllerRun.result.then((events) => {
+        if (!Array.isArray(events) || events.length !== 2) {
+          throw new Error("queued controller returned wrong event count: " + JSON.stringify(events));
+        }
+        const eventsByIndex = new Map(events.map((event) => [event.index, event]));
+        const first = eventsByIndex.get(0);
+        const second = eventsByIndex.get(1);
+        if (!first || !second) {
+          throw new Error("queued controller did not preserve command indexes: " + JSON.stringify(events));
+        }
+        const firstEnd = first.timings.endDate.getTime();
+        const secondStart = second.timings.startDate.getTime();
+        if (secondStart + 5 < firstEnd) {
+          throw new Error("queued controller lifecycle did not respect maxProcesses: " + JSON.stringify(events));
+        }
+        for (const index of [0, 1]) {
+          if (
+            queuedControllerTransitions.indexOf(index + ":started") === -1 ||
+            queuedControllerTransitions.indexOf(index + ":exited") === -1
+          ) {
+            throw new Error("queued controller missed lifecycle states: " + JSON.stringify(queuedControllerTransitions));
+          }
+        }
+      });
       try {
-        concurrently(['node -e "process.exit(0)"'], { controllers: [] });
-        throw new Error("controllers hook did not fail");
+        concurrently(['node -e "process.exit(0)"'], {
+          raw: true,
+          outputStream: shortcutOutputSink,
+          controllers: [
+            {
+              handle(commands) {
+                return { commands: [{ index: commands[0].index, command: commands[0].command }] };
+              },
+            },
+          ],
+        });
+        throw new Error("plain object controller command did not fail");
       } catch (error) {
-        if (!String(error && error.message).includes("not supported")) {
+        if (!String(error && error.message).includes("controllers must return Command objects")) {
           throw error;
         }
       }
-      const unsupportedDirsAfter = eventTempDirs();
-      if (JSON.stringify(unsupportedDirsAfter) !== JSON.stringify(unsupportedDirsBefore)) {
-        throw new Error("unsupported API validation leaked event temp dirs");
+      const filteredControllerRun = concurrently([
+        'node -e "process.exit(9)"',
+        'node -e "if (process.env.FILTERED_CONTROLLER !== \\'ok\\') process.exit(4)"',
+      ], {
+        raw: true,
+        env: { FILTERED_CONTROLLER: "ok" },
+        outputStream: shortcutOutputSink,
+        successCondition: "command-1",
+        controllers: [
+          {
+            handle(commands) {
+              return { commands: [commands[1]] };
+            },
+          },
+        ],
+      });
+      if (filteredControllerRun.commands.length !== 1 || filteredControllerRun.commands[0].index !== 1) {
+        throw new Error("filtered controller did not expose controlled command list");
       }
+      const filteredControllerResult = filteredControllerRun.result.then((events) => {
+        if (
+          !Array.isArray(events) ||
+          events.length !== 1 ||
+          events[0].index !== 1 ||
+          events[0].exitCode !== 0
+        ) {
+          throw new Error("filtered controller result did not preserve original command index/env: " + JSON.stringify(events));
+        }
+      });
+      const filteredInput = new PassThrough();
+      const filteredInputRun = concurrently([
+        'node -e "process.exit(9)"',
+        'node -e "process.stdin.on(\\'data\\',()=>process.exit(0)); setTimeout(()=>process.exit(5),500)"',
+      ], {
+        raw: true,
+        inputStream: filteredInput,
+        outputStream: shortcutOutputSink,
+        defaultInputTarget: 1,
+        controllers: [
+          {
+            handle(commands) {
+              return { commands: [commands[1]] };
+            },
+          },
+        ],
+      });
+      filteredInput.end("ok\\n");
+      const filteredInputResult = filteredInputRun.result.then((events) => {
+        if (
+          !Array.isArray(events) ||
+          events.length !== 1 ||
+          events[0].index !== 1 ||
+          events[0].exitCode !== 0
+        ) {
+          throw new Error("filtered controller default input target was not remapped: " + JSON.stringify(events));
+        }
+      });
+      let filteredHideOutput = "";
+      const filteredHideStream = new Writable({
+        write(chunk, _encoding, callback) {
+          filteredHideOutput += chunk.toString();
+          callback();
+        },
+      });
+      const filteredHideRun = concurrently([
+        'node -e "console.log(\\'removed\\')"',
+        'node -e "console.log(\\'kept\\')"',
+      ], {
+        raw: true,
+        hide: [0],
+        outputStream: filteredHideStream,
+        controllers: [
+          {
+            handle(commands) {
+              return { commands: [commands[1]] };
+            },
+          },
+        ],
+      });
+      const filteredHideResult = filteredHideRun.result.then((events) => {
+        if (!Array.isArray(events) || events.length !== 1 || events[0].index !== 1) {
+          throw new Error("filtered hide controller returned wrong events: " + JSON.stringify(events));
+        }
+        if (!filteredHideOutput.includes("kept")) {
+          throw new Error("filtered hide option hid the retained command: " + filteredHideOutput);
+        }
+      });
+      let filteredPrefixColorOutput = "";
+      const filteredPrefixColorStream = new Writable({
+        write(chunk, _encoding, callback) {
+          filteredPrefixColorOutput += chunk.toString();
+          callback();
+        },
+      });
+      const previousFilteredForceColor = process.env.FORCE_COLOR;
+      process.env.FORCE_COLOR = "1";
+      const filteredPrefixColorRun = concurrently([
+        { name: "one", command: 'node -e "process.exit(0)"' },
+        { name: "two", command: 'node -e "console.log(\\'color-kept\\')"' },
+      ], {
+        outputStream: filteredPrefixColorStream,
+        prefixColors: ["red", "blue"],
+        controllers: [
+          {
+            handle(commands) {
+              return { commands: [commands[1]] };
+            },
+          },
+        ],
+      });
+      if (previousFilteredForceColor === undefined) {
+        delete process.env.FORCE_COLOR;
+      } else {
+        process.env.FORCE_COLOR = previousFilteredForceColor;
+      }
+      const filteredPrefixColorResult = filteredPrefixColorRun.result.then((events) => {
+        if (!Array.isArray(events) || events.length !== 1 || events[0].index !== 1) {
+          throw new Error("filtered prefix color controller returned wrong events: " + JSON.stringify(events));
+        }
+        if (filteredPrefixColorOutput.includes("\\x1b[31m[two]")) {
+          throw new Error("filtered prefix color shifted red onto retained command: " + filteredPrefixColorOutput);
+        }
+        if (!filteredPrefixColorOutput.includes("\\x1b[34m[two]")) {
+          throw new Error("filtered prefix color did not preserve retained command color: " + filteredPrefixColorOutput);
+        }
+      });
+      const missingPositiveSelectorRun = concurrently([
+        'node -e "process.exit(0)"',
+        'node -e "process.exit(0)"',
+      ], {
+        raw: true,
+        outputStream: shortcutOutputSink,
+        successCondition: "command-0",
+        controllers: [
+          {
+            handle(commands) {
+              return { commands: [commands[1]] };
+            },
+          },
+        ],
+      });
+      const missingPositiveSelectorResult = missingPositiveSelectorRun.result.then(
+        () => {
+          throw new Error("filtered controller resolved an absent positive command selector");
+        },
+        (events) => {
+          if (!Array.isArray(events) || events.length !== 1 || events[0].index !== 1) {
+            throw new Error("absent positive selector rejected with wrong event shape: " + JSON.stringify(events));
+          }
+        }
+      );
+      const missingNegatedSelectorRun = concurrently([
+        'node -e "process.exit(0)"',
+        'node -e "process.exit(1)"',
+      ], {
+        raw: true,
+        outputStream: shortcutOutputSink,
+        successCondition: "!command-0",
+        controllers: [
+          {
+            handle(commands) {
+              return { commands: [commands[1]] };
+            },
+          },
+        ],
+      });
+      const missingNegatedSelectorResult = missingNegatedSelectorRun.result.then(
+        () => {
+          throw new Error("filtered controller resolved an absent negated command selector with a failing retained command");
+        },
+        (events) => {
+          if (!Array.isArray(events) || events.length !== 1 || events[0].index !== 1) {
+            throw new Error("absent negated selector rejected with wrong event shape: " + JSON.stringify(events));
+          }
+        }
+      );
       const undefinedHookOptions = concurrently(['node -e "process.exit(0)"'], {
         raw: true,
         outputStream: shortcutOutputSink,
@@ -1275,6 +1571,15 @@ try {
         npmRunWildcardResult,
         emptyWildcardResult,
         emptyTeardownResult,
+        controllerResult,
+        multiControllerResult,
+        queuedControllerResult,
+        filteredControllerResult,
+        filteredInputResult,
+        filteredHideResult,
+        filteredPrefixColorResult,
+        missingPositiveSelectorResult,
+        missingNegatedSelectorResult,
         undefinedHookOptionsResult,
         createConcurrentlyResult,
         sanitizedResult,

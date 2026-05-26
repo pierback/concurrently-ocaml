@@ -21,6 +21,36 @@ class NativeApiUnsupportedError extends Error {
   }
 }
 
+class SimpleSubject {
+  constructor() {
+    this.subscribers = new Set();
+  }
+
+  subscribe(observer) {
+    const subscriber = observerSubscriber(observer);
+    this.subscribers.add(subscriber);
+    return {
+      unsubscribe: () => {
+        this.subscribers.delete(subscriber);
+      },
+    };
+  }
+
+  next(value) {
+    for (const subscriber of [...this.subscribers]) {
+      subscriber(value);
+    }
+  }
+
+  complete() {
+    this.subscribers.clear();
+  }
+
+  pipe() {
+    return this;
+  }
+}
+
 class Command {
   constructor(info = {}) {
     this.index = numberOrDefault(info.index, 0);
@@ -39,6 +69,18 @@ class Command {
     this.stdin = undefined;
     this.killSignal = undefined;
     this.killProcess = undefined;
+    this.startedAt = undefined;
+    this.close = new SimpleSubject();
+    this.error = new SimpleSubject();
+    this.stdout = new SimpleSubject();
+    this.stderr = new SimpleSubject();
+    this.timer = new SimpleSubject();
+    this.stateChange = new SimpleSubject();
+    this.messages = {
+      incoming: new SimpleSubject(),
+      outgoing: new SimpleSubject(),
+    };
+    this.process = undefined;
   }
 
   start() {
@@ -136,10 +178,18 @@ function concurrently(commandInputs, options = {}) {
   assertNativeOptions(options);
 
   const commands = expandShortcutCommands(normalizeCommands(commandInputs), options);
-  if (commands.length === 0 && arrayOption(options.teardown).length === 0) {
-    return { commands, result: Promise.resolve([]) };
-  }
   expandAdditionalArguments(commands, options.additionalArguments);
+  const controlled = applyControllers(commands, options.controllers);
+  const controlledCommands = controlled.commands;
+  if (
+    controlledCommands.length === 0 &&
+    arrayOption(options.teardown).length === 0
+  ) {
+    return {
+      commands: controlledCommands,
+      result: runOnFinishCallbacks(Promise.resolve([]), controlled.onFinishCallbacks),
+    };
+  }
   const eventDir = mkdtempSync(join(tmpdir(), "concurrently-ml-api-"));
   let cleanedEventDir = false;
   const cleanupEventDir = () => {
@@ -153,7 +203,7 @@ function concurrently(commandInputs, options = {}) {
   let child;
   let startedAt;
   try {
-    invocation = nativeInvocation(commands, options, eventDir);
+    invocation = nativeInvocation(controlledCommands, options, eventDir);
     startedAt = new Date();
     child = runNative(invocation.args, {
       cwd: invocation.cwd,
@@ -166,27 +216,32 @@ function concurrently(commandInputs, options = {}) {
   }
 
   const killWrappedCommand = (code) => {
-    if (commands[0].exited) {
+    if (controlledCommands[0].exited) {
       return false;
     }
     writeFileSync(invocation.killPaths[0], JSON.stringify(code), { mode: 0o600 });
-    commands[0].killed = true;
-    commands[0].killSignal = code;
+    controlledCommands[0].killed = true;
+    controlledCommands[0].killSignal = code;
     return true;
   };
 
-  if (commands.length === 1) {
-    commands[0].state = "started";
-    commands[0].pid = child.pid;
-    commands[0].stdin = child.stdin;
-    commands[0].killProcess = killWrappedCommand;
+  if (controlledCommands.length === 1) {
+    controlledCommands[0].pid = child.pid;
+    controlledCommands[0].stdin = child.stdin;
+    controlledCommands[0].killProcess = killWrappedCommand;
   }
 
+  const startPoll = setInterval(
+    () => markStartedCommands(controlledCommands, eventDir, startedAt),
+    20
+  );
+  startPoll.unref?.();
   const waitForOutput = attachStreams(child, options);
   const finishInput = attachInput(child, options);
 
   const result = new Promise((resolve, reject) => {
     child.on("error", (error) => {
+      clearInterval(startPoll);
       finishInput();
       waitForOutput().then(
         () => {
@@ -203,11 +258,13 @@ function concurrently(commandInputs, options = {}) {
       finishInput();
     });
     child.on("close", (code, signal) => {
+      clearInterval(startPoll);
       finishInput();
       const endedAt = new Date();
       const exitCode = signal ?? (code ?? 1);
+      markStartedCommands(controlledCommands, eventDir, startedAt);
       const events = readCommandEvents({
-        commands,
+        commands: controlledCommands,
         endedAt,
         eventDir,
         runExitCode: exitCode,
@@ -219,7 +276,7 @@ function concurrently(commandInputs, options = {}) {
       waitForOutput().then(
         () => {
           cleanupEventDir();
-          if (code === 0) {
+          if (code === 0 && closeEventsSucceeded(events, options.successCondition)) {
             resolve(events);
           } else {
             reject(events);
@@ -233,7 +290,10 @@ function concurrently(commandInputs, options = {}) {
     });
   });
 
-  return { commands, result };
+  return {
+    commands: controlledCommands,
+    result: runOnFinishCallbacks(result, controlled.onFinishCallbacks),
+  };
 }
 
 function createConcurrently(commandInputs, options) {
@@ -247,7 +307,7 @@ function assertCommandInputs(commandInputs) {
 }
 
 function assertNativeOptions(options) {
-  for (const key of ["controllers", "logger", "spawn", "kill"]) {
+  for (const key of ["logger", "spawn", "kill"]) {
     if (
       Object.prototype.hasOwnProperty.call(options, key) &&
       options[key] !== undefined
@@ -261,6 +321,16 @@ function assertNativeOptions(options) {
   ) {
     throw new Error("options.outputStream must be a writable stream");
   }
+}
+
+function observerSubscriber(observer) {
+  if (typeof observer === "function") {
+    return observer;
+  }
+  if (observer && typeof observer.next === "function") {
+    return (value) => observer.next(value);
+  }
+  throw new Error("subject subscriber must be a function or observer");
 }
 
 function assertCatchableKillSignal(signal) {
@@ -299,6 +369,94 @@ function normalizeCommands(commandInputs) {
       hidden: input.hidden,
     });
   });
+}
+
+function markStartedCommands(commands, eventDir, fallbackStartDate) {
+  for (const command of commands) {
+    if (command.state !== "stopped") {
+      continue;
+    }
+    const startMs = readCommandStartMs(eventStartPath(eventDir, command.index));
+    if (startMs !== undefined) {
+      markCommandStarted(command, new Date(startMs));
+    }
+  }
+  if (commands.length === 1 && commands[0]?.state === "stopped") {
+    markCommandStarted(commands[0], fallbackStartDate);
+  }
+}
+
+function markCommandStarted(command, startDate) {
+  if (command.state !== "stopped") {
+    return;
+  }
+  command.startedAt = startDate;
+  command.state = "started";
+  command.stateChange.next("started");
+  command.timer.next({ startDate });
+}
+
+function applyControllers(commands, controllers) {
+  if (controllers === undefined || controllers === null) {
+    return { commands, onFinishCallbacks: [] };
+  }
+  if (!Array.isArray(controllers)) {
+    throw new Error("options.controllers must be an array");
+  }
+
+  const onFinishCallbacks = [];
+  let controlledCommands = commands;
+  for (const controller of controllers) {
+    if (!controller || typeof controller.handle !== "function") {
+      throw new Error("options.controllers entries must implement handle(commands)");
+    }
+    const result = controller.handle(controlledCommands);
+    if (!result || !Array.isArray(result.commands)) {
+      throw new Error("controller.handle(commands) must return { commands }");
+    }
+    controlledCommands = result.commands;
+    if (result.onFinish !== undefined) {
+      if (typeof result.onFinish !== "function") {
+        throw new Error("controller onFinish must be a function");
+      }
+      onFinishCallbacks.push(result.onFinish);
+    }
+  }
+  assertUniqueCommandIndexes(controlledCommands);
+  return { commands: controlledCommands, onFinishCallbacks };
+}
+
+function assertUniqueCommandIndexes(commands) {
+  const indexes = new Set();
+  for (const command of commands) {
+    if (!(command instanceof Command)) {
+      throw new Error("controllers must return Command objects");
+    }
+    if (!Number.isInteger(command.index)) {
+      throw new Error("controllers must return commands with integer indexes");
+    }
+    if (indexes.has(command.index)) {
+      throw new Error(`controllers returned duplicate command index ${command.index}`);
+    }
+    indexes.add(command.index);
+  }
+}
+
+function runOnFinishCallbacks(result, onFinishCallbacks) {
+  if (onFinishCallbacks.length === 0) {
+    return result;
+  }
+  const runCallbacks = () =>
+    Promise.all(onFinishCallbacks.map((onFinish) => onFinish())).then(
+      () => undefined
+    );
+  return result.then(
+    (events) => runCallbacks().then(() => events),
+    (error) =>
+      runCallbacks().then(() => {
+        throw error;
+      })
+  );
 }
 
 function expandShortcutCommands(commands, options) {
@@ -534,11 +692,15 @@ function nativeInvocation(commands, options, eventDir) {
   args.push("--api-ignore-env-options");
   if (commands.length === 0) args.push("--api-empty-expansion");
   pushOption(args, "--max-processes", options.maxProcesses);
-  pushOption(args, "--success", options.successCondition);
+  pushOption(args, "--success", nativeSuccessCondition(commands, options.successCondition));
   pushOption(args, "--prefix", options.prefix);
   pushOption(args, "--prefix-length", options.prefixLength);
   pushOption(args, "--timestamp-format", options.timestampFormat);
-  pushOption(args, "--default-input-target", options.defaultInputTarget);
+  pushOption(
+    args,
+    "--default-input-target",
+    nativeCommandIdentifier(commands, options.defaultInputTarget)
+  );
   pushOption(args, "--restart-tries", options.restartTries);
   pushOption(args, "--restart-after", options.restartDelay);
   pushOption(args, "--kill-signal", options.killSignal);
@@ -613,7 +775,7 @@ function nativeInvocation(commands, options, eventDir) {
         eventStartPath(eventDir, command.index),
         killPath(eventDir, command.index),
         options.handleInput || options.inputStream,
-        commandEnvPaths[command.index],
+        requiredCommandEnvPath(commandEnvPaths, command),
         commandCwd(command)
       )
     )
@@ -665,7 +827,7 @@ function eventWrapperCommand(
     "let wrote=false",
     "const write=event=>{if(!wrote){wrote=true;fs.writeFileSync(file,JSON.stringify({...event,startMs,endMs:Date.now()}))}}",
     "const exitCode=signal=>128+(typeof signal==='number'?signal:(signalNumbers[signal]||1))",
-    "const forward=signal=>{if(child&&child.exitCode===null&&child.signalCode===null){if(process.platform!=='win32'){try{process.kill(-child.pid,signal);return}catch(_){}}try{child.kill(signal)}catch(_){}}}",
+    "const forward=signal=>{if(!child)return;const pid=child.pid;const killGroup=()=>{if(process.platform!=='win32'&&pid){try{process.kill(-pid,signal);return true}catch(_){}}return false};const killChild=()=>{try{child.kill(signal)}catch(_){}};const attempt=()=>{if(!killGroup())killChild()};attempt();for(const delay of [25,100,250])setTimeout(attempt,delay).unref()}",
     "const onSignal=signal=>{write({code:null,signal});forward(signal);if(!exiting){exiting=true;setTimeout(()=>process.exit(exitCode(signal)),5000).unref()}}",
     "const pollKill=()=>{try{if(fs.existsSync(killFile)){const signal=JSON.parse(fs.readFileSync(killFile,'utf8'));fs.rmSync(killFile,{force:true});onSignal(signal)}}catch(_){}}",
     "for(const signal of ['SIGHUP','SIGINT','SIGTERM','SIGQUIT','SIGUSR1','SIGUSR2','SIGBREAK']){if(signalNumbers[signal]){try{process.on(signal,()=>onSignal(signal))}catch(_){}}}",
@@ -729,9 +891,6 @@ function readCommandEvents({
         : event?.signal ??
           event?.code ??
           (killed ? command.killSignal ?? runKillSignal : runExitCode);
-    command.exited = true;
-    command.killed = killed;
-    command.state = "exited";
     const commandStartMs =
       event?.startMs ??
       readCommandStartMs(eventStartPath(eventDir, command.index)) ??
@@ -739,8 +898,15 @@ function readCommandEvents({
     const commandStartedAt = new Date(
       commandStartMs
     );
+    if (command.state === "stopped") {
+      markCommandStarted(command, commandStartedAt);
+    }
+    command.exited = true;
+    command.killed = killed;
+    command.state = "exited";
+    command.stateChange.next("exited");
     const commandEndedAt = new Date(event?.endMs ?? endedAt.getTime());
-    return [{
+    const closeEvent = {
       command: commandInfo(command),
       index: command.index,
       killed: command.killed,
@@ -751,7 +917,13 @@ function readCommandEvents({
         durationSeconds:
           (commandEndedAt.getTime() - commandStartedAt.getTime()) / 1000,
       },
-    }];
+    };
+    command.timer.next({
+      startDate: commandStartedAt,
+      endDate: commandEndedAt,
+    });
+    command.close.next(closeEvent);
+    return [closeEvent];
   });
   events.sort((left, right) => {
     const leftEndMs = left.timings.endDate.getTime();
@@ -787,7 +959,8 @@ function writeCommandEnvironmentFiles(
   options,
   inheritedCommandEnv
 ) {
-  return commands.map((command) => {
+  const paths = new Map();
+  for (const command of commands) {
     const path = join(eventDir, `${command.index}.env.json`);
     const commandEnv = {
       ...inheritedCommandEnv,
@@ -799,8 +972,17 @@ function writeCommandEnvironmentFiles(
       JSON.stringify(commandEnv),
       { mode: 0o600 }
     );
-    return path;
-  });
+    paths.set(command.index, path);
+  }
+  return paths;
+}
+
+function requiredCommandEnvPath(paths, command) {
+  const path = paths.get(command.index);
+  if (path === undefined) {
+    throw new Error(`missing environment file for command index ${command.index}`);
+  }
+  return path;
 }
 
 function commandRawValues(commands, options) {
@@ -819,6 +1001,90 @@ function commandRawValues(commands, options) {
     }
   });
   return { global, rawIndexes, formattedIndexes };
+}
+
+function nativeSuccessCondition(commands, successCondition) {
+  if (typeof successCondition !== "string") {
+    return successCondition;
+  }
+  if (successCondition.startsWith("!command-")) {
+    return nativeCommandSelector(commands, successCondition, "!command-", 9);
+  }
+  if (successCondition.startsWith("command-")) {
+    return nativeCommandSelector(commands, successCondition, "command-", 8);
+  }
+  return successCondition;
+}
+
+function nativeCommandSelector(commands, successCondition, prefix, selectorStart) {
+  const selector = successCondition.slice(selectorStart);
+  if (!/^[0-9]+$/.test(selector)) {
+    return successCondition;
+  }
+  const selectedIndex = Number(selector);
+  const nativePositions = commands.flatMap((command, position) =>
+    command.index === selectedIndex ? [String(position)] : []
+  );
+  if (nativePositions.length !== 1) {
+    return commandNames(commands).includes(selector)
+      ? successCondition
+      : `${prefix}${commands.length}`;
+  }
+  return `${prefix}${nativePositions[0]}`;
+}
+
+function nativeCommandIdentifier(commands, identifier) {
+  if (identifier === undefined) {
+    return undefined;
+  }
+  const selector = String(identifier);
+  if (!/^[0-9]+$/.test(selector)) {
+    return selector;
+  }
+  const selectedIndex = Number(selector);
+  const nativePositions = commands.flatMap((command, position) =>
+    command.index === selectedIndex ? [String(position)] : []
+  );
+  if (nativePositions.length !== 1) {
+    return commandNames(commands).includes(selector)
+      ? selector
+      : String(commands.length);
+  }
+  return nativePositions[0];
+}
+
+function closeEventsSucceeded(events, successCondition = "all") {
+  if (events.length === 0) {
+    return true;
+  }
+  if (successCondition === "first") {
+    return events[0].exitCode === 0;
+  }
+  if (successCondition === "last") {
+    return events[events.length - 1].exitCode === 0;
+  }
+  const match = /^(!?)command-(.+)$/.exec(String(successCondition));
+  if (!match) {
+    return events.every((event) => event.exitCode === 0);
+  }
+  const negated = match[1] === "!";
+  const selector = match[2];
+  const targetEvents = events.filter((event) =>
+    event.command.name === selector || event.index === Number(selector)
+  );
+  if (negated) {
+    return events.every(
+      (event) => targetEvents.includes(event) || event.exitCode === 0
+    );
+  }
+  return (
+    targetEvents.length > 0 &&
+    targetEvents.every((event) => event.exitCode === 0)
+  );
+}
+
+function commandNames(commands) {
+  return commands.map((command) => command.name);
 }
 
 function invocationCwd(options) {
@@ -844,7 +1110,17 @@ function commandPrefixColors(commands, options) {
     return undefined;
   }
   if (options.prefixColors !== undefined) {
-    return arrayOption(options.prefixColors).join(",");
+    if (typeof options.prefixColors === "string") {
+      return options.prefixColors;
+    }
+    const colors = arrayOption(options.prefixColors);
+    if (colors.length === 0) {
+      return "";
+    }
+    const lastColor = colors[colors.length - 1];
+    return commands
+      .map((command) => colors[command.index] ?? lastColor)
+      .join(",");
   }
   const colors = commands.map((command) => command.prefixColor);
   return colors.some(Boolean)
@@ -860,8 +1136,7 @@ function forceColorEnabled(env) {
 function hiddenCommands(commands, options) {
   return [
     ...commands
-      .filter((command) => command.hidden)
-      .map((command) => String(command.index)),
+      .flatMap((command, position) => command.hidden ? [String(position)] : []),
     ...arrayOption(options.hide).flatMap((identifier) =>
       hideIdentifiers(commands, identifier)
     ),
@@ -870,13 +1145,20 @@ function hiddenCommands(commands, options) {
 
 function hideIdentifiers(commands, identifier) {
   if (typeof identifier === "number") {
-    return [String(identifier)];
+    const indexes = commands
+      .flatMap((command, position) =>
+        command.index === identifier ? [String(position)] : []
+      );
+    return indexes;
   }
   const value = String(identifier);
   const matchingIndexes = commands
-    .filter((command) => command.name === value)
-    .map((command) => String(command.index));
-  return matchingIndexes.length > 0 ? matchingIndexes : [value];
+    .flatMap((command, position) =>
+      command.name === value || String(command.index) === value
+        ? [String(position)]
+        : []
+    );
+  return matchingIndexes;
 }
 
 function nativeKillPolicyMayStopCommands(options) {

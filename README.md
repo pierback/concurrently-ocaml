@@ -83,9 +83,11 @@ native-backed on supported platforms. `require("concurrently")` and ESM imports
 return a repo-owned facade that spawns the native binary and exposes the
 upstream-compatible entrypoint names. The facade supports command-local `cwd`,
 `env`, `prefixColor`, `raw`, and `hidden` values by carrying that metadata into
-the native run. Lower-level JavaScript hooks that would require upstream
-internals, such as custom controllers or custom spawn/kill functions, fail
-explicitly instead of routing to upstream JavaScript.
+the native run. Custom controllers can inspect or replace the native-backed
+command list and receive close, timer, and state-change events from the facade.
+Lower-level JavaScript hooks that would require upstream internals, such as
+custom spawn/kill functions and command IPC, fail explicitly instead of routing
+to upstream JavaScript.
 
 ## Implemented CLI Surface
 
