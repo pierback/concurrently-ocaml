@@ -129,6 +129,10 @@ class LogTimings extends PassThroughController {
 }
 
 function concurrently(commandInputs, options = {}) {
+  assertCommandInputs(commandInputs);
+  if (commandInputs.length === 0) {
+    throw new Error("[concurrently] no commands provided");
+  }
   assertNativeOptions(options);
 
   const commands = expandShortcutCommands(normalizeCommands(commandInputs), options);
@@ -233,12 +237,13 @@ function concurrently(commandInputs, options = {}) {
 }
 
 function createConcurrently(commandInputs, options) {
-  if (Array.isArray(commandInputs)) {
-    return concurrently(commandInputs, options);
+  return concurrently(commandInputs, options);
+}
+
+function assertCommandInputs(commandInputs) {
+  if (!Array.isArray(commandInputs)) {
+    throw new Error("[concurrently] commands should be an array");
   }
-  const baseOptions = commandInputs ?? {};
-  return (commands, nextOptions = {}) =>
-    concurrently(commands, { ...baseOptions, ...nextOptions });
 }
 
 function assertNativeOptions(options) {
@@ -272,9 +277,6 @@ function assertCatchableKillSignal(signal) {
 }
 
 function normalizeCommands(commandInputs) {
-  if (!Array.isArray(commandInputs)) {
-    throw new Error("commands must be an array");
-  }
   return commandInputs.map((input, index) => {
     if (typeof input === "string") {
       return new Command({ index, name: "", command: input });

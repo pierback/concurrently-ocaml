@@ -291,9 +291,21 @@ try {
       if (typeof concurrently.createConcurrently !== "function") {
         throw new Error("createConcurrently export is missing");
       }
-      const configured = concurrently.createConcurrently({ raw: true });
-      if (typeof configured !== "function") {
-        throw new Error("createConcurrently factory result is missing");
+      try {
+        concurrently.createConcurrently({ raw: true });
+        throw new Error("createConcurrently accepted non-array commands");
+      } catch (error) {
+        if (!String(error && error.message).includes("commands should be an array")) {
+          throw error;
+        }
+      }
+      try {
+        concurrently({ raw: true }, { controllers: [] });
+        throw new Error("concurrently accepted non-array commands");
+      } catch (error) {
+        if (!String(error && error.message).includes("commands should be an array")) {
+          throw error;
+        }
       }
       const timingInfo = concurrently.LogTimings.mapCloseEventToTimingInfo({
         command: { name: "api", command: "node -e noop" },
@@ -507,15 +519,14 @@ try {
           throw new Error("invalid empty npm wildcard result events: " + JSON.stringify(events));
         }
       });
-      const emptyRun = concurrently([]);
-      if (!Array.isArray(emptyRun.commands) || emptyRun.commands.length !== 0) {
-        throw new Error("empty API run returned commands: " + JSON.stringify(emptyRun.commands));
-      }
-      const emptyRunResult = emptyRun.result.then((events) => {
-        if (!Array.isArray(events) || events.length !== 0) {
-          throw new Error("invalid empty API run events: " + JSON.stringify(events));
+      try {
+        concurrently([]);
+        throw new Error("empty API run did not fail");
+      } catch (error) {
+        if (!String(error && error.message).includes("no commands provided")) {
+          throw error;
         }
-      });
+      }
       const emptyTeardownPath = join(process.cwd(), "empty-teardown.txt");
       const emptyTeardownRun = concurrently(["npm:no-match-*"], {
         raw: true,
@@ -557,6 +568,15 @@ try {
       const undefinedHookOptionsResult = undefinedHookOptions.result.then((events) => {
         if (!Array.isArray(events) || events.length !== 1 || events[0].exitCode !== 0) {
           throw new Error("undefined unsupported hook options changed API execution: " + JSON.stringify(events));
+        }
+      });
+      const createConcurrentlyRun = concurrently.createConcurrently(['node -e "process.exit(0)"'], {
+        raw: true,
+        outputStream: shortcutOutputSink,
+      });
+      const createConcurrentlyResult = createConcurrentlyRun.result.then((events) => {
+        if (!Array.isArray(events) || events.length !== 1 || events[0].exitCode !== 0) {
+          throw new Error("invalid createConcurrently result events: " + JSON.stringify(events));
         }
       });
       const mixed = concurrently([
@@ -1254,9 +1274,9 @@ try {
         quotedWildcardResult,
         npmRunWildcardResult,
         emptyWildcardResult,
-        emptyRunResult,
         emptyTeardownResult,
         undefinedHookOptionsResult,
+        createConcurrentlyResult,
         sanitizedResult,
         envResult,
         equalCommandEnvOrderResult,
