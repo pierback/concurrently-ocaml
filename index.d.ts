@@ -176,12 +176,6 @@ export declare function createConcurrently(
   commands: ConcurrentlyCommandInput[],
   options?: Partial<ConcurrentlyOptions>
 ): ConcurrentlyResult;
-export declare function createConcurrently(
-  baseOptions?: Partial<ConcurrentlyOptions>
-): (
-  commands: ConcurrentlyCommandInput[],
-  options?: Partial<ConcurrentlyOptions>
-) => ConcurrentlyResult;
 
 // @ts-expect-error keep upstream concurrently's CommonJS + default export shape.
 export = concurrently;
