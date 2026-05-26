@@ -387,7 +387,8 @@ Known divergences and deferred scope:
 
 ## Current Verification Snapshot
 
-As of May 21, 2026, the current `master` worktree has the following proof:
+As of May 26, 2026, commit `54a33c9` on
+`feat/windows-native-validation` has the following proof:
 
 - `opam exec -- dune build @install @runtest` passes against the repo-local
   OCaml 5.4.1 opam switch.
@@ -398,12 +399,16 @@ As of May 21, 2026, the current `master` worktree has the following proof:
 - Root npm package contents remain constrained to launcher/package metadata,
   README, and LICENSE; OCaml source, tests, Dune files, and development scripts
   stay outside the root package surface.
-- GitHub Actions run `26220505748` passed the Windows x64 native package gate
-  for commit `bf3d9c8`. The gate builds `bin/main.exe`, audits the npm API
-  surface, runs pinned `concurrently@9.2.1` compatibility on Windows command
-  fixtures, runs the Windows-native process smoke, creates the `win32-x64`
-  package, smoke-installs the packed npm package, and uploads the package
-  artifact.
+- GitHub Actions run `26466437946` passed the Windows x64 native package gate
+  for commit `54a33c9`. Job `77927884402` builds `bin/main.exe`, audits the
+  npm API surface, runs pinned `concurrently@9.2.1` compatibility on Windows
+  command fixtures, runs the Windows-native process smoke, creates the
+  `win32-x64` package, smoke-installs the packed npm package, and uploads the
+  package artifact.
+- The same GitHub Actions run passed both Linux musl native package gates.
+  Job `77927884396` builds and smoke-installs the `linux-x64-musl` package on
+  Alpine, and job `77927884470` builds and smoke-installs the
+  `linux-arm64-musl` package on Alpine.
 
 ## Implementation Slices
 
