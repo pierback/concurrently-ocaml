@@ -1,3 +1,9 @@
+import {
+  ChildProcess as BaseChildProcess,
+  MessageOptions,
+  SendHandle,
+} from "node:child_process";
+import { EventEmitter } from "node:events";
 import { Readable, Writable } from "node:stream";
 
 export type CommandIdentifier = string | number;
@@ -28,6 +34,25 @@ export type ConcurrentlyCommandInput =
 export interface TimerEvent {
   startDate: Date;
   endDate?: Date;
+}
+
+export interface MessageEvent {
+  message: object;
+  handle?: SendHandle;
+}
+
+export interface OutgoingMessageEvent extends MessageEvent {
+  options?: MessageOptions;
+  onSent(error?: unknown): void;
+}
+
+export type ChildProcess = EventEmitter &
+  Pick<BaseChildProcess, "pid" | "stdin" | "stdout" | "stderr" | "send">;
+
+export interface SubjectLike<T> {
+  subscribe(observer: ((value: T) => void) | { next(value: T): void }): {
+    unsubscribe(): void;
+  };
 }
 
 export interface CloseEvent {
@@ -64,6 +89,7 @@ export interface ConcurrentlyOptions {
   cwd?: string;
   env?: Record<string, unknown>;
   additionalArguments?: string[];
+  controllers?: FlowController[];
   successCondition?: SuccessCondition;
   prefix?: string;
   prefixLength?: number;
@@ -97,6 +123,18 @@ export declare class Command implements CommandInfo {
   killed: boolean;
   exited: boolean;
   state: "stopped" | "started" | "errored" | "exited";
+  readonly close: SubjectLike<CloseEvent>;
+  readonly error: SubjectLike<unknown>;
+  readonly stdout: SubjectLike<Buffer>;
+  readonly stderr: SubjectLike<Buffer>;
+  readonly timer: SubjectLike<TimerEvent>;
+  readonly stateChange: SubjectLike<"started" | "errored" | "exited">;
+  readonly messages: {
+    incoming: SubjectLike<MessageEvent>;
+    outgoing: SubjectLike<OutgoingMessageEvent>;
+  };
+  process?: ChildProcess;
+  stdin?: Writable;
   constructor(info?: Partial<CommandInfo> & { index?: number });
   start(): void;
   send(message: object): Promise<void>;
