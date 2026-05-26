@@ -8,7 +8,7 @@ const {
   writeFileSync,
 } = require("node:fs");
 const { constants: osConstants, tmpdir } = require("node:os");
-const { join } = require("node:path");
+const { join, resolve } = require("node:path");
 const { Writable } = require("node:stream");
 const { runNative } = require("./native");
 
@@ -315,7 +315,7 @@ function expandShortcutCommand(command, options) {
     return [command];
   }
 
-  const cwd = command.cwd ?? options.cwd ?? process.cwd();
+  const cwd = commandLookupCwd(command, options);
   if (!shortcut.script.includes("*")) {
     return [shortcutCommand(command, shortcut, shortcut.script, false)];
   }
@@ -525,10 +525,9 @@ function expandAdditionalArguments(commands, additionalArguments) {
 function nativeInvocation(commands, options, eventDir) {
   const args = [];
   const env = { ...process.env };
-  const commandEnv = commandEnvironment(commands, options);
-  const commandEnvPath = join(eventDir, "command-env.json");
-  const cwd = commandCwd(commands, options);
-  const raw = commandRaw(commands, options);
+  const cwd = invocationCwd(options);
+  const rawValues = commandRawValues(commands, options);
+  const inheritedCommandEnv = {};
 
   args.push("--api-ignore-env-options");
   if (commands.length === 0) args.push("--api-empty-expansion");
@@ -544,19 +543,26 @@ function nativeInvocation(commands, options, eventDir) {
   pushOption(args, "--kill-timeout", options.killTimeout);
 
   if (options.group) args.push("--group");
-  if (raw) args.push("--raw");
+  if (rawValues.global) args.push("--raw");
+  if (rawValues.rawIndexes.length > 0) {
+    pushOption(args, "--api-raw-indexes", rawValues.rawIndexes.join(","));
+  }
+  if (rawValues.formattedIndexes.length > 0) {
+    pushOption(
+      args,
+      "--api-formatted-indexes",
+      rawValues.formattedIndexes.join(",")
+    );
+  }
   if (options.padPrefix) args.push("--pad-prefix");
   if (options.timings) args.push("--timings");
   if (options.handleInput || options.inputStream) args.push("--handle-input");
   if (options.prefixColors === false) {
     if (Object.prototype.hasOwnProperty.call(env, "FORCE_COLOR")) {
-      if (!Object.prototype.hasOwnProperty.call(commandEnv, "FORCE_COLOR")) {
-        commandEnv.FORCE_COLOR = env.FORCE_COLOR;
-      }
+      inheritedCommandEnv.FORCE_COLOR = env.FORCE_COLOR;
       delete env.FORCE_COLOR;
     }
   }
-  writeFileSync(commandEnvPath, JSON.stringify(commandEnv), { mode: 0o600 });
   if (
     options.prefixColors === false ||
     (options.outputStream && !forceColorEnabled(env))
@@ -581,6 +587,12 @@ function nativeInvocation(commands, options, eventDir) {
   if (hidden.length > 0) {
     pushOption(args, "--api-hide-indexes", hidden.join(","));
   }
+  const commandEnvPaths = writeCommandEnvironmentFiles(
+    eventDir,
+    commands,
+    options,
+    inheritedCommandEnv
+  );
 
   applyKillOthers(args, options);
   for (const teardown of arrayOption(options.teardown)) {
@@ -599,7 +611,8 @@ function nativeInvocation(commands, options, eventDir) {
         eventStartPath(eventDir, command.index),
         killPath(eventDir, command.index),
         options.handleInput || options.inputStream,
-        commandEnvPath
+        commandEnvPaths[command.index],
+        commandCwd(command)
       )
     )
   );
@@ -619,13 +632,16 @@ function eventWrapperCommand(
   startPath,
   killPath,
   forwardStdin,
-  commandEnvPath
+  commandEnvPath,
+  cwd
 ) {
   const commandText = Buffer.from(command).toString("base64");
   const eventFile = Buffer.from(path).toString("base64");
   const startFile = Buffer.from(startPath).toString("base64");
   const killFile = Buffer.from(killPath).toString("base64");
   const commandEnvFile = Buffer.from(commandEnvPath).toString("base64");
+  const commandCwd =
+    cwd === undefined ? undefined : Buffer.from(cwd).toString("base64");
   const childStdin = forwardStdin ? "inherit" : "ignore";
   const source = [
     "const cp=require('node:child_process')",
@@ -636,6 +652,9 @@ function eventWrapperCommand(
     `const startFile=Buffer.from('${startFile}','base64').toString()`,
     `const killFile=Buffer.from('${killFile}','base64').toString()`,
     `const commandEnvFile=Buffer.from('${commandEnvFile}','base64').toString()`,
+    commandCwd === undefined
+      ? "const cwd=undefined"
+      : `const cwd=Buffer.from('${commandCwd}','base64').toString()`,
     "const commandEnv=JSON.parse(fs.readFileSync(commandEnvFile,'utf8'))",
     `const childStdin='${childStdin}'`,
     "const startMs=Date.now()",
@@ -649,7 +668,9 @@ function eventWrapperCommand(
     "const pollKill=()=>{try{if(fs.existsSync(killFile)){const signal=JSON.parse(fs.readFileSync(killFile,'utf8'));fs.rmSync(killFile,{force:true});onSignal(signal)}}catch(_){}}",
     "for(const signal of ['SIGHUP','SIGINT','SIGTERM','SIGQUIT','SIGUSR1','SIGUSR2','SIGBREAK']){if(signalNumbers[signal]){try{process.on(signal,()=>onSignal(signal))}catch(_){}}}",
     "fs.writeFileSync(startFile,String(startMs))",
-    "child=cp.spawn(cmd,{shell:true,detached:process.platform!=='win32',stdio:[childStdin,'inherit','inherit'],env:{...process.env,...commandEnv}})",
+    "const spawnOptions={shell:true,detached:process.platform!=='win32',stdio:[childStdin,'inherit','inherit'],env:{...process.env,...commandEnv}}",
+    "if(cwd!==undefined)spawnOptions.cwd=cwd",
+    "child=cp.spawn(cmd,spawnOptions)",
     "const killInterval=setInterval(pollKill,20);killInterval.unref()",
     "child.on('error',error=>{write({code:1,signal:null,error:error.message});process.exit(1)})",
     "child.on('exit',(code,signal)=>{write({code,signal});if(signal){process.exit(exitCode(signal))}else{process.exit(code??1)}})",
@@ -758,59 +779,62 @@ function readCommandStartMs(path) {
   return Number.isFinite(timestamp) ? timestamp : undefined;
 }
 
-function commandEnvironment(commands, options) {
-  const commandEnvironments = commands
-    .map((command) => command.env)
-    .filter((env) => env && Object.keys(env).length > 0);
-  if (commandEnvironments.length === 0) {
-    return normalizeEnv(options.env);
-  }
-  if (commandEnvironments.length !== commands.length) {
-    throw new NativeApiUnsupportedError("partial per-command env");
-  }
-  const first = environmentSignature(commandEnvironments[0]);
-  if (commandEnvironments.some((env) => environmentSignature(env) !== first)) {
-    throw new NativeApiUnsupportedError("per-command env");
-  }
-  return { ...normalizeEnv(options.env), ...commandEnvironments[0] };
+function writeCommandEnvironmentFiles(
+  eventDir,
+  commands,
+  options,
+  inheritedCommandEnv
+) {
+  return commands.map((command) => {
+    const path = join(eventDir, `${command.index}.env.json`);
+    const commandEnv = {
+      ...inheritedCommandEnv,
+      ...normalizeEnv(options.env),
+      ...normalizeEnv(command.env),
+    };
+    writeFileSync(
+      path,
+      JSON.stringify(commandEnv),
+      { mode: 0o600 }
+    );
+    return path;
+  });
 }
 
-function environmentSignature(env) {
-  return JSON.stringify(
-    Object.entries(env)
-      .sort(([left], [right]) => left.localeCompare(right))
-  );
-}
-
-function commandCwd(commands, options) {
-  const commandCwds = commands
-    .map((command) => command.cwd)
-    .filter((cwd) => typeof cwd === "string" && cwd.length > 0);
-  if (commandCwds.length === 0) {
-    return options.cwd ?? process.cwd();
-  }
-  if (commandCwds.length !== commands.length) {
-    throw new NativeApiUnsupportedError("partial per-command cwd");
-  }
-  const first = commandCwds[0];
-  if (commandCwds.some((cwd) => cwd !== first)) {
-    throw new NativeApiUnsupportedError("per-command cwd");
-  }
-  if (options.cwd && options.cwd !== first) {
-    throw new NativeApiUnsupportedError("mixed options.cwd and command.cwd");
-  }
-  return first;
-}
-
-function commandRaw(commands, options) {
+function commandRawValues(commands, options) {
   const defaultRaw = Boolean(options.raw);
   const rawValues = commands.map((command) =>
     typeof command.raw === "boolean" ? command.raw : defaultRaw
   );
-  if (rawValues.some((raw) => raw !== rawValues[0])) {
-    throw new NativeApiUnsupportedError("mixed command.raw");
-  }
-  return rawValues[0];
+  const global = defaultRaw;
+  const rawIndexes = [];
+  const formattedIndexes = [];
+  rawValues.forEach((raw, index) => {
+    if (raw && !global) {
+      rawIndexes.push(index);
+    } else if (!raw && global) {
+      formattedIndexes.push(index);
+    }
+  });
+  return { global, rawIndexes, formattedIndexes };
+}
+
+function invocationCwd(options) {
+  return normalizeCwd(options.cwd) ?? process.cwd();
+}
+
+function commandCwd(command) {
+  return normalizeCwd(command.cwd);
+}
+
+function commandLookupCwd(command, options) {
+  return commandCwd(command) ?? invocationCwd(options);
+}
+
+function normalizeCwd(cwd) {
+  return typeof cwd === "string" && cwd.length > 0
+    ? resolve(cwd)
+    : undefined;
 }
 
 function commandPrefixColors(commands, options) {

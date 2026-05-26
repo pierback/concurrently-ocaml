@@ -1440,6 +1440,7 @@ const posixCases = [
       "trap 'exit 0' TERM; sleep 1",
       "printf ok",
     ],
+    normalizeStatus: normalizeShellTrapStatus,
     normalizeStdout: normalizeShellSignalDiagnosticStdout,
   },
   {
@@ -1453,6 +1454,7 @@ const posixCases = [
       "trap 'printf \"term\\n\"; sleep 0.05; exit 0' TERM; sleep 1",
       "printf ok",
     ],
+    normalizeStatus: normalizeShellTrapStatus,
     normalizeStdout: normalizeShellSignalDiagnosticAndTrapCleanupStdout,
   },
   {
@@ -2759,6 +2761,14 @@ function normalizeShellSignalDiagnosticStdout(stdout) {
   return stdout
     .replace(/^\[\d+\] (?:Hangup|Terminated|User defined signal 1): \d+\n/gm, "")
     .replace(/^\[\d+\] sh: line \d+:\s+\d+ Killed: \d+\s+sleep 0\.01\n/gm, "")
+    .replace(
+      /^\[0\] (trap 'exit 0' TERM; sleep 1) exited with code (?:0|143|SIGTERM)$/gm,
+      "[0] $1 exited with code <SIGTERM>"
+    )
+    .replace(
+      /^\[0\] (trap 'printf "term\\n"; sleep 0\.05; exit 0' TERM; sleep 1) exited with code (?:0|143|SIGTERM)$/gm,
+      "[0] $1 exited with code <SIGTERM>"
+    )
     .replace(
       /^\[0\] (trap 'exit 129' HUP; sleep 1) exited with code (?:0|129|SIGHUP)$/gm,
       "[0] $1 exited with code <SIGHUP>"

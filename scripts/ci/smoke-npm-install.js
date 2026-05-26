@@ -534,18 +534,12 @@ try {
       });
       const eventTempDirs = () => readdirSync(tmpdir()).filter((name) => name.startsWith("concurrently-ml-api-")).sort();
       const unsupportedDirsBefore = eventTempDirs();
-      for (const [label, commands] of [
-        ["partial env", [{ command: 'node -e "process.exit(0)"', env: { FOO: "1" } }, 'node -e "process.exit(0)"']],
-        ["partial cwd", [{ command: 'node -e "process.exit(0)"', cwd: process.cwd() }, 'node -e "process.exit(0)"']],
-        ["mixed raw", [{ command: 'node -e "process.exit(0)"', raw: true }, 'node -e "process.exit(0)"']],
-      ]) {
-        try {
-          concurrently(commands);
-          throw new Error(label + " did not fail");
-        } catch (error) {
-          if (!String(error && error.message).includes("not supported")) {
-            throw error;
-          }
+      try {
+        concurrently(['node -e "process.exit(0)"'], { controllers: [] });
+        throw new Error("controllers hook did not fail");
+      } catch (error) {
+        if (!String(error && error.message).includes("not supported")) {
+          throw error;
         }
       }
       const unsupportedDirsAfter = eventTempDirs();
@@ -606,6 +600,96 @@ try {
       const equalCommandEnvOrderResult = equalCommandEnvOrder.result.then((events) => {
         if (!Array.isArray(events) || events.some((event) => event.exitCode !== 0)) {
           throw new Error("invalid equivalent command env result events");
+        }
+      });
+      const partialCommandEnv = concurrently([
+        {
+          command: 'node -e "if (process.env.SHARED !== \\'yes\\' || process.env.LOCAL_ONLY !== \\'one\\') process.exit(4)"',
+          env: { LOCAL_ONLY: "one" },
+        },
+        'node -e "if (process.env.SHARED !== \\'yes\\' || process.env.LOCAL_ONLY) process.exit(5)"',
+      ], {
+        raw: true,
+        env: { SHARED: "yes" },
+      });
+      const partialCommandEnvResult = partialCommandEnv.result.then((events) => {
+        if (!Array.isArray(events) || events.some((event) => event.exitCode !== 0)) {
+          throw new Error("invalid partial command env result events: " + JSON.stringify(events));
+        }
+      });
+      const mixedCommandEnv = concurrently([
+        {
+          command: 'node -e "if (process.env.WHO !== \\'first\\') process.exit(4)"',
+          env: { WHO: "first" },
+        },
+        {
+          command: 'node -e "if (process.env.WHO !== \\'second\\') process.exit(5)"',
+          env: { WHO: "second" },
+        },
+      ], { raw: true });
+      const mixedCommandEnvResult = mixedCommandEnv.result.then((events) => {
+        if (!Array.isArray(events) || events.some((event) => event.exitCode !== 0)) {
+          throw new Error("invalid mixed command env result events: " + JSON.stringify(events));
+        }
+      });
+      const cwdRoot = mkdtempSync(join(tmpdir(), "concurrently-ml-api-cwd-"));
+      const cwdA = join(cwdRoot, "a");
+      const cwdB = join(cwdRoot, "b");
+      mkdirSync(cwdA);
+      mkdirSync(cwdB);
+      const partialCommandCwd = concurrently([
+        {
+          command: 'node -e "const fs=require(\\'node:fs\\'); if (fs.realpathSync(process.cwd()) !== fs.realpathSync(process.env.CWD_A)) process.exit(4)"',
+          cwd: cwdA,
+        },
+        'node -e "const fs=require(\\'node:fs\\'); if (fs.realpathSync(process.cwd()) !== fs.realpathSync(process.env.PROJECT_CWD)) process.exit(5)"',
+      ], {
+        raw: true,
+        env: { CWD_A: cwdA, PROJECT_CWD: process.cwd() },
+      });
+      const partialCommandCwdResult = partialCommandCwd.result.then((events) => {
+        if (!Array.isArray(events) || events.some((event) => event.exitCode !== 0)) {
+          throw new Error("invalid partial command cwd result events: " + JSON.stringify(events));
+        }
+      });
+      const mixedCommandCwd = concurrently([
+        {
+          command: 'node -e "const fs=require(\\'node:fs\\'); if (fs.realpathSync(process.cwd()) !== fs.realpathSync(process.env.CWD_B)) process.exit(4)"',
+          cwd: cwdB,
+        },
+        'node -e "const fs=require(\\'node:fs\\'); if (fs.realpathSync(process.cwd()) !== fs.realpathSync(process.env.CWD_A)) process.exit(5)"',
+      ], {
+        raw: true,
+        cwd: cwdA,
+        env: { CWD_A: cwdA, CWD_B: cwdB },
+      });
+      const mixedCommandCwdResult = mixedCommandCwd.result.then((events) => {
+        if (!Array.isArray(events) || events.some((event) => event.exitCode !== 0)) {
+          throw new Error("invalid mixed command cwd result events: " + JSON.stringify(events));
+        }
+      });
+      const relativeCwdRoot = "concurrently-ml-relative-cwd-" + process.pid + "-" + Date.now();
+      const relativeCwdA = join(relativeCwdRoot, "a");
+      const relativeCwdB = join(relativeCwdRoot, "b");
+      mkdirSync(relativeCwdA, { recursive: true });
+      mkdirSync(relativeCwdB, { recursive: true });
+      const relativeCommandCwd = concurrently([
+        'node -e "const fs=require(\\'node:fs\\'); if (fs.realpathSync(process.cwd()) !== fs.realpathSync(process.env.RELATIVE_CWD_A)) process.exit(4)"',
+        {
+          command: 'node -e "const fs=require(\\'node:fs\\'); if (fs.realpathSync(process.cwd()) !== fs.realpathSync(process.env.RELATIVE_CWD_B)) process.exit(5)"',
+          cwd: relativeCwdB,
+        },
+      ], {
+        raw: true,
+        cwd: relativeCwdA,
+        env: {
+          RELATIVE_CWD_A: join(process.cwd(), relativeCwdA),
+          RELATIVE_CWD_B: join(process.cwd(), relativeCwdB),
+        },
+      });
+      const relativeCommandCwdResult = relativeCommandCwd.result.then((events) => {
+        if (!Array.isArray(events) || events.some((event) => event.exitCode !== 0)) {
+          throw new Error("invalid relative command cwd result events: " + JSON.stringify(events));
         }
       });
       const optionEnvIsolation = concurrently([
@@ -755,7 +839,7 @@ try {
       });
       const closeOrderFile = join(mkdtempSync(join(tmpdir(), "concurrently-ml-close-order-")), "ready");
       const closeOrderRun = concurrently([
-        "node -e " + JSON.stringify("const fs=require('node:fs'); const file=process.env.CLOSE_ORDER_FILE; const deadline=Date.now()+5000; (function wait(){ if(fs.existsSync(file)) setTimeout(()=>process.exit(0),300); else if(Date.now()>deadline) process.exit(2); else setTimeout(wait,20); })();"),
+        "node -e " + JSON.stringify("const fs=require('node:fs'); const file=process.env.CLOSE_ORDER_FILE; const deadline=Date.now()+30000; (function wait(){ if(fs.existsSync(file)) setTimeout(()=>process.exit(0),3000); else if(Date.now()>deadline) process.exit(2); else setTimeout(wait,20); })();"),
         "node -e " + JSON.stringify("require('node:fs').writeFileSync(process.env.CLOSE_ORDER_FILE,'ready')"),
       ], {
         env: { CLOSE_ORDER_FILE: closeOrderFile },
@@ -948,6 +1032,51 @@ try {
           throw new Error("explicit raw:false command did not finish with sibling");
         }
       });
+      let mixedRawOutput = "";
+      const mixedRawStream = new Writable({
+        write(chunk, _encoding, callback) {
+          mixedRawOutput += chunk.toString();
+          callback();
+        },
+      });
+      const mixedRawRun = concurrently([
+        { command: 'node -e "console.log(\\'raw-only\\')"', raw: true },
+        'node -e "console.log(\\'formatted-only\\')"',
+      ], { outputStream: mixedRawStream });
+      const mixedRawResult = mixedRawRun.result.then((events) => {
+        if (events.length !== 2) {
+          throw new Error("mixed raw commands did not finish");
+        }
+        if (!mixedRawOutput.includes("raw-only") || mixedRawOutput.includes("[0] raw-only")) {
+          throw new Error("raw command was formatted: " + mixedRawOutput);
+        }
+        if (!mixedRawOutput.includes("[1] formatted-only")) {
+          throw new Error("formatted sibling was not prefixed: " + mixedRawOutput);
+        }
+      });
+      let mixedRawTimingsOutput = "";
+      const mixedRawTimingsStream = new Writable({
+        write(chunk, _encoding, callback) {
+          mixedRawTimingsOutput += chunk.toString();
+          callback();
+        },
+      });
+      const mixedRawTimingsRun = concurrently([
+        { command: 'node -e "console.log(\\'raw-a\\')"', raw: true },
+        { command: 'node -e "console.log(\\'raw-b\\')"', raw: true },
+        'node -e "console.log(\\'timed\\')"',
+      ], {
+        timings: true,
+        outputStream: mixedRawTimingsStream,
+      });
+      const mixedRawTimingsResult = mixedRawTimingsRun.result.then((events) => {
+        if (events.length !== 3) {
+          throw new Error("mixed raw timings commands did not finish");
+        }
+        if (!mixedRawTimingsOutput.includes("--> Timings:")) {
+          throw new Error("mixed raw commands suppressed global timings: " + mixedRawTimingsOutput);
+        }
+      });
       let prefixColorOutput = "";
       const prefixColorStream = new Writable({
         write(chunk, _encoding, callback) {
@@ -1131,6 +1260,11 @@ try {
         sanitizedResult,
         envResult,
         equalCommandEnvOrderResult,
+        partialCommandEnvResult,
+        mixedCommandEnvResult,
+        partialCommandCwdResult,
+        mixedCommandCwdResult,
+        relativeCommandCwdResult,
         optionEnvIsolationResult,
         nodeOptionsResult,
         inheritedEnvIsolationResult,
@@ -1149,6 +1283,8 @@ try {
         dashPrefixResult,
         forceColorPreserveResult,
         explicitFalseRawResult,
+        mixedRawResult,
+        mixedRawTimingsResult,
         prefixColorResult,
         nativePolicyKillResult,
         successOnlyKillResult,

@@ -181,6 +181,9 @@ let specs =
     value [ "--api-display-command" ] ~emitted_option:"--api-display-command";
     value [ "--api-name-separator" ] ~emitted_option:"--api-name-separator";
     value [ "--api-hide-indexes" ] ~emitted_option:"--api-hide-indexes";
+    value [ "--api-raw-indexes" ] ~emitted_option:"--api-raw-indexes";
+    value [ "--api-formatted-indexes" ]
+      ~emitted_option:"--api-formatted-indexes";
     boolean [ "--api-empty-expansion" ] ~negated_names:[]
       ~emitted_boolean_option:"--api-empty-expansion" ~boolean_order:99;
   ]
