@@ -51,8 +51,29 @@ class SimpleSubject {
   }
 }
 
+class SimpleReplaySubject extends SimpleSubject {
+  constructor() {
+    super();
+    this.values = [];
+  }
+
+  subscribe(observer) {
+    const subscription = super.subscribe(observer);
+    const subscriber = observerSubscriber(observer);
+    for (const value of this.values) {
+      subscriber(value);
+    }
+    return subscription;
+  }
+
+  next(value) {
+    this.values.push(value);
+    super.next(value);
+  }
+}
+
 class Command {
-  constructor(info = {}) {
+  constructor(info = {}, spawnOpts, spawn, killProcess) {
     this.index = numberOrDefault(info.index, 0);
     this.name = stringOrDefault(info.name, String(this.index));
     this.command = stringOrDefault(info.command, "");
@@ -78,29 +99,140 @@ class Command {
     this.stateChange = new SimpleSubject();
     this.messages = {
       incoming: new SimpleSubject(),
-      outgoing: new SimpleSubject(),
+      outgoing: new SimpleReplaySubject(),
     };
     this.process = undefined;
+    this.spawn = spawn;
+    this.spawnOpts = spawnOpts;
+    this.killProcess =
+      typeof killProcess === "function"
+        ? (code) => killProcess(this.pid, code)
+        : undefined;
+    this.subscriptions = [];
   }
 
   start() {
-    throw new NativeApiUnsupportedError("Command.start()");
+    if (typeof this.spawn !== "function") {
+      throw new NativeApiUnsupportedError("Command.start()");
+    }
+    const child = this.spawn(this.command, this.spawnOpts);
+    this.process = child;
+    this.pid = child.pid;
+    this.changeState("started");
+    const startDate = new Date();
+    const highResStartTime = process.hrtime();
+    this.timer.next({ startDate });
+    this.subscriptions = this.setupIpc(child);
+    child.on?.("error", (error) => {
+      this.cleanup();
+      const endDate = new Date();
+      this.timer.next({ startDate, endDate });
+      this.error.next(error);
+      this.changeState("errored");
+    });
+    child.on?.("close", (exitCode, signal) => {
+      this.cleanup();
+      this.exited = true;
+      if (this.state !== "errored") {
+        this.changeState("exited");
+      }
+      const endDate = new Date();
+      const [seconds, nanoseconds] = process.hrtime(highResStartTime);
+      const closeEvent = {
+        command: this,
+        index: this.index,
+        exitCode: exitCode ?? String(signal),
+        killed: this.killed,
+        timings: {
+          startDate,
+          endDate,
+          durationSeconds: seconds + nanoseconds / 1e9,
+        },
+      };
+      this.timer.next({ startDate, endDate });
+      this.close.next(closeEvent);
+    });
+    child.stdout?.on?.("data", (chunk) => this.stdout.next(chunk));
+    child.stderr?.on?.("data", (chunk) => this.stderr.next(chunk));
+    this.stdin = child.stdin || undefined;
   }
 
-  send() {
-    throw new NativeApiUnsupportedError("Command.send()");
+  changeState(state) {
+    this.state = state;
+    this.stateChange.next(state);
+  }
+
+  setupIpc(child) {
+    if (!this.ipc) {
+      return [];
+    }
+    const onMessage = (message, handle) => {
+      this.messages.incoming.next({ message, handle });
+    };
+    child.on?.("message", onMessage);
+    const outgoing = this.messages.outgoing.subscribe((event) => {
+      if (typeof child.send !== "function") {
+        event.onSent(new Error("Command does not have an IPC channel"));
+        return;
+      }
+      child.send(event.message, event.handle, event.options, (error) => {
+        event.onSent(error);
+      });
+    });
+    return [
+      {
+        unsubscribe() {
+          child.off?.("message", onMessage);
+        },
+      },
+      outgoing,
+    ];
+  }
+
+  send(message, handle, options) {
+    if (this.ipc == null) {
+      throw new Error("Command IPC is disabled");
+    }
+    return new Promise((resolve, reject) => {
+      this.messages.outgoing.next({
+        message,
+        handle,
+        options,
+        onSent(error) {
+          if (error) {
+            reject(error);
+          } else {
+            resolve();
+          }
+        },
+      });
+    });
   }
 
   kill(code = "SIGTERM") {
     if (!Command.canKill(this)) {
       return;
     }
-    this.killProcess(code);
+    const killed = this.killProcess(code);
+    if (killed !== false) {
+      this.killed = true;
+      this.killSignal = code;
+    }
+  }
+
+  cleanup() {
+    for (const subscription of this.subscriptions) {
+      subscription.unsubscribe();
+    }
+    this.subscriptions = [];
+    this.messages.outgoing = new SimpleReplaySubject();
+    this.process = undefined;
   }
 
   static canKill(command) {
     return Boolean(
       command &&
+        !command.exited &&
         Number.isInteger(command.pid) &&
         typeof command.killProcess === "function"
     );
@@ -837,7 +969,7 @@ function eventWrapperCommand(
     "let wrote=false",
     "const write=event=>{if(!wrote){wrote=true;fs.writeFileSync(file,JSON.stringify({...event,startMs,endMs:Date.now()}))}}",
     "const exitCode=signal=>128+(typeof signal==='number'?signal:(signalNumbers[signal]||1))",
-    "const forward=signal=>{if(!child)return;const pid=child.pid;const killGroup=()=>{if(process.platform!=='win32'&&pid){try{process.kill(-pid,signal);return true}catch(_){}}return false};const killChild=()=>{try{child.kill(signal)}catch(_){}};const attempt=()=>{if(!killGroup())killChild()};attempt();for(const delay of [25,100,250])setTimeout(attempt,delay).unref()}",
+    "const forward=signal=>{if(!child)return;const pid=child.pid;const killGroup=()=>{if(process.platform!=='win32'&&pid){try{process.kill(-pid,signal);return true}catch(_){}}return false};const killChild=()=>{try{child.kill(signal)}catch(_){}};const attempt=()=>{killGroup();killChild()};attempt();for(const delay of [25,100,250])setTimeout(attempt,delay).unref()}",
     "const onSignal=signal=>{write({code:null,signal});forward(signal);if(!exiting){exiting=true;setTimeout(()=>process.exit(exitCode(signal)),5000).unref()}}",
     "const pollKill=()=>{try{if(fs.existsSync(killFile)){const signal=JSON.parse(fs.readFileSync(killFile,'utf8'));fs.rmSync(killFile,{force:true});onSignal(signal)}}catch(_){}}",
     "for(const signal of ['SIGHUP','SIGINT','SIGTERM','SIGQUIT','SIGUSR1','SIGUSR2','SIGBREAK']){if(signalNumbers[signal]){try{process.on(signal,()=>onSignal(signal))}catch(_){}}}",

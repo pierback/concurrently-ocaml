@@ -281,6 +281,7 @@ try {
     `
       const concurrently = require(${JSON.stringify(publicPackageName)});
       const { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } = require("node:fs");
+      const { fork, spawn } = require("node:child_process");
       const { tmpdir } = require("node:os");
       const { delimiter, join } = require("node:path");
       const { PassThrough, Writable } = require("node:stream");
@@ -1598,6 +1599,193 @@ try {
           throw new Error("invalid multi-command kill result events");
         }
       });
+      const manualOutput = [];
+      const manualStates = [];
+      const manualTimers = [];
+      let manualStateExitSawKillable = false;
+      const manualCommand = new concurrently.Command(
+        {
+          index: 12,
+          name: "manual",
+          command: "manual-command",
+          env: {},
+        },
+        { customSpawnOption: true },
+        (command, options) => {
+          if (command !== "manual-command" || options.customSpawnOption !== true) {
+            throw new Error("manual Command.start did not pass command/spawn options");
+          }
+          return spawn(
+            process.execPath,
+            ["-e", "process.stdout.write('manual-out'); process.stderr.write('manual-err');"],
+            { stdio: ["ignore", "pipe", "pipe"] }
+          );
+        },
+        (pid, signal) => process.kill(pid, signal)
+      );
+      manualCommand.stdout.subscribe((chunk) => manualOutput.push(chunk.toString()));
+      manualCommand.stderr.subscribe((chunk) => manualOutput.push(chunk.toString()));
+      manualCommand.stateChange.subscribe((state) => {
+        manualStates.push(state);
+        if (state === "exited" && concurrently.Command.canKill(manualCommand)) {
+          manualStateExitSawKillable = true;
+        }
+      });
+      manualCommand.timer.subscribe((event) => manualTimers.push(event));
+      const manualCommandResult = new Promise((resolve, reject) => {
+        manualCommand.close.subscribe((event) => {
+          try {
+            if (event.command !== manualCommand || event.index !== 12 || event.exitCode !== 0) {
+              throw new Error("manual Command.close event was invalid: " + JSON.stringify(event));
+            }
+            if (!manualCommand.exited || manualCommand.state !== "exited") {
+              throw new Error("manual Command did not finish in exited state");
+            }
+            if (concurrently.Command.canKill(manualCommand)) {
+              throw new Error("manual Command stayed killable after close");
+            }
+            if (manualStateExitSawKillable) {
+              throw new Error("manual Command was killable during exited stateChange");
+            }
+            if (!manualStates.includes("started") || !manualStates.includes("exited")) {
+              throw new Error("manual Command missed lifecycle states: " + JSON.stringify(manualStates));
+            }
+            const manualOutputText = manualOutput.join("");
+            if (
+              !manualOutputText.includes("manual-out") ||
+              !manualOutputText.includes("manual-err")
+            ) {
+              throw new Error("manual Command did not emit stdout/stderr chunks: " + manualOutputText);
+            }
+            if (
+              manualTimers.length < 2 ||
+              !(manualTimers[0].startDate instanceof Date) ||
+              !(manualTimers[manualTimers.length - 1].endDate instanceof Date)
+            ) {
+              throw new Error("manual Command did not emit timer lifecycle events");
+            }
+            resolve();
+          } catch (error) {
+            reject(error);
+          }
+        });
+        manualCommand.error.subscribe(reject);
+      });
+      manualCommand.start();
+      const manualKillCalls = [];
+      const manualKillCommand = new concurrently.Command(
+        {
+          index: 15,
+          name: "manual-kill",
+          command: "manual-kill-command",
+          env: {},
+        },
+        {},
+        () => spawn(
+          process.execPath,
+          ["-e", "setInterval(() => {}, 1000)"],
+          { stdio: ["ignore", "ignore", "ignore"] }
+        ),
+        (pid, signal) => {
+          manualKillCalls.push({ pid, signal });
+          process.kill(pid, signal);
+        }
+      );
+      const manualKillClosed = new Promise((resolve, reject) => {
+        manualKillCommand.close.subscribe((event) => {
+          try {
+            if (
+              event.index !== 15 ||
+              event.exitCode !== "SIGTERM" ||
+              !event.killed ||
+              !manualKillCommand.killed ||
+              manualKillCommand.killSignal !== "SIGTERM"
+            ) {
+              throw new Error("manual Command.kill close event was invalid: " + JSON.stringify(event));
+            }
+            if (concurrently.Command.canKill(manualKillCommand)) {
+              throw new Error("manual killed Command stayed killable after close");
+            }
+            manualKillCommand.kill("SIGTERM");
+            if (manualKillCalls.length !== 1) {
+              throw new Error("manual Command.kill signaled again after close: " + JSON.stringify(manualKillCalls));
+            }
+            resolve();
+          } catch (error) {
+            reject(error);
+          }
+        });
+        manualKillCommand.error.subscribe(reject);
+      });
+      manualKillCommand.start();
+      const manualKillResult = waitFor(
+        () => concurrently.Command.canKill(manualKillCommand),
+        5000,
+        "manual Command.kill target did not become killable"
+      ).then(() => {
+        manualKillCommand.kill("SIGTERM");
+        if (
+          manualKillCalls.length !== 1 ||
+          manualKillCalls[0].pid !== manualKillCommand.pid ||
+          manualKillCalls[0].signal !== "SIGTERM" ||
+          !manualKillCommand.killed ||
+          manualKillCommand.killSignal !== "SIGTERM"
+        ) {
+          throw new Error("manual Command.kill did not mark and signal process: " + JSON.stringify(manualKillCalls));
+        }
+        return manualKillClosed;
+      });
+      const ipcChildPath = join(process.cwd(), "manual-ipc-child.cjs");
+      writeFileSync(
+        ipcChildPath,
+        "process.on('message', (message) => { process.send({ echo: message.value }); process.exit(0); });\\n"
+      );
+      const ipcMessages = [];
+      const ipcCommand = new concurrently.Command(
+        {
+          index: 13,
+          name: "ipc",
+          command: "ignored-ipc-command",
+          env: {},
+          ipc: 1,
+        },
+        {},
+        () => fork(ipcChildPath, [], { stdio: ["ignore", "ignore", "ignore", "ipc"] }),
+        (pid, signal) => process.kill(pid, signal)
+      );
+      ipcCommand.messages.incoming.subscribe((event) => ipcMessages.push(event.message));
+      const ipcSendResult = ipcCommand.send({ value: "queued-before-start" });
+      const ipcCloseResult = new Promise((resolve, reject) => {
+        ipcCommand.close.subscribe((event) => {
+          if (event.index !== 13 || event.exitCode !== 0) {
+            reject(new Error("manual IPC Command.close event was invalid: " + JSON.stringify(event)));
+            return;
+          }
+          resolve();
+        });
+        ipcCommand.error.subscribe(reject);
+      });
+      ipcCommand.start();
+      const manualIpcResult = Promise.all([ipcSendResult, ipcCloseResult]).then(() => {
+        if (
+          ipcMessages.length !== 1 ||
+          ipcMessages[0].echo !== "queued-before-start"
+        ) {
+          throw new Error("manual Command.send did not replay queued IPC message: " + JSON.stringify(ipcMessages));
+        }
+      });
+      const disabledIpcResult = Promise.resolve().then(() => {
+        try {
+          new concurrently.Command({ index: 14, name: "no-ipc", command: "", env: {} }, {}, () => {
+            throw new Error("disabled IPC send should not spawn");
+          }, () => {}).send({ value: "nope" });
+          throw new Error("Command.send accepted disabled IPC");
+        } catch (error) {
+          if (!String(error && error.message).includes("IPC is disabled")) {
+            throw error;
+          }
+        }
+      });
       const run = concurrently(['node -e "process.exit(0)"'], { raw: true });
       if (!run || !Array.isArray(run.commands) || run.commands.length !== 1) {
         throw new Error("invalid concurrently result commands");
@@ -1668,6 +1856,10 @@ try {
         killedResult,
         customKillResult,
         multiKillResult,
+        manualCommandResult,
+        manualKillResult,
+        manualIpcResult,
+        disabledIpcResult,
         runResult,
       ]).then(() => {
         process.stdout.write("api smoke ok\\n");
