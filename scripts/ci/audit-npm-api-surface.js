@@ -36,6 +36,8 @@ try {
       "--prefer-offline",
       `${publicPackageName}@file:${rootTarball}`,
       `${upstreamPackageName}@npm:concurrently@${upstreamVersion}`,
+      "typescript@5.9.3",
+      "@types/node@24",
     ],
     projectDir
   );
@@ -56,6 +58,7 @@ try {
 
   assertRuntimeExports(projectDir, "commonjs");
   assertRuntimeExports(projectDir, "module");
+  assertTypescriptConsumer(projectDir);
 
   console.log(`api surface audit ok: concurrently@${upstreamVersion}`);
 } finally {
@@ -120,6 +123,93 @@ function assertRuntimeExports(projectDir, moduleKind) {
   if (result.status !== 0) {
     throw new Error(
       `${moduleKind} export audit exited ${result.status}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`
+    );
+  }
+}
+
+function assertTypescriptConsumer(projectDir) {
+  writeFileSync(
+    join(projectDir, "types-cjs.cts"),
+    `
+import concurrently = require("concurrently");
+import { spawn } from "node:child_process";
+
+const logger = new concurrently.Logger({ raw: true });
+const result = concurrently(["echo ok"], {
+  logger,
+  spawn(command, options) {
+    return spawn(command, [], options);
+  },
+  kill(pid, signal) {
+    process.kill(pid, signal);
+  },
+  hide: [0, "web"],
+  controllers: [new concurrently.LogOutput({ logger })],
+});
+
+result.commands[0]?.close.subscribe({
+  next(event) {
+    event.timings.durationSeconds.toFixed();
+  },
+});
+`
+  );
+  writeFileSync(
+    join(projectDir, "types-esm.mts"),
+    `
+import concurrently, { Command, Logger, type ConcurrentlyOptions } from "concurrently";
+import { spawn } from "node:child_process";
+
+const options: Partial<ConcurrentlyOptions> = {
+  logger: new Logger({}),
+  spawn(command, spawnOptions) {
+    return spawn(command, [], spawnOptions);
+  },
+};
+
+const run = concurrently([{ command: "echo ok", ipc: 3 }], options);
+if (Command.canKill(run.commands[0])) {
+  run.commands[0].process.pid?.toFixed();
+}
+`
+  );
+  writeFileSync(
+    join(projectDir, "tsconfig.json"),
+    `${JSON.stringify(
+      {
+        compilerOptions: {
+          target: "ES2022",
+          module: "NodeNext",
+          moduleResolution: "NodeNext",
+          strict: true,
+          noEmit: true,
+          types: ["node"],
+          skipLibCheck: false,
+        },
+        include: ["types-cjs.cts", "types-esm.mts"],
+      },
+      null,
+      2
+    )}\n`
+  );
+
+  const tsc = join(
+    projectDir,
+    "node_modules",
+    ".bin",
+    process.platform === "win32" ? "tsc.cmd" : "tsc"
+  );
+  const result = spawnFileSync(tsc, ["-p", "tsconfig.json"], {
+    cwd: projectDir,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (result.error) {
+    throw result.error;
+  }
+  if (result.status !== 0) {
+    throw new Error(
+      `TypeScript consumer audit exited ${result.status}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`
     );
   }
 }
