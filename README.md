@@ -35,9 +35,10 @@ npm run smoke:npm-install:host
 
 ## Current Packaging State
 
-The root npm package ships a JavaScript launcher plus optional Linux and macOS
-platform packages containing native `concurrently-ml` binaries. During local
-development the launcher can also fall back to `_build/default/bin/main.exe`
+The root npm package ships JavaScript CommonJS/ESM entrypoints, TypeScript
+declarations, CLI shims, and optional platform packages containing native
+`concurrently-ml` binaries for macOS, Linux GNU, Linux musl, and Windows.
+During local development the launcher can also use `_build/default/bin/main.exe`
 after `npm run compile`.
 
 For drop-in npm-script usage, install this package under the public
@@ -49,6 +50,27 @@ npm install --save-dev concurrently@npm:@pierback/concurrently-ml
 
 That keeps existing `concurrently`/`conc` package scripts and
 `require("concurrently")` imports pointed at this package.
+
+JavaScript and TypeScript callers can use the same package entrypoint shape as
+npm `concurrently`:
+
+```ts
+import concurrently from "concurrently";
+
+const { result } = concurrently(["npm run dev", "npm test"], {
+  killOthersOn: ["failure"],
+});
+
+await result;
+```
+
+CommonJS callers use the same alias:
+
+```js
+const concurrently = require("concurrently");
+
+concurrently(["node server.js", "npm run watch"]);
+```
 
 `npm run smoke:npm-install:host` packages the current host binary, installs the
 root package plus matching platform package into a clean temporary npm project,
@@ -86,11 +108,12 @@ upstream-compatible entrypoint names. The facade supports command-local `cwd`,
 the native run. Custom controllers can inspect or replace the native-backed
 command list, receive close, timer, and state-change events from the facade, and
 kill returned commands through native per-command control files or an
-`options.kill` callback after the child PID is known.
-Lower-level JavaScript hooks that would require upstream internals, such as
-custom spawn functions, custom loggers, command IPC, and custom kill callbacks
-combined with native kill policies, fail explicitly instead of routing to
-upstream JavaScript.
+`options.kill` callback after the child PID is known. Standalone `new Command`
+instances support custom `spawn` and IPC for controller-style library code.
+JavaScript hooks that require replacing native orchestration for a high-level
+run, such as `options.spawn`, `options.logger`, command-level `ipc`, and
+`options.kill` combined with native kill policies, fail explicitly instead of
+routing to upstream JavaScript.
 
 ## Implemented CLI Surface
 
