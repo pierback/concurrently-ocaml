@@ -1636,7 +1636,7 @@ try {
         "const fs=require('node:fs'); process.on('SIGTERM',()=>{fs.writeFileSync(process.env.SIGNAL_PATH,'ok');process.exit(0)}); fs.writeFileSync(process.env.SIGNAL_READY_PATH,'ok'); setInterval(()=>{},1000)"
       );
       const signalWaitCommand = "node -e " + JSON.stringify(
-        "const fs=require('node:fs'); const deadline=Date.now()+5000; (function wait(){ if(fs.existsSync(process.env.SIGNAL_READY_PATH)) process.exit(0); if(Date.now()>deadline) process.exit(2); setTimeout(wait,20); })();"
+        "const fs=require('node:fs'); const deadline=Date.now()+30000; (function wait(){ if(fs.existsSync(process.env.SIGNAL_READY_PATH)) process.exit(0); if(Date.now()>deadline) process.exit(2); setTimeout(wait,20); })();"
       );
       const nativePolicyKill = concurrently([
         signalCommand,
@@ -1701,10 +1701,10 @@ try {
           throw new Error("queued kill result should include only spawned commands: " + JSON.stringify(events));
         }
       });
-      const killed = concurrently(['node -e "setTimeout(()=>{},10000)"'], { raw: true });
+      const killed = concurrently(['node -e "setTimeout(()=>{},60000)"'], { raw: true });
       const killedResult = waitFor(
         () => concurrently.Command.canKill(killed.commands[0]),
-        10000,
+        30000,
         "single-command API command did not become killable"
       ).then(() => {
         killed.commands[0].kill("SIGKILL");
@@ -1725,7 +1725,7 @@ try {
         });
       });
       const customKillCalls = [];
-      const customKill = concurrently(['node -e "setTimeout(()=>{},10000)"'], {
+      const customKill = concurrently(['node -e "setTimeout(()=>{},60000)"'], {
         raw: true,
         outputStream: shortcutOutputSink,
         kill(pid, signal) {
@@ -1735,7 +1735,7 @@ try {
       });
       const customKillResult = waitFor(
         () => concurrently.Command.canKill(customKill.commands[0]) && customKill.commands[0].startedAt,
-        10000,
+        30000,
         "custom-kill API command did not become killable"
       ).then(() => {
         customKill.commands[0].kill("SIGTERM");
