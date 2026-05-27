@@ -4,9 +4,11 @@
 
 const {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
+  writeFileSync,
 } = require("node:fs");
 const { tmpdir } = require("node:os");
 const { join, resolve } = require("node:path");
@@ -26,6 +28,7 @@ const tempDir = mkdtempSync(join(tmpdir(), "concurrently-ml-windows-"));
 (async () => {
   try {
     smokeCwdEnvAndOutput();
+    smokeShellQuoting();
     smokeStdin();
     smokeFailureExitStatus();
     await smokeProcessTreeCleanup();
@@ -55,6 +58,23 @@ function smokeCwdEnvAndOutput() {
     [`[0] cwd:${tempDir}`, "[0] env:ok", "[0] err:ok"],
     `[0] ${command} exited with code 0`,
     "cwd/env stdout"
+  );
+}
+
+function smokeShellQuoting() {
+  const scriptDir = join(tempDir, "script dir");
+  mkdirSync(scriptDir);
+  const script = join(scriptDir, "echo args.cmd");
+  writeFileSync(script, "@echo off\r\necho script:%~1:%~2\r\n");
+  const command = `"${script}" "alpha beta" plain`;
+  const result = runSync(["--no-color", command]);
+  assertEqual(result.status, 0, "shell quoting command status", result);
+  assertEqual(result.stderr, "", "shell quoting stderr");
+  assertMergedOutput(
+    result.stdout,
+    ["[0] script:alpha beta:plain"],
+    `[0] ${command} exited with code 0`,
+    "shell quoting stdout"
   );
 }
 
