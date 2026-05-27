@@ -85,11 +85,12 @@ upstream-compatible entrypoint names. The facade supports command-local `cwd`,
 `env`, `prefixColor`, `raw`, and `hidden` values by carrying that metadata into
 the native run. Custom controllers can inspect or replace the native-backed
 command list, receive close, timer, and state-change events from the facade, and
-kill returned commands through native per-command control files after the child
-PID is known.
+kill returned commands through native per-command control files or an
+`options.kill` callback after the child PID is known.
 Lower-level JavaScript hooks that would require upstream internals, such as
-custom spawn/kill functions and command IPC, fail explicitly instead of routing
-to upstream JavaScript.
+custom spawn functions, custom loggers, command IPC, and custom kill callbacks
+combined with native kill policies, fail explicitly instead of routing to
+upstream JavaScript.
 
 ## Implemented CLI Surface
 
