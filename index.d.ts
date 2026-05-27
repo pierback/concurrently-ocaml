@@ -85,8 +85,18 @@ export interface FlowController {
   };
 }
 
+export type LoggerSink =
+  | {
+      logCommandText(text: string): void;
+      log?(prefix: string, text: string): void;
+    }
+  | {
+      log(prefix: string, text: string): void;
+      logCommandText?(text: string): void;
+    };
+
 export interface ConcurrentlyOptions {
-  logger?: Logger;
+  logger?: Logger | LoggerSink;
   outputStream?: Writable;
   group?: boolean;
   prefixColors?: string | string[] | false;

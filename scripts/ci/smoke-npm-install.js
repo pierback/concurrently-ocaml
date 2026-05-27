@@ -202,6 +202,185 @@ try {
   );
   assertEqual(versionSmoke.stderr, "", "conc version stderr");
 
+  const loggerSmoke = spawnNodeSmoke(
+    projectDir,
+    "logger-smoke.cjs",
+    `
+      const concurrently = require(${JSON.stringify(publicPackageName)});
+      const { Writable } = require("node:stream");
+      class CaptureLogger {
+        constructor() {
+          this.text = "";
+        }
+        logCommandText(text) {
+          this.text += text;
+        }
+      }
+      const logger = new CaptureLogger();
+      let streamText = "";
+      const outputStream = new Writable({
+        write(chunk, _encoding, callback) {
+          streamText += chunk.toString();
+          callback();
+        },
+      });
+      async function main() {
+        const run = concurrently(['node -e "console.log(\\'logger-ok\\')"'], {
+          logger,
+          outputStream,
+          raw: true,
+        });
+        await run.result;
+        if (!logger.text.includes("logger-ok")) {
+          throw new Error(
+            "logger did not receive native output: " +
+              JSON.stringify(logger.text)
+          );
+        }
+        if (!streamText.includes("logger-ok")) {
+          throw new Error(
+            "outputStream did not receive native output: " +
+              JSON.stringify(streamText)
+          );
+        }
+        if (/\\x1b\\[[0-9;]*m/.test(logger.text)) {
+          throw new Error(
+            "logger received ANSI color output: " +
+              JSON.stringify(logger.text)
+          );
+        }
+
+        class SlowStream extends Writable {
+          constructor() {
+            super();
+            this.text = "";
+          }
+          _write(chunk, _encoding, callback) {
+            setTimeout(() => {
+              this.text += chunk.toString();
+              callback();
+            }, 100);
+          }
+        }
+        const slowStream = new SlowStream();
+        const defaultLogger = new concurrently.Logger();
+        const startedAt = Date.now();
+        const defaultRun = concurrently(['node -e "console.log(\\'default-ok\\')"'], {
+          logger: defaultLogger,
+          outputStream: slowStream,
+          raw: true,
+        });
+        await defaultRun.result;
+        if (!slowStream.text.includes("default-ok")) {
+          throw new Error(
+            "default Logger outputStream did not receive native output: " +
+              JSON.stringify(slowStream.text)
+          );
+        }
+        if (Date.now() - startedAt < 80) {
+          throw new Error("default Logger outputStream completed before write callback");
+        }
+
+        class DefaultLoggerSubclass extends concurrently.Logger {}
+        const subclassStream = new SlowStream();
+        const subclassLogger = new DefaultLoggerSubclass({
+          outputStream: subclassStream,
+        });
+        const subclassStartedAt = Date.now();
+        const subclassRun = concurrently(['node -e "console.log(\\'subclass-ok\\')"'], {
+          logger: subclassLogger,
+          outputStream: subclassStream,
+          raw: true,
+        });
+        await subclassRun.result;
+        if (subclassStream.text !== "subclass-ok\\n") {
+          throw new Error(
+            "default Logger subclass outputStream was not drained once: " +
+              JSON.stringify(subclassStream.text)
+          );
+        }
+        if (Date.now() - subclassStartedAt < 80) {
+          throw new Error("default Logger subclass completed before write callback");
+        }
+
+        const loggerOwnedStream = new SlowStream();
+        const explicitStream = new SlowStream();
+        const splitLogger = new concurrently.Logger({
+          outputStream: loggerOwnedStream,
+        });
+        const splitStartedAt = Date.now();
+        const splitRun = concurrently(['node -e "console.log(\\'split-ok\\')"'], {
+          logger: splitLogger,
+          outputStream: explicitStream,
+          raw: true,
+        });
+        await splitRun.result;
+        if (loggerOwnedStream.text !== "split-ok\\n") {
+          throw new Error(
+            "default Logger owned outputStream did not receive native output: " +
+              JSON.stringify(loggerOwnedStream.text)
+          );
+        }
+        if (explicitStream.text !== "split-ok\\n") {
+          throw new Error(
+            "explicit outputStream did not receive native output: " +
+              JSON.stringify(explicitStream.text)
+          );
+        }
+        if (Date.now() - splitStartedAt < 80) {
+          throw new Error("split Logger streams completed before write callback");
+        }
+
+        const unicodeLogger = new CaptureLogger();
+        const unicodeRun = concurrently([
+          'node -e "process.stdout.write(Buffer.from([0xe2])); setTimeout(() => process.stdout.write(Buffer.from([0x82,0xac,0x0a])), 50)"',
+        ], {
+          logger: unicodeLogger,
+          raw: true,
+        });
+        await unicodeRun.result;
+        if (unicodeLogger.text !== "€\\n") {
+          throw new Error(
+            "logger did not preserve split UTF-8 output: " +
+              JSON.stringify(unicodeLogger.text)
+          );
+        }
+
+        try {
+          concurrently(['node -e "process.exit(0)"'], {
+            logger: { logCommandText(_text, _command) {} },
+            raw: true,
+          });
+          throw new Error("command-aware logger was accepted");
+        } catch (error) {
+          if (!String(error && error.message).includes("unsupported")) {
+            throw error;
+          }
+        }
+
+        process.stdout.write("logger smoke ok\\n");
+      }
+      main().catch((error) => {
+        console.error(error);
+        process.exit(1);
+      });
+    `
+  );
+  if (loggerSmoke.error) {
+    throw loggerSmoke.error;
+  }
+  if (loggerSmoke.status !== 0) {
+    throw new Error(
+      `programmatic logger smoke exited ${loggerSmoke.status}\nstdout:\n${loggerSmoke.stdout}\nstderr:\n${loggerSmoke.stderr}`
+    );
+  }
+  assertOutputEqual(
+    loggerSmoke.stdout,
+    "logger smoke ok\n",
+    "programmatic logger smoke stdout"
+  );
+  assertEqual(loggerSmoke.stderr, "", "programmatic logger smoke stderr");
+
   if (process.platform === "win32") {
     const apiSmoke = spawnNodeSmoke(
       projectDir,

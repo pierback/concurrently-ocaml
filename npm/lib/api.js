@@ -10,6 +10,7 @@ const {
 const { tmpdir } = require("node:os");
 const { join, resolve } = require("node:path");
 const { Writable } = require("node:stream");
+const { StringDecoder } = require("node:string_decoder");
 const { runNative } = require("./native");
 
 const SHORTCUT_RUNNERS = new Set(["npm", "yarn", "pnpm", "bun", "node", "deno"]);
@@ -454,7 +455,7 @@ function assertCommandInputs(commandInputs) {
 }
 
 function assertNativeOptions(options) {
-  for (const key of ["logger", "spawn"]) {
+  for (const key of ["spawn"]) {
     if (
       Object.prototype.hasOwnProperty.call(options, key) &&
       options[key] !== undefined
@@ -468,12 +469,39 @@ function assertNativeOptions(options) {
   ) {
     throw new Error("options.outputStream must be a writable stream");
   }
+  if (options.logger !== undefined) {
+    assertNativeLogger(options.logger);
+  }
   if (options.kill !== undefined && typeof options.kill !== "function") {
     throw new Error("options.kill must be a function");
   }
   if (options.kill !== undefined && nativeKillPolicyMayStopCommands(options)) {
     throw new NativeApiUnsupportedError(
       "options.kill with options.killOthers/killOthersOn"
+    );
+  }
+}
+
+function assertNativeLogger(logger) {
+  if (
+    typeof logger.logCommandText !== "function" &&
+    typeof logger.log !== "function"
+  ) {
+    throw new Error(
+      "options.logger must implement logCommandText(text) or log(prefix, text)"
+    );
+  }
+  if (
+    typeof logger.logCommandText === "function" &&
+    logger.logCommandText.length > 1
+  ) {
+    throw new Error(
+      "options.logger logCommandText(text, command) is unsupported by the native merged output stream"
+    );
+  }
+  if (typeof logger.log === "function" && logger.log.length > 2) {
+    throw new Error(
+      "options.logger log(prefix, text, command) is unsupported by the native merged output stream"
     );
   }
 }
@@ -874,7 +902,7 @@ function nativeInvocation(commands, options, eventDir) {
   }
   if (
     options.prefixColors === false ||
-    (options.outputStream && !forceColorEnabled(env))
+    (apiCapturesOutput(options) && !forceColorEnabled(env))
   ) {
     args.push("--no-color");
   }
@@ -1349,8 +1377,8 @@ function applyKillOthers(args, options) {
 }
 
 function attachStreams(child, options) {
-  const outputStream = options.outputStream;
-  if (!outputStream) {
+  const outputSink = apiOutputSink(options);
+  if (!outputSink) {
     return () => Promise.resolve();
   }
   let pendingWrites = 0;
@@ -1372,7 +1400,7 @@ function attachStreams(child, options) {
   const write = (chunk) => {
     pendingWrites += 1;
     try {
-      outputStream.write(chunk, (error) => {
+      outputSink.write(chunk, (error) => {
         if (error && !outputError) {
           outputError = error;
         }
@@ -1389,7 +1417,22 @@ function attachStreams(child, options) {
   };
   child.stdout?.on("data", write);
   child.stderr?.on("data", write);
+  let outputSinkEnded = false;
+  const endOutputSink = () => {
+    if (outputSinkEnded) {
+      return;
+    }
+    outputSinkEnded = true;
+    try {
+      outputSink.end?.();
+    } catch (error) {
+      if (!outputError) {
+        outputError = error;
+      }
+    }
+  };
   return () => {
+    endOutputSink();
     if (pendingWrites === 0) {
       return outputError ? Promise.reject(outputError) : Promise.resolve();
     }
@@ -1426,8 +1469,105 @@ function attachInput(child, options) {
 }
 
 function stdioFor(options) {
-  const output = options.outputStream ? "pipe" : "inherit";
+  const output = apiCapturesOutput(options) ? "pipe" : "inherit";
   return ["pipe", output, output];
+}
+
+function apiOutputSink(options) {
+  const logger = options.logger;
+  const outputStreams = uniqueOutputStreams(
+    options.outputStream,
+    loggerOutputStream(logger)
+  );
+  if (outputStreams.length > 0 || logger) {
+    const writesLogger =
+      logger && !streamBackedDefaultLogger(logger, outputStreams);
+    const loggerDecoder = writesLogger ? new StringDecoder("utf8") : undefined;
+    return {
+      write(chunk, callback) {
+        try {
+          if (writesLogger) {
+            writeLoggerText(logger, decodeLoggerChunk(loggerDecoder, chunk));
+          }
+          writeOutputStreams(outputStreams, chunk, callback);
+        } catch (error) {
+          callback(error);
+        }
+      },
+      end() {
+        if (writesLogger) {
+          writeLoggerText(logger, loggerDecoder.end());
+        }
+      },
+    };
+  }
+  return undefined;
+}
+
+function apiCapturesOutput(options) {
+  return Boolean(options.outputStream || options.logger);
+}
+
+function loggerOutputStream(logger) {
+  if (
+    logger &&
+    streamBackedDefaultLogger(logger, [logger.options?.outputStream]) &&
+    logger.options.outputStream instanceof Writable
+  ) {
+    return logger.options.outputStream;
+  }
+  return undefined;
+}
+
+function streamBackedDefaultLogger(logger, outputStreams) {
+  return Boolean(
+    outputStreams.length > 0 &&
+      logger instanceof Logger &&
+      logger.logCommandText === Logger.prototype.logCommandText &&
+      logger.log === Logger.prototype.log
+  );
+}
+
+function uniqueOutputStreams(...streams) {
+  return streams.filter(
+    (stream, index) =>
+      stream instanceof Writable && streams.indexOf(stream) === index
+  );
+}
+
+function writeOutputStreams(streams, chunk, callback) {
+  if (streams.length === 0) {
+    callback();
+    return;
+  }
+  let pendingWrites = streams.length;
+  let outputError;
+  for (const stream of streams) {
+    stream.write(chunk, (error) => {
+      if (error && !outputError) {
+        outputError = error;
+      }
+      pendingWrites -= 1;
+      if (pendingWrites === 0) {
+        callback(outputError);
+      }
+    });
+  }
+}
+
+function decodeLoggerChunk(decoder, chunk) {
+  return Buffer.isBuffer(chunk) ? decoder.write(chunk) : String(chunk);
+}
+
+function writeLoggerText(logger, text) {
+  if (text === "") {
+    return;
+  }
+  if (typeof logger.logCommandText === "function") {
+    logger.logCommandText(text);
+    return;
+  }
+  logger.log("", text);
 }
 
 function commandInfo(command) {
