@@ -285,6 +285,21 @@ try {
       const { delimiter, join } = require("node:path");
       const { PassThrough, Writable } = require("node:stream");
       const { runInNewContext } = require("node:vm");
+      const waitFor = (predicate, timeoutMs, label) => new Promise((resolve, reject) => {
+        const startMs = Date.now();
+        const poll = () => {
+          if (predicate()) {
+            resolve();
+            return;
+          }
+          if (Date.now() - startMs >= timeoutMs) {
+            reject(new Error(label));
+            return;
+          }
+          setTimeout(poll, 20);
+        };
+        poll();
+      });
       if (typeof concurrently !== "function") {
         throw new Error("default export is not callable");
       }
@@ -1495,34 +1510,27 @@ try {
         }
       });
       const killed = concurrently(['node -e "setTimeout(()=>{},10000)"'], { raw: true });
-      try {
+      const killedResult = waitFor(
+        () => concurrently.Command.canKill(killed.commands[0]),
+        10000,
+        "single-command API command did not become killable"
+      ).then(() => {
         killed.commands[0].kill("SIGKILL");
-        throw new Error("SIGKILL Command.kill did not fail");
-      } catch (error) {
-        if (!String(error && error.message).includes("not supported")) {
-          throw error;
+        if (!killed.commands[0].killed || killed.commands[0].killSignal !== "SIGKILL") {
+          throw new Error("single-command kill did not mark command as killed");
         }
-      }
-      try {
-        killed.commands[0].kill(9);
-        throw new Error("numeric SIGKILL Command.kill did not fail");
-      } catch (error) {
-        if (!String(error && error.message).includes("not supported")) {
-          throw error;
-        }
-      }
-      setTimeout(() => killed.commands[0].kill("SIGTERM"), 100);
-      const killedResult = killed.result.then((events) => {
-        throw new Error("killed command result unexpectedly resolved: " + JSON.stringify(events));
-      }, (events) => {
-        if (
-          !Array.isArray(events) ||
-          events.length !== 1 ||
-          !events[0].killed ||
-          events[0].exitCode !== "SIGTERM"
-        ) {
-          throw new Error("invalid killed command result events");
-        }
+        return killed.result.then((events) => {
+          throw new Error("killed command result unexpectedly resolved: " + JSON.stringify(events));
+        }, (events) => {
+          if (
+            !Array.isArray(events) ||
+            events.length !== 1 ||
+            !events[0].killed ||
+            events[0].exitCode !== "SIGKILL"
+          ) {
+            throw new Error("invalid killed command result events");
+          }
+        });
       });
       const multiKill = concurrently([
         'node -e "setTimeout(()=>{},100)"',
@@ -1534,13 +1542,9 @@ try {
       if (concurrently.Command.canKill(multiKill.commands[0])) {
         throw new Error("multi-command Command.canKill unexpectedly returned true");
       }
-      try {
-        multiKill.commands[0].kill("SIGTERM");
-        throw new Error("multi-command kill did not fail");
-      } catch (error) {
-        if (!String(error && error.message).includes("not supported")) {
-          throw error;
-        }
+      multiKill.commands[0].kill("SIGTERM");
+      if (multiKill.commands[0].killed || multiKill.commands[0].killSignal !== undefined) {
+        throw new Error("multi-command non-killable command was marked as killed");
       }
       const multiKillResult = multiKill.result.then((events) => {
         if (!Array.isArray(events) || events.length !== 2) {
