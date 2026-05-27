@@ -13,7 +13,9 @@ let test_routes_read_chunks_without_line_splitting () =
     ]
   in
   let router =
-    ok (Input_router.create ~commands ~default_input_target:"worker")
+    ok
+      (Input_router.create ~commands ~index_labels:None
+         ~default_input_target:"worker")
   in
   let writes = ref [] in
   let closed = ref false in

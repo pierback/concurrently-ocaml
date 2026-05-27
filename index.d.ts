@@ -154,6 +154,7 @@ export declare class Command implements CommandInfo {
   };
   process?: ChildProcess;
   stdin?: Writable;
+  constructor(info: CommandInfo & { index: number });
   constructor(
     info: CommandInfo & { index: number },
     spawnOpts: SpawnOptions,

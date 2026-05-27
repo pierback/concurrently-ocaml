@@ -53,7 +53,9 @@ let create_commands ~cwd ~global_raw inputs =
 let create_input_router ~handle_input ~commands ~default_input_target =
   if not handle_input then Ok None
   else
-    match Input_router.create ~commands ~default_input_target with
+    match
+      Input_router.create ~commands ~index_labels:None ~default_input_target
+    with
     | Ok router -> Ok (Some router)
     | Error error -> Error (`Input_router_error error)
 
@@ -81,6 +83,7 @@ let create ?cwd ?(policy = Run_policy.default) ?labels ?prefix
                   formatter_options =
                     {
                       labels;
+                      index_labels = None;
                       prefix;
                       prefix_length;
                       pad_prefix;

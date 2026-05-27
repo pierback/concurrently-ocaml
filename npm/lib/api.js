@@ -91,6 +91,7 @@ class Command {
     this.stdin = undefined;
     this.killSignal = undefined;
     this.killProcess = undefined;
+    this.killBeforePid = false;
     this.startedAt = undefined;
     this.close = new SimpleSubject();
     this.error = new SimpleSubject();
@@ -194,6 +195,9 @@ class Command {
     if (this.ipc == null) {
       throw new Error("Command IPC is disabled");
     }
+    if (this.state !== "stopped" && this.process === undefined) {
+      return Promise.reject(new Error("Command IPC channel is closed"));
+    }
     return new Promise((resolve, reject) => {
       this.messages.outgoing.next({
         message,
@@ -211,7 +215,7 @@ class Command {
   }
 
   kill(code = "SIGTERM") {
-    if (!Command.canKill(this)) {
+    if (!commandCanRequestKill(this)) {
       return;
     }
     const killed = this.killProcess(code);
@@ -235,10 +239,20 @@ class Command {
       command &&
         !command.exited &&
         command.process &&
-        Number.isInteger(command.pid) &&
-        typeof command.killProcess === "function"
+        typeof command.killProcess === "function" &&
+        Number.isInteger(command.pid)
     );
   }
+}
+
+function commandCanRequestKill(command) {
+  return Boolean(
+    command &&
+      !command.exited &&
+      command.process &&
+      typeof command.killProcess === "function" &&
+      (Number.isInteger(command.pid) || command.killBeforePid)
+  );
 }
 
 class Logger {
@@ -352,11 +366,15 @@ function concurrently(commandInputs, options = {}) {
   const nativeKillPolicy = nativeKillPolicyMayStopCommands(options);
   controlledCommands.forEach((command, position) => {
     command.process = child;
+    command.killBeforePid = !customKill;
     command.killProcess = (code) => {
       if (
         command.exited ||
         existsSync(eventPath(eventDir, command.index)) ||
-        (command.startedAt && !commandProcessExists(command.pid, nativeKillPolicy))
+        (customKill && !Number.isInteger(command.pid)) ||
+        (command.startedAt &&
+          Number.isInteger(command.pid) &&
+          !commandProcessExists(command.pid, nativeKillPolicy))
       ) {
         return false;
       }
@@ -373,9 +391,6 @@ function concurrently(commandInputs, options = {}) {
     };
   });
   if (controlledCommands.length === 1) {
-    if (!customKill) {
-      controlledCommands[0].pid = child.pid;
-    }
     controlledCommands[0].stdin = child.stdin;
   }
 
@@ -424,7 +439,7 @@ function concurrently(commandInputs, options = {}) {
       waitForOutput().then(
         () => {
           cleanupEventDir();
-          if (code === 0 && closeEventsSucceeded(events, options.successCondition)) {
+          if (closeEventsSucceeded(events, options.successCondition)) {
             resolve(events);
           } else {
             reject(events);
@@ -604,6 +619,9 @@ function assertUniqueCommandIndexes(commands) {
   for (const command of commands) {
     if (!(command instanceof Command)) {
       throw new Error("controllers must return Command objects");
+    }
+    if (command.ipc != null) {
+      throw new NativeApiUnsupportedError("command.ipc");
     }
     if (!Number.isInteger(command.index)) {
       throw new Error("controllers must return commands with integer indexes");
@@ -866,7 +884,6 @@ function nativeInvocation(commands, options, eventDir) {
   if (commands.length === 0) args.push("--api-empty-expansion");
   pushOption(args, "--max-processes", options.maxProcesses);
   pushOption(args, "--success", nativeSuccessCondition(commands, options.successCondition));
-  pushOption(args, "--prefix", options.prefix);
   pushOption(args, "--prefix-length", options.prefixLength);
   pushOption(args, "--timestamp-format", options.timestampFormat);
   pushOption(
@@ -908,12 +925,25 @@ function nativeInvocation(commands, options, eventDir) {
   }
 
   const publicNames = commands.map((command) => command.name);
-  if (publicNames.some((name) => name !== "")) {
-    const names = publicNames.map((name, index) => name || String(index));
+  const positionMatchesPublicIndex = commands.every(
+    (command, position) => command.index === position
+  );
+  if (publicNames.some((name) => name !== "") || !positionMatchesPublicIndex) {
+    const names = publicNames.map(
+      (name, position) => name || String(commands[position].index)
+    );
     const nameSeparator = commandNameSeparator(names);
     pushOption(args, "--api-name-separator", nameSeparator);
     pushOption(args, "--names", names.join(nameSeparator));
   }
+  if (needsPublicIndexLabels(options, positionMatchesPublicIndex)) {
+    pushOption(
+      args,
+      "--api-index-labels",
+      commands.map((command) => String(command.index)).join(",")
+    );
+  }
+  pushOption(args, "--prefix", options.prefix);
 
   const prefixColors = commandPrefixColors(commands, options);
   if (prefixColors) {
@@ -1002,10 +1032,10 @@ function eventWrapperCommand(
     "let wrote=false",
     "const write=event=>{if(!wrote){wrote=true;fs.writeFileSync(file,JSON.stringify({...event,startMs,endMs:Date.now()}))}}",
     "const exitCode=signal=>128+(typeof signal==='number'?signal:(signalNumbers[signal]||1))",
-    "const descendantPids=pid=>{if(process.platform==='win32'||!pid)return[];try{const rows=cp.spawnSync('ps',['-A','-o','pid=','-o','ppid='],{encoding:'utf8'}).stdout.trim().split(/\\n+/);const children=new Map();for(const row of rows){const parts=row.trim().split(/\\s+/);if(parts.length<2)continue;const childPid=Number(parts[0]);const parentPid=Number(parts[1]);if(!Number.isInteger(childPid)||!Number.isInteger(parentPid))continue;const childList=children.get(parentPid)||[];childList.push(childPid);children.set(parentPid,childList)}const result=[];const stack=[pid];while(stack.length>0){const parent=stack.pop();for(const childPid of children.get(parent)||[]){result.push(childPid);stack.push(childPid)}}return result}catch(_){return[]}}",
+    "const descendantPids=pid=>{if(process.platform==='win32'||!pid)return[];try{const ps=cp.spawnSync('ps',['-A','-o','pid=','-o','ppid='],{encoding:'utf8',timeout:200,maxBuffer:1024*1024});const rows=String(ps.stdout||'').trim().split(/\\n+/);const children=new Map();for(const row of rows){const parts=row.trim().split(/\\s+/);if(parts.length<2)continue;const childPid=Number(parts[0]);const parentPid=Number(parts[1]);if(!Number.isInteger(childPid)||!Number.isInteger(parentPid))continue;const childList=children.get(parentPid)||[];childList.push(childPid);children.set(parentPid,childList)}const result=[];const stack=[pid];while(stack.length>0){const parent=stack.pop();for(const childPid of children.get(parent)||[]){result.push(childPid);stack.push(childPid)}}return result}catch(_){return[]}}",
     "const killDescendants=(pid,signal)=>{for(const target of descendantPids(pid).reverse()){try{process.kill(target,signal)}catch(_){}}}",
-    "const forward=signal=>{if(!child)return;const pid=child.pid;const killGroup=()=>{if(process.platform!=='win32'&&pid){try{process.kill(-pid,signal);return true}catch(_){}}return false};const killChild=()=>{try{child.kill(signal)}catch(_){}};const attempt=()=>{killGroup();killDescendants(pid,signal);killChild()};attempt();for(const delay of [25,100,250])setTimeout(attempt,delay).unref()}",
-    "const onSignal=signal=>{forward(signal);write({code:null,signal});if(!exiting){exiting=true;setTimeout(()=>{forward('SIGKILL');process.exit(exitCode(signal))},5000).unref()}}",
+    "const forward=signal=>{if(!child)return;const pid=child.pid;const killGroup=()=>{if(process.platform!=='win32'&&pid){try{process.kill(-pid,signal);return true}catch(_){}}return false};const killChild=()=>{try{child.kill(signal)}catch(_){}};const attempt=()=>{if(!killGroup())killDescendants(pid,signal);killChild()};attempt();for(const delay of [25,100,250])setTimeout(attempt,delay).unref()}",
+    "const onSignal=signal=>{write({code:null,signal});forward(signal);if(!exiting){exiting=true;setTimeout(()=>{forward('SIGKILL');process.exit(exitCode(signal))},5000).unref()}}",
     "const pollKill=()=>{try{if(fs.existsSync(killFile)){const signal=JSON.parse(fs.readFileSync(killFile,'utf8'));fs.rmSync(killFile,{force:true});onSignal(signal)}}catch(_){}}",
     "for(const signal of ['SIGHUP','SIGINT','SIGTERM','SIGQUIT','SIGUSR1','SIGUSR2','SIGBREAK']){if(signalNumbers[signal]){try{process.on(signal,()=>onSignal(signal))}catch(_){}}}",
     `const detachWrappedCommand=${detachWrappedCommand ? "true" : "false"}`,
@@ -1216,6 +1246,9 @@ function nativeCommandSelector(commands, successCondition, prefix, selectorStart
   if (!/^[0-9]+$/.test(selector)) {
     return successCondition;
   }
+  if (commandNames(commands).includes(selector)) {
+    return successCondition;
+  }
   const selectedIndex = Number(selector);
   const nativePositions = commands.flatMap((command, position) =>
     command.index === selectedIndex ? [String(position)] : []
@@ -1232,20 +1265,17 @@ function nativeCommandIdentifier(commands, identifier) {
   if (identifier === undefined) {
     return undefined;
   }
-  const selector = String(identifier);
-  if (!/^[0-9]+$/.test(selector)) {
-    return selector;
-  }
-  const selectedIndex = Number(selector);
-  const nativePositions = commands.flatMap((command, position) =>
-    command.index === selectedIndex ? [String(position)] : []
+  return String(identifier);
+}
+
+function needsPublicIndexLabels(options, positionMatchesPublicIndex) {
+  return (
+    !positionMatchesPublicIndex &&
+    (prefixUsesIndexLabel(options.prefix) ||
+      options.handleInput ||
+      options.inputStream ||
+      options.defaultInputTarget !== undefined)
   );
-  if (nativePositions.length !== 1) {
-    return commandNames(commands).includes(selector)
-      ? selector
-      : String(commands.length);
-  }
-  return nativePositions[0];
 }
 
 function closeEventsSucceeded(events, successCondition = "all") {
@@ -1306,21 +1336,29 @@ function commandPrefixColors(commands, options) {
   }
   if (options.prefixColors !== undefined) {
     if (typeof options.prefixColors === "string") {
-      return options.prefixColors;
+      return remapPrefixColors(commands, options.prefixColors.split(","));
     }
-    const colors = arrayOption(options.prefixColors);
-    if (colors.length === 0) {
-      return "";
-    }
-    const lastColor = colors[colors.length - 1];
-    return commands
-      .map((command) => colors[command.index] ?? lastColor)
-      .join(",");
+    return remapPrefixColors(commands, arrayOption(options.prefixColors));
   }
   const colors = commands.map((command) => command.prefixColor);
   return colors.some(Boolean)
     ? colors.map((color) => color || "reset").join(",")
     : undefined;
+}
+
+function prefixUsesIndexLabel(prefix) {
+  if (typeof prefix !== "string") {
+    return false;
+  }
+  return prefix.toLowerCase() === "index" || prefix.includes("{index}");
+}
+
+function remapPrefixColors(commands, colors) {
+  if (colors.length === 0 || (colors.length === 1 && colors[0] === "")) {
+    return "";
+  }
+  const lastColor = colors[colors.length - 1];
+  return commands.map((command) => colors[command.index] ?? lastColor).join(",");
 }
 
 function forceColorEnabled(env) {
@@ -1363,18 +1401,8 @@ function nativeKillPolicyMayStopCommands(options) {
 function shouldDetachWrappedCommand(options) {
   return (
     process.platform !== "win32" &&
-    !(
-      nativeKillPolicyMayStopCommands(options) &&
-      (String(options.killSignal ?? "SIGTERM").trim() === "SIGKILL" ||
-        nativeKillTimeoutMayEscalate(options))
-    )
+    !nativeKillPolicyMayStopCommands(options)
   );
-}
-
-function nativeKillTimeoutMayEscalate(options) {
-  if (options.killTimeout === undefined) return false;
-  const timeout = Number(String(options.killTimeout).trim());
-  return Number.isFinite(timeout) && timeout !== 0;
 }
 
 function applyKillOthers(args, options) {

@@ -6,6 +6,7 @@ type color_mode =
 
 type options = {
   labels : string list option;
+  index_labels : string list option;
   prefix : string option;
   prefix_length : float;
   pad_prefix : bool;
@@ -19,6 +20,7 @@ type options = {
 
 let prefix_options (options : options) =
   {
+    Output_prefix.index_labels = options.index_labels;
     Output_prefix.prefix_length = options.prefix_length;
     pad_prefix = options.pad_prefix;
     timestamp_format = options.timestamp_format;
@@ -86,9 +88,17 @@ let create ~now ~wall_now ~commands (options : options) =
         | Error error -> Error error)
     | None -> default_labels command_count
   in
-  match labels_result with
-  | Error error -> Error error
-  | Ok labels ->
+  let index_labels_result =
+    match options.index_labels with
+    | Some labels -> (
+        match validate_labels ~command_count labels with
+        | Ok () -> Ok ()
+        | Error error -> Error error)
+    | None -> Ok ()
+  in
+  match (labels_result, index_labels_result) with
+  | Error error, _ | _, Error error -> Error error
+  | Ok labels, Ok () ->
       let prefix_mode = Output_prefix.mode options.prefix in
       let prefix_options = prefix_options options in
       Ok

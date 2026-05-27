@@ -11,6 +11,7 @@ type create_error =
 
 val create :
   commands:Command.t list ->
+  index_labels:string list option ->
   default_input_target:string ->
   (t, create_error) result
 

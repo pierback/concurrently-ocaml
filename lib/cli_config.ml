@@ -1,5 +1,6 @@
 type display = {
   labels : string list option;
+  index_labels : string list option;
   prefix : string option;
   prefix_length : float;
   pad_prefix : bool;
@@ -389,10 +390,11 @@ let expand_command_inputs ~cwd ~passthrough_arguments ~command_texts ~names
     prefix_palette;
   }
 
-let create_display ~labels ~prefix ~prefix_length ~pad_prefix ~timestamp_format
-    ~spacious ~timings ~group ~raw ~no_color =
+let create_display ~labels ~index_labels ~prefix ~prefix_length ~pad_prefix
+    ~timestamp_format ~spacious ~timings ~group ~raw ~no_color =
   {
     labels;
+    index_labels;
     prefix;
     prefix_length;
     pad_prefix;
@@ -455,10 +457,11 @@ let create_teardown_commands ?cwd ~main_command_count teardown_texts =
   in
   create 0 [] teardown_texts
 
-let create_input_router ~handle_input ~commands ~default_input_target =
+let create_input_router ~handle_input ~commands ~index_labels
+    ~default_input_target =
   if not handle_input then Ok None
   else
-    match Input_router.create ~commands ~default_input_target with
+    match Input_router.create ~commands ~index_labels ~default_input_target with
     | Ok router -> Ok (Some router)
     | Error error -> Error (`Input_router_error error)
 
@@ -519,7 +522,8 @@ let create_command_config ~cwd ~teardown_texts ~policy_input ~display
       | Error error -> Error error
       | Ok commands -> (
           match
-            create_input_router ~handle_input ~commands ~default_input_target
+            create_input_router ~handle_input ~commands
+              ~index_labels:display.index_labels ~default_input_target
           with
           | Error error -> Error error
           | Ok input -> (
@@ -542,8 +546,8 @@ let create_with_display ~cwd ~passthrough_arguments ~teardown_texts
     ~command_texts ~display_command_texts ~names_csv
     ~force_empty_expansion ~name_separator ~spacious ~timings ~group ~raw
     ~hide_csv ~api_hide_indexes_csv ~api_raw_indexes_csv
-    ~api_formatted_indexes_csv ~no_color ~prefix ~prefix_colors_csv
-    ~prefix_length ~pad_prefix ~timestamp_format ~handle_input
+    ~api_formatted_indexes_csv ~api_index_labels_csv ~no_color ~prefix
+    ~prefix_colors_csv ~prefix_length ~pad_prefix ~timestamp_format ~handle_input
     ~default_input_target ~success ~kill_others_on_success ~kill_others
     ~kill_others_on_fail ~kill_signal ~kill_timeout_ms ~max_processes
     ~restart_tries ~restart_after =
@@ -554,9 +558,12 @@ let create_with_display ~cwd ~passthrough_arguments ~teardown_texts
   | Ok names -> (
       let create_from_expansion expanded =
         let display =
-          create_display ~labels:expanded.effective_names ~prefix
-            ~prefix_length ~pad_prefix ~timestamp_format ~spacious ~timings
-            ~group ~raw ~no_color
+          create_display ~labels:expanded.effective_names
+            ~index_labels:
+              (Option.map (split_on_separator ~separator:",")
+                 api_index_labels_csv)
+            ~prefix ~prefix_length ~pad_prefix ~timestamp_format ~spacious
+            ~timings ~group ~raw ~no_color
         in
         let kill_others_on =
           kill_conditions ~kill_others ~kill_others_on_success
@@ -630,17 +637,17 @@ let create_with_display ~cwd ~passthrough_arguments ~teardown_texts
 let create ~cwd ~passthrough_arguments ~teardown_texts ~command_texts ~names_csv
     ~name_separator ~spacious ~timings ~group ~raw ~hide_csv
     ~api_hide_indexes_csv ~api_raw_indexes_csv ~api_formatted_indexes_csv
-    ~no_color ~prefix ~prefix_colors_csv ~prefix_length ~pad_prefix
-    ~timestamp_format ~handle_input ~default_input_target ~success
+    ~api_index_labels_csv ~no_color ~prefix ~prefix_colors_csv ~prefix_length
+    ~pad_prefix ~timestamp_format ~handle_input ~default_input_target ~success
     ~kill_others_on_success ~kill_others ~kill_others_on_fail ~kill_signal
     ~kill_timeout_ms ~max_processes ~restart_tries ~restart_after =
   create_with_display ~cwd ~passthrough_arguments ~teardown_texts
     ~command_texts ~display_command_texts:[] ~names_csv
     ~force_empty_expansion:false ~name_separator
     ~spacious ~timings ~group ~raw ~hide_csv ~api_hide_indexes_csv
-    ~api_raw_indexes_csv ~api_formatted_indexes_csv ~no_color ~prefix
-    ~prefix_colors_csv ~prefix_length ~pad_prefix ~timestamp_format
-    ~handle_input ~default_input_target ~success ~kill_others_on_success
+    ~api_raw_indexes_csv ~api_formatted_indexes_csv ~api_index_labels_csv
+    ~no_color ~prefix ~prefix_colors_csv ~prefix_length ~pad_prefix
+    ~timestamp_format ~handle_input ~default_input_target ~success ~kill_others_on_success
     ~kill_others ~kill_others_on_fail ~kill_signal ~kill_timeout_ms
     ~max_processes ~restart_tries ~restart_after
 

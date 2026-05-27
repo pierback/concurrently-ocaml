@@ -9,6 +9,7 @@ type mode =
   | Template of string
 
 type options = {
+  index_labels : string list option;
   prefix_length : float;
   pad_prefix : bool;
   timestamp_format : string;
@@ -102,17 +103,25 @@ let truncate_command ~prefix_length text =
 let name_label command =
   match Command.name command with Some name -> name | None -> ""
 
-let index_label command = string_of_int (Command.index command)
+let native_index_label command = string_of_int (Command.index command)
 
-let default_label command =
+let index_label ~options command =
+  match options.index_labels with
+  | Some labels -> (
+      match List.nth_opt labels (Command.index command) with
+      | Some label -> label
+      | None -> native_index_label command)
+  | None -> native_index_label command
+
+let default_label ~options command =
   match Command.name command with
   | Some name when not (String.equal name "") -> name
-  | Some _ | None -> index_label command
+  | Some _ | None -> index_label ~options command
 
 let template_label ~now ~options ~process_id command template =
   let replacements =
     [
-      ("{index}", index_label command);
+      ("{index}", index_label ~options command);
       ("{pid}", Option.value ~default:"" process_id);
       ("{name}", name_label command);
       ("{command}", Command.display_text command);
@@ -144,8 +153,8 @@ let template_label ~now ~options ~process_id command template =
 
 let raw_label ~now ~options ~process_id ~mode command =
   match mode with
-  | Default -> default_label command
-  | Index -> index_label command
+  | Default -> default_label ~options command
+  | Index -> index_label ~options command
   | Pid -> Option.value ~default:"" process_id
   | Name -> name_label command
   | Command ->
@@ -156,18 +165,18 @@ let raw_label ~now ~options ~process_id ~mode command =
   | Template template ->
       template_label ~now ~options ~process_id command template
 
-let default_label_for_width ~labels command =
+let default_label_for_width ~options ~labels command =
   match Command.name command with
   | Some name when not (String.equal name "") -> name
   | Some _ | None -> (
       let index = Command.index command in
       match List.nth_opt labels index with
       | Some label when not (String.equal label "") -> label
-      | Some _ | None -> index_label command)
+      | Some _ | None -> index_label ~options command)
 
 let raw_label_for_width ~now ~options ~mode ~labels command =
   match mode with
-  | Default -> default_label_for_width ~labels command
+  | Default -> default_label_for_width ~options ~labels command
   | Index | Pid | Name | Command | No_prefix | Time | Template _ ->
       raw_label ~now ~options ~process_id:None ~mode command
 
@@ -193,7 +202,7 @@ let label_for_command ~wall_time ~process_id ~options ~mode ~labels ~width
               index < Array.length labels
               && not (String.equal labels.(index) "")
             then labels.(index)
-            else index_label command)
+            else index_label ~options command)
     | Index | Pid | Command | No_prefix | Time | Template _ ->
         raw_label ~now:(fun () -> wall_time) ~options ~process_id ~mode command
     | Name ->

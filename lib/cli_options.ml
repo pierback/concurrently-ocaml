@@ -184,6 +184,7 @@ let specs =
     value [ "--api-raw-indexes" ] ~emitted_option:"--api-raw-indexes";
     value [ "--api-formatted-indexes" ]
       ~emitted_option:"--api-formatted-indexes";
+    value [ "--api-index-labels" ] ~emitted_option:"--api-index-labels";
     boolean [ "--api-empty-expansion" ] ~negated_names:[]
       ~emitted_boolean_option:"--api-empty-expansion" ~boolean_order:99;
   ]

@@ -998,6 +998,39 @@ try {
           throw new Error("filtered prefix color did not preserve retained command color: " + filteredPrefixColorOutput);
         }
       });
+      let filteredIndexPrefixOutput = "";
+      const filteredIndexPrefixStream = new Writable({
+        write(chunk, _encoding, callback) {
+          filteredIndexPrefixOutput += chunk.toString();
+          callback();
+        },
+      });
+      const filteredIndexPrefixRun = concurrently([
+        { name: "one", command: 'node -e "process.exit(0)"' },
+        { name: "two", command: 'node -e "console.log(\\'index-kept\\')"' },
+      ], {
+        outputStream: filteredIndexPrefixStream,
+        prefix: "index",
+        prefixColors: false,
+        controllers: [
+          {
+            handle(commands) {
+              return { commands: [commands[1]] };
+            },
+          },
+        ],
+      });
+      const filteredIndexPrefixResult = filteredIndexPrefixRun.result.then((events) => {
+        if (!Array.isArray(events) || events.length !== 1 || events[0].index !== 1) {
+          throw new Error("filtered index prefix controller returned wrong events: " + JSON.stringify(events));
+        }
+        if (!filteredIndexPrefixOutput.includes("[1] index-kept")) {
+          throw new Error("filtered index prefix lost public index: " + filteredIndexPrefixOutput);
+        }
+        if (filteredIndexPrefixOutput.includes("[two] index-kept")) {
+          throw new Error("filtered index prefix used command name: " + filteredIndexPrefixOutput);
+        }
+      });
       const missingPositiveSelectorRun = concurrently([
         'node -e "process.exit(0)"',
         'node -e "process.exit(0)"',
@@ -1555,6 +1588,28 @@ try {
           throw new Error("explicit raw:false command did not finish with sibling");
         }
       });
+      let globalRawFalseOutput = "";
+      const globalRawFalseStream = new Writable({
+        write(chunk, _encoding, callback) {
+          globalRawFalseOutput += chunk.toString();
+          callback();
+        },
+      });
+      const globalRawFalseRun = concurrently([
+        { command: 'node -e "console.log(\\'global-raw-false\\')"', raw: false },
+      ], {
+        outputStream: globalRawFalseStream,
+        prefixColors: false,
+        raw: true,
+      });
+      const globalRawFalseResult = globalRawFalseRun.result.then((events) => {
+        if (events.length !== 1) {
+          throw new Error("global raw:false command did not finish");
+        }
+        if (!globalRawFalseOutput.includes("[0] global-raw-false")) {
+          throw new Error("global raw:false command stayed raw: " + globalRawFalseOutput);
+        }
+      });
       let mixedRawOutput = "";
       const mixedRawStream = new Writable({
         write(chunk, _encoding, callback) {
@@ -1770,15 +1825,26 @@ try {
         throw new Error("multi-command API exposed per-command process metadata too early");
       }
       if (concurrently.Command.canKill(multiKill.commands[0])) {
-        throw new Error("multi-command Command.canKill unexpectedly returned true");
+        throw new Error("multi-command Command.canKill was true before pid discovery");
       }
       multiKill.commands[0].kill("SIGTERM");
-      if (multiKill.commands[0].killed || multiKill.commands[0].killSignal !== undefined) {
-        throw new Error("multi-command non-killable command was marked as killed");
+      if (!multiKill.commands[0].killed || multiKill.commands[0].killSignal !== "SIGTERM") {
+        throw new Error("multi-command immediate kill did not mark command as killed");
       }
       const multiKillResult = multiKill.result.then((events) => {
-        if (!Array.isArray(events) || events.length !== 2) {
-          throw new Error("invalid multi-command kill result events");
+        throw new Error("multi-command immediate kill unexpectedly resolved: " + JSON.stringify(events));
+      }, (events) => {
+        const killed = Array.isArray(events)
+          ? events.find((event) => event.index === 0)
+          : undefined;
+        if (
+          !Array.isArray(events) ||
+          events.length !== 2 ||
+          !killed ||
+          !killed.killed ||
+          killed.exitCode !== "SIGTERM"
+        ) {
+          throw new Error("invalid multi-command immediate kill result events: " + JSON.stringify(events));
         }
       });
       const manualOutput = [];
@@ -1999,6 +2065,7 @@ try {
         filteredInputResult,
         filteredHideResult,
         filteredPrefixColorResult,
+        filteredIndexPrefixResult,
         missingPositiveSelectorResult,
         missingNegatedSelectorResult,
         undefinedHookOptionsResult,
@@ -2029,6 +2096,7 @@ try {
         dashPrefixResult,
         forceColorPreserveResult,
         explicitFalseRawResult,
+        globalRawFalseResult,
         mixedRawResult,
         mixedRawTimingsResult,
         prefixColorResult,

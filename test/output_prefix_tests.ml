@@ -8,6 +8,7 @@ let test_labels_prefix_modes () =
   let options =
     {
       Output_prefix.prefix_length = 6.0;
+      index_labels = None;
       pad_prefix = false;
       timestamp_format = "SSS";
     }
