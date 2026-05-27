@@ -5,6 +5,7 @@ const {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } = require("node:fs");
@@ -2053,6 +2054,7 @@ function runLocal(testCase) {
 
 async function runNativeApiSmoke() {
   await runNativeApiPerCommandKillSmoke();
+  await runNativeApiNativeKillPolicyManualKillSmoke();
   await runNativeApiExitedCommandKillSmoke();
 }
 
@@ -2074,6 +2076,9 @@ async function runNativeApiPerCommandKillSmoke() {
     "native JS API commands did not become killable"
   );
   run.commands.forEach((command, index) => {
+    if (!command.process || !Number.isInteger(command.process.pid)) {
+      throw new Error(`native JS API command ${index} canKill without process`);
+    }
     command.kill("SIGTERM");
     assertEqual(command.killed, true, `native JS API command ${index} kill flag`);
     assertEqual(
@@ -2095,6 +2100,55 @@ async function runNativeApiPerCommandKillSmoke() {
     assertEqual(event.killed, true, `native JS API command ${index} killed`);
   });
   console.log("compat ok: native JS API per-command kill");
+}
+
+async function runNativeApiNativeKillPolicyManualKillSmoke() {
+  if (process.platform === "win32") {
+    return;
+  }
+
+  const api = require(resolve("index.js"));
+  const fixture = mkdtempSync(resolve(tmpdir(), "concurrently-ml-api-kill-policy-"));
+  const pidFile = resolve(fixture, "grandchild.pid");
+  const sink = new Writable({
+    write(_chunk, _encoding, callback) {
+      callback();
+    },
+  });
+  const command = nodeEvalCommand(
+    "const cp=require('node:child_process');" +
+      "const fs=require('node:fs');" +
+      `const child=cp.spawn('sleep',['30'],{stdio:'ignore'});` +
+      `fs.writeFileSync('${jsSingleQuoted(pidFile)}',String(child.pid));` +
+      "setInterval(function(){},1000)"
+  );
+  const run = api.concurrently([command, nodeHangCommand()], {
+    killOthersOn: ["failure"],
+    outputStream: sink,
+    prefixColors: false,
+  });
+  const result = run.result.catch((events) => events);
+
+  try {
+    await waitFor(
+      () => existsSync(pidFile) && api.Command.canKill(run.commands[0]),
+      10000,
+      "native JS API kill-policy command did not become killable"
+    );
+    const grandchildPid = Number(readFileSync(pidFile, "utf8"));
+    run.commands[0].kill("SIGTERM");
+    await waitFor(
+      () => !processRunning(grandchildPid),
+      10000,
+      "native JS API kill-policy manual kill left descendant running"
+    );
+    run.commands[1].kill("SIGTERM");
+    await result;
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+
+  console.log("compat ok: native JS API kill policy manual kill cleans descendants");
 }
 
 async function runNativeApiExitedCommandKillSmoke() {
@@ -2148,6 +2202,19 @@ function waitFor(predicate, timeoutMs, label) {
     };
     poll();
   });
+}
+
+function processRunning(pid) {
+  if (!Number.isInteger(pid)) {
+    return false;
+  }
+  const result = spawnSync("ps", ["-p", String(pid), "-o", "stat="], {
+    encoding: "utf8",
+  });
+  if (result.status !== 0) {
+    return false;
+  }
+  return !result.stdout.trim().startsWith("Z");
 }
 
 function runNpm(testCase) {

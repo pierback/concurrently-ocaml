@@ -233,6 +233,7 @@ class Command {
     return Boolean(
       command &&
         !command.exited &&
+        command.process &&
         Number.isInteger(command.pid) &&
         typeof command.killProcess === "function"
     );
@@ -347,12 +348,14 @@ function concurrently(commandInputs, options = {}) {
   }
 
   const customKill = options.kill;
+  const nativeKillPolicy = nativeKillPolicyMayStopCommands(options);
   controlledCommands.forEach((command, position) => {
+    command.process = child;
     command.killProcess = (code) => {
       if (
         command.exited ||
         existsSync(eventPath(eventDir, command.index)) ||
-        (command.startedAt && !commandProcessExists(command.pid))
+        (command.startedAt && !commandProcessExists(command.pid, nativeKillPolicy))
       ) {
         return false;
       }
@@ -918,7 +921,8 @@ function nativeInvocation(commands, options, eventDir) {
         killPath(eventDir, command.index),
         options.handleInput || options.inputStream,
         requiredCommandEnvPath(commandEnvPaths, command),
-        commandCwd(command)
+        commandCwd(command),
+        nativeKillPolicyMayStopCommands(options)
       )
     )
   );
@@ -939,7 +943,8 @@ function eventWrapperCommand(
   killPath,
   forwardStdin,
   commandEnvPath,
-  cwd
+  cwd,
+  nativeKillPolicy
 ) {
   const commandText = Buffer.from(command).toString("base64");
   const eventFile = Buffer.from(path).toString("base64");
@@ -969,11 +974,14 @@ function eventWrapperCommand(
     "let wrote=false",
     "const write=event=>{if(!wrote){wrote=true;fs.writeFileSync(file,JSON.stringify({...event,startMs,endMs:Date.now()}))}}",
     "const exitCode=signal=>128+(typeof signal==='number'?signal:(signalNumbers[signal]||1))",
-    "const forward=signal=>{if(!child)return;const pid=child.pid;const killGroup=()=>{if(process.platform!=='win32'&&pid){try{process.kill(-pid,signal);return true}catch(_){}}return false};const killChild=()=>{try{child.kill(signal)}catch(_){}};const attempt=()=>{killGroup();killChild()};attempt();for(const delay of [25,100,250])setTimeout(attempt,delay).unref()}",
+    "const descendantPids=pid=>{if(process.platform==='win32'||!pid)return[];try{const rows=cp.spawnSync('ps',['-A','-o','pid=','-o','ppid='],{encoding:'utf8'}).stdout.trim().split(/\\n+/);const children=new Map();for(const row of rows){const parts=row.trim().split(/\\s+/);if(parts.length<2)continue;const childPid=Number(parts[0]);const parentPid=Number(parts[1]);if(!Number.isInteger(childPid)||!Number.isInteger(parentPid))continue;const childList=children.get(parentPid)||[];childList.push(childPid);children.set(parentPid,childList)}const result=[];const stack=[pid];while(stack.length>0){const parent=stack.pop();for(const childPid of children.get(parent)||[]){result.push(childPid);stack.push(childPid)}}return result}catch(_){return[]}}",
+    "const killDescendants=(pid,signal)=>{for(const target of descendantPids(pid).reverse()){try{process.kill(target,signal)}catch(_){}}}",
+    "const forward=signal=>{if(!child)return;const pid=child.pid;const killGroup=()=>{if(process.platform!=='win32'&&pid){try{process.kill(-pid,signal);return true}catch(_){}}return false};const killChild=()=>{try{child.kill(signal)}catch(_){}};const attempt=()=>{killGroup();killDescendants(pid,signal);killChild()};attempt();for(const delay of [25,100,250])setTimeout(attempt,delay).unref()}",
     "const onSignal=signal=>{write({code:null,signal});forward(signal);if(!exiting){exiting=true;setTimeout(()=>process.exit(exitCode(signal)),5000).unref()}}",
     "const pollKill=()=>{try{if(fs.existsSync(killFile)){const signal=JSON.parse(fs.readFileSync(killFile,'utf8'));fs.rmSync(killFile,{force:true});onSignal(signal)}}catch(_){}}",
     "for(const signal of ['SIGHUP','SIGINT','SIGTERM','SIGQUIT','SIGUSR1','SIGUSR2','SIGBREAK']){if(signalNumbers[signal]){try{process.on(signal,()=>onSignal(signal))}catch(_){}}}",
-    "const spawnOptions={shell:true,detached:process.platform!=='win32',stdio:[childStdin,'inherit','inherit'],env:{...process.env,...commandEnv}}",
+    `const nativeKillPolicy=${nativeKillPolicy ? "true" : "false"}`,
+    "const spawnOptions={shell:true,detached:!nativeKillPolicy&&process.platform!=='win32',stdio:[childStdin,'inherit','inherit'],env:{...process.env,...commandEnv}}",
     "if(cwd!==undefined)spawnOptions.cwd=cwd",
     "child=cp.spawn(cmd,spawnOptions)",
     "fs.writeFileSync(startFile,JSON.stringify({startMs,pid:child.pid}))",
@@ -1100,12 +1108,12 @@ function readCommandStart(path) {
   }
 }
 
-function commandProcessExists(pid) {
+function commandProcessExists(pid, sameProcessGroup = false) {
   if (!Number.isInteger(pid)) {
     return false;
   }
   try {
-    process.kill(process.platform === "win32" ? pid : -pid, 0);
+    process.kill(process.platform === "win32" || sameProcessGroup ? pid : -pid, 0);
     return true;
   } catch (_error) {
     return false;

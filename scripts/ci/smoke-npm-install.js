@@ -1584,8 +1584,11 @@ try {
         'node -e "setTimeout(()=>{},100)"',
         'node -e "setTimeout(()=>{},100)"',
       ], { raw: true });
+      if (multiKill.commands.some((command) => !command.process)) {
+        throw new Error("multi-command API did not expose native runner process");
+      }
       if (multiKill.commands.some((command) => command.pid !== undefined || command.stdin !== undefined)) {
-        throw new Error("multi-command API exposed native runner process metadata");
+        throw new Error("multi-command API exposed per-command process metadata too early");
       }
       if (concurrently.Command.canKill(multiKill.commands[0])) {
         throw new Error("multi-command Command.canKill unexpectedly returned true");

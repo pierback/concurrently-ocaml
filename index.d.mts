@@ -86,6 +86,7 @@ export interface FlowController {
 }
 
 export interface ConcurrentlyOptions {
+  logger?: Logger;
   outputStream?: Writable;
   group?: boolean;
   prefixColors?: string | string[] | false;
@@ -109,6 +110,7 @@ export interface ConcurrentlyOptions {
   restartTries?: number;
   killOthers?: ProcessCloseCondition | ProcessCloseCondition[];
   killOthersOn?: ProcessCloseCondition | ProcessCloseCondition[];
+  spawn?: SpawnCommand;
   killSignal?: string;
   killTimeout?: number;
   kill?: KillProcess;
@@ -155,7 +157,10 @@ export declare class Command implements CommandInfo {
     options?: MessageOptions
   ): Promise<void>;
   kill(code?: string): void;
-  static canKill(command: Command): command is Command & { pid: number };
+  static canKill(command: Command): command is Command & {
+    pid: number;
+    process: ChildProcess;
+  };
 }
 
 export declare class Logger {
