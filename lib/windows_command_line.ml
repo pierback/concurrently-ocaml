@@ -29,6 +29,13 @@ let quote_arg value =
     Buffer.add_char quoted '"';
     Buffer.contents quoted
 
+let shell_command_text_arg command_text =
+  if String.length command_text > 0 && command_text.[0] = '"' then
+    (* cmd.exe /s needs an outer quote pair for commands that start with
+       a quoted executable path, while unquoted command text must stay raw. *)
+    "\"" ^ command_text ^ "\""
+  else command_text
+
 let shell_command_line ~shell_path ~command_text =
   String.concat " "
-    [ quote_arg shell_path; "/d"; "/s"; "/c"; quote_arg command_text ]
+    [ quote_arg shell_path; "/d"; "/s"; "/c"; shell_command_text_arg command_text ]
