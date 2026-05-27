@@ -105,15 +105,18 @@ native-backed on supported platforms. `require("concurrently")` and ESM imports
 return a repo-owned facade that spawns the native binary and exposes the
 upstream-compatible entrypoint names. The facade supports command-local `cwd`,
 `env`, `prefixColor`, `raw`, and `hidden` values by carrying that metadata into
-the native run. Custom controllers can inspect or replace the native-backed
-command list, receive close, timer, and state-change events from the facade, and
-kill returned commands through native per-command control files or an
-`options.kill` callback after the child PID is known. Standalone `new Command`
-instances support custom `spawn` and IPC for controller-style library code.
+the native run. `options.logger` is accepted as the output sink for native
+stdout/stderr; command-aware logger callbacks are rejected because native output
+is merged after process execution. Custom controllers can inspect or replace the
+native-backed command list, receive close, timer, and state-change events from
+the facade, and kill returned commands through native per-command control files
+or an `options.kill` callback after the child PID is known. Standalone
+`new Command` instances support custom `spawn` and IPC for controller-style
+library code.
 JavaScript hooks that require replacing native orchestration for a high-level
-run, such as `options.spawn`, `options.logger`, command-level `ipc`, and
-`options.kill` combined with native kill policies, fail explicitly instead of
-routing to upstream JavaScript.
+run, such as `options.spawn`, command-level `ipc`, and `options.kill` combined
+with native kill policies, fail explicitly instead of routing to upstream
+JavaScript.
 
 ## Implemented CLI Surface
 
