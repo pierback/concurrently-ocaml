@@ -15,6 +15,7 @@ export type SuccessCondition =
   | "last"
   | `command-${string | number}`
   | `!command-${string | number}`;
+export type KillProcess = (pid: number, signal?: string) => void;
 
 export interface CommandInfo {
   name: string;
@@ -105,6 +106,7 @@ export interface ConcurrentlyOptions {
   killOthersOn?: ProcessCloseCondition | ProcessCloseCondition[];
   killSignal?: string;
   killTimeout?: number;
+  kill?: KillProcess;
   timings?: boolean;
   teardown?: readonly string[];
 }

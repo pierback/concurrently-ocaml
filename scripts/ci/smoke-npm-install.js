@@ -878,9 +878,21 @@ try {
       });
       const undefinedHookOptionsResult = undefinedHookOptions.result.then((events) => {
         if (!Array.isArray(events) || events.length !== 1 || events[0].exitCode !== 0) {
-          throw new Error("undefined unsupported hook options changed API execution: " + JSON.stringify(events));
+          throw new Error("undefined hook options changed API execution: " + JSON.stringify(events));
         }
       });
+      try {
+        concurrently(['node -e "process.exit(0)"'], {
+          raw: true,
+          kill() {},
+          killOthersOn: ["success"],
+        });
+        throw new Error("options.kill with native kill policy did not fail loudly");
+      } catch (error) {
+        if (!String(error && error.message).includes("options.kill with options.killOthers/killOthersOn")) {
+          throw error;
+        }
+      }
       const createConcurrentlyRun = concurrently.createConcurrently(['node -e "process.exit(0)"'], {
         raw: true,
         outputStream: shortcutOutputSink,
@@ -1532,6 +1544,41 @@ try {
           }
         });
       });
+      const customKillCalls = [];
+      const customKill = concurrently(['node -e "setTimeout(()=>{},10000)"'], {
+        raw: true,
+        outputStream: shortcutOutputSink,
+        kill(pid, signal) {
+          customKillCalls.push({ pid, signal });
+          process.kill(process.platform === "win32" ? pid : -pid, signal);
+        },
+      });
+      const customKillResult = waitFor(
+        () => concurrently.Command.canKill(customKill.commands[0]) && customKill.commands[0].startedAt,
+        10000,
+        "custom-kill API command did not become killable"
+      ).then(() => {
+        customKill.commands[0].kill("SIGTERM");
+        if (
+          customKillCalls.length !== 1 ||
+          customKillCalls[0].pid !== customKill.commands[0].pid ||
+          customKillCalls[0].signal !== "SIGTERM"
+        ) {
+          throw new Error("options.kill did not receive command pid and signal: " + JSON.stringify(customKillCalls));
+        }
+        return customKill.result.then((events) => {
+          throw new Error("custom-killed command result unexpectedly resolved: " + JSON.stringify(events));
+        }, (events) => {
+          if (
+            !Array.isArray(events) ||
+            events.length !== 1 ||
+            !events[0].killed ||
+            events[0].exitCode !== "SIGTERM"
+          ) {
+            throw new Error("invalid custom-killed command result events: " + JSON.stringify(events));
+          }
+        });
+      });
       const multiKill = concurrently([
         'node -e "setTimeout(()=>{},100)"',
         'node -e "setTimeout(()=>{},100)"',
@@ -1619,6 +1666,7 @@ try {
         successOnlyKillResult,
         queuedKillResult,
         killedResult,
+        customKillResult,
         multiKillResult,
         runResult,
       ]).then(() => {

@@ -214,6 +214,7 @@ function concurrently(commandInputs, options = {}) {
     throw error;
   }
 
+  const customKill = options.kill;
   controlledCommands.forEach((command, position) => {
     command.killProcess = (code) => {
       if (
@@ -223,16 +224,22 @@ function concurrently(commandInputs, options = {}) {
       ) {
         return false;
       }
-      writeFileSync(invocation.killPaths[position], JSON.stringify(code), {
-        mode: 0o600,
-      });
+      if (customKill) {
+        customKill(command.pid, code);
+      } else {
+        writeFileSync(invocation.killPaths[position], JSON.stringify(code), {
+          mode: 0o600,
+        });
+      }
       command.killed = true;
       command.killSignal = code;
       return true;
     };
   });
   if (controlledCommands.length === 1) {
-    controlledCommands[0].pid = child.pid;
+    if (!customKill) {
+      controlledCommands[0].pid = child.pid;
+    }
     controlledCommands[0].stdin = child.stdin;
   }
 
@@ -312,7 +319,7 @@ function assertCommandInputs(commandInputs) {
 }
 
 function assertNativeOptions(options) {
-  for (const key of ["logger", "spawn", "kill"]) {
+  for (const key of ["logger", "spawn"]) {
     if (
       Object.prototype.hasOwnProperty.call(options, key) &&
       options[key] !== undefined
@@ -325,6 +332,14 @@ function assertNativeOptions(options) {
     !(options.outputStream instanceof Writable)
   ) {
     throw new Error("options.outputStream must be a writable stream");
+  }
+  if (options.kill !== undefined && typeof options.kill !== "function") {
+    throw new Error("options.kill must be a function");
+  }
+  if (options.kill !== undefined && nativeKillPolicyMayStopCommands(options)) {
+    throw new NativeApiUnsupportedError(
+      "options.kill with options.killOthers/killOthersOn"
+    );
   }
 }
 
@@ -365,7 +380,7 @@ function normalizeCommands(commandInputs) {
 
 function markStartedCommands(commands, eventDir, fallbackStartDate) {
   for (const command of commands) {
-    if (command.state !== "stopped") {
+    if (command.state !== "stopped" && Number.isInteger(command.pid)) {
       continue;
     }
     const start = readCommandStart(eventStartPath(eventDir, command.index));
@@ -379,11 +394,11 @@ function markStartedCommands(commands, eventDir, fallbackStartDate) {
 }
 
 function markCommandStarted(command, startDate, pid) {
-  if (command.state !== "stopped") {
-    return;
-  }
   if (Number.isInteger(pid)) {
     command.pid = pid;
+  }
+  if (command.state !== "stopped") {
+    return;
   }
   command.startedAt = startDate;
   command.state = "started";
