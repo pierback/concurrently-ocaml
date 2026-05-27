@@ -31,4 +31,4 @@ let quote_arg value =
 
 let shell_command_line ~shell_path ~command_text =
   String.concat " "
-    [ quote_arg shell_path; "/d"; "/s"; "/c"; command_text ]
+    [ quote_arg shell_path; "/d"; "/s"; "/c"; quote_arg command_text ]
