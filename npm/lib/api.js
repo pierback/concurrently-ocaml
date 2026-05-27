@@ -7,7 +7,7 @@ const {
   rmSync,
   writeFileSync,
 } = require("node:fs");
-const { constants: osConstants, tmpdir } = require("node:os");
+const { tmpdir } = require("node:os");
 const { join, resolve } = require("node:path");
 const { Writable } = require("node:stream");
 const { runNative } = require("./native");
@@ -92,9 +92,8 @@ class Command {
   }
 
   kill(code = "SIGTERM") {
-    assertCatchableKillSignal(code);
-    if (!this.killProcess) {
-      throw new NativeApiUnsupportedError("Command.kill()");
+    if (!Command.canKill(this)) {
+      return;
     }
     this.killProcess(code);
   }
@@ -215,20 +214,26 @@ function concurrently(commandInputs, options = {}) {
     throw error;
   }
 
-  const killWrappedCommand = (code) => {
-    if (controlledCommands[0].exited) {
-      return false;
-    }
-    writeFileSync(invocation.killPaths[0], JSON.stringify(code), { mode: 0o600 });
-    controlledCommands[0].killed = true;
-    controlledCommands[0].killSignal = code;
-    return true;
-  };
-
+  controlledCommands.forEach((command, position) => {
+    command.killProcess = (code) => {
+      if (
+        command.exited ||
+        existsSync(eventPath(eventDir, command.index)) ||
+        (command.startedAt && !commandProcessExists(command.pid))
+      ) {
+        return false;
+      }
+      writeFileSync(invocation.killPaths[position], JSON.stringify(code), {
+        mode: 0o600,
+      });
+      command.killed = true;
+      command.killSignal = code;
+      return true;
+    };
+  });
   if (controlledCommands.length === 1) {
     controlledCommands[0].pid = child.pid;
     controlledCommands[0].stdin = child.stdin;
-    controlledCommands[0].killProcess = killWrappedCommand;
   }
 
   const startPoll = setInterval(
@@ -333,19 +338,6 @@ function observerSubscriber(observer) {
   throw new Error("subject subscriber must be a function or observer");
 }
 
-function assertCatchableKillSignal(signal) {
-  const normalizedSignal = String(signal).trim().toUpperCase();
-  const numericSignal = typeof signal === "number" ? signal : Number.NaN;
-  if (
-    normalizedSignal === "SIGKILL" ||
-    normalizedSignal === "SIGSTOP" ||
-    numericSignal === osConstants.signals.SIGKILL ||
-    numericSignal === osConstants.signals.SIGSTOP
-  ) {
-    throw new NativeApiUnsupportedError(`Command.kill(${normalizedSignal})`);
-  }
-}
-
 function normalizeCommands(commandInputs) {
   return commandInputs.map((input, index) => {
     if (typeof input === "string") {
@@ -376,9 +368,9 @@ function markStartedCommands(commands, eventDir, fallbackStartDate) {
     if (command.state !== "stopped") {
       continue;
     }
-    const startMs = readCommandStartMs(eventStartPath(eventDir, command.index));
-    if (startMs !== undefined) {
-      markCommandStarted(command, new Date(startMs));
+    const start = readCommandStart(eventStartPath(eventDir, command.index));
+    if (start !== undefined) {
+      markCommandStarted(command, new Date(start.startMs), start.pid);
     }
   }
   if (commands.length === 1 && commands[0]?.state === "stopped") {
@@ -386,9 +378,12 @@ function markStartedCommands(commands, eventDir, fallbackStartDate) {
   }
 }
 
-function markCommandStarted(command, startDate) {
+function markCommandStarted(command, startDate, pid) {
   if (command.state !== "stopped") {
     return;
+  }
+  if (Number.isInteger(pid)) {
+    command.pid = pid;
   }
   command.startedAt = startDate;
   command.state = "started";
@@ -831,10 +826,10 @@ function eventWrapperCommand(
     "const onSignal=signal=>{write({code:null,signal});forward(signal);if(!exiting){exiting=true;setTimeout(()=>process.exit(exitCode(signal)),5000).unref()}}",
     "const pollKill=()=>{try{if(fs.existsSync(killFile)){const signal=JSON.parse(fs.readFileSync(killFile,'utf8'));fs.rmSync(killFile,{force:true});onSignal(signal)}}catch(_){}}",
     "for(const signal of ['SIGHUP','SIGINT','SIGTERM','SIGQUIT','SIGUSR1','SIGUSR2','SIGBREAK']){if(signalNumbers[signal]){try{process.on(signal,()=>onSignal(signal))}catch(_){}}}",
-    "fs.writeFileSync(startFile,String(startMs))",
     "const spawnOptions={shell:true,detached:process.platform!=='win32',stdio:[childStdin,'inherit','inherit'],env:{...process.env,...commandEnv}}",
     "if(cwd!==undefined)spawnOptions.cwd=cwd",
     "child=cp.spawn(cmd,spawnOptions)",
+    "fs.writeFileSync(startFile,JSON.stringify({startMs,pid:child.pid}))",
     "const killInterval=setInterval(pollKill,20);killInterval.unref()",
     "child.on('error',error=>{write({code:1,signal:null,error:error.message});process.exit(1)})",
     "child.on('exit',(code,signal)=>{write({code,signal});if(signal){process.exit(exitCode(signal))}else{process.exit(code??1)}})",
@@ -891,15 +886,14 @@ function readCommandEvents({
         : event?.signal ??
           event?.code ??
           (killed ? command.killSignal ?? runKillSignal : runExitCode);
+    const commandStart = readCommandStart(eventStartPath(eventDir, command.index));
     const commandStartMs =
-      event?.startMs ??
-      readCommandStartMs(eventStartPath(eventDir, command.index)) ??
-      startedAt.getTime();
+      event?.startMs ?? commandStart?.startMs ?? startedAt.getTime();
     const commandStartedAt = new Date(
       commandStartMs
     );
     if (command.state === "stopped") {
-      markCommandStarted(command, commandStartedAt);
+      markCommandStarted(command, commandStartedAt, commandStart?.pid);
     }
     command.exited = true;
     command.killed = killed;
@@ -945,12 +939,30 @@ function readCommandEvent(path) {
   }
 }
 
-function readCommandStartMs(path) {
+function readCommandStart(path) {
   if (!existsSync(path)) {
     return undefined;
   }
-  const timestamp = Number(readFileSync(path, "utf8"));
-  return Number.isFinite(timestamp) ? timestamp : undefined;
+  try {
+    const start = JSON.parse(readFileSync(path, "utf8"));
+    return Number.isFinite(start.startMs)
+      ? { startMs: start.startMs, pid: start.pid }
+      : undefined;
+  } catch (_error) {
+    return undefined;
+  }
+}
+
+function commandProcessExists(pid) {
+  if (!Number.isInteger(pid)) {
+    return false;
+  }
+  try {
+    process.kill(process.platform === "win32" ? pid : -pid, 0);
+    return true;
+  } catch (_error) {
+    return false;
+  }
 }
 
 function writeCommandEnvironmentFiles(
