@@ -2,6 +2,7 @@ import {
   ChildProcess as BaseChildProcess,
   MessageOptions,
   SendHandle,
+  SpawnOptions,
 } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { Readable, Writable } from "node:stream";
@@ -23,7 +24,7 @@ export interface CommandInfo {
   env?: Record<string, unknown>;
   cwd?: string;
   prefixColor?: string;
-  ipc?: number | boolean;
+  ipc?: number;
   raw?: boolean;
   hidden?: boolean;
 }
@@ -49,6 +50,10 @@ export interface OutgoingMessageEvent extends MessageEvent {
 
 export type ChildProcess = EventEmitter &
   Pick<BaseChildProcess, "pid" | "stdin" | "stdout" | "stderr" | "send">;
+export type SpawnCommand = (
+  command: string,
+  options: SpawnOptions
+) => ChildProcess;
 
 export interface SubjectLike<T> {
   subscribe(observer: ((value: T) => void) | { next(value: T): void }): {
@@ -118,7 +123,7 @@ export declare class Command implements CommandInfo {
   readonly prefixColor?: string;
   readonly env: Record<string, unknown>;
   readonly cwd?: string;
-  readonly ipc?: number | boolean;
+  readonly ipc?: number;
   readonly raw?: boolean;
   readonly hidden?: boolean;
   pid?: number;
@@ -137,9 +142,18 @@ export declare class Command implements CommandInfo {
   };
   process?: ChildProcess;
   stdin?: Writable;
-  constructor(info?: Partial<CommandInfo> & { index?: number });
+  constructor(
+    info: CommandInfo & { index: number },
+    spawnOpts: SpawnOptions,
+    spawn: SpawnCommand,
+    killProcess: KillProcess
+  );
   start(): void;
-  send(message: object): Promise<void>;
+  send(
+    message: object,
+    handle?: SendHandle,
+    options?: MessageOptions
+  ): Promise<void>;
   kill(code?: string): void;
   static canKill(command: Command): command is Command & { pid: number };
 }
