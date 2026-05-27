@@ -6,6 +6,7 @@ type color_mode =
 
 type options =
   { labels : string list option
+  ; index_labels : string list option
   ; prefix : string option
   ; prefix_length : float
   ; pad_prefix : bool

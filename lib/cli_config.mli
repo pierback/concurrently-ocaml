@@ -1,5 +1,6 @@
 type display = {
   labels : string list option;
+  index_labels : string list option;
   prefix : string option;
   prefix_length : float;
   pad_prefix : bool;
@@ -36,6 +37,7 @@ val create :
   api_hide_indexes_csv:string option ->
   api_raw_indexes_csv:string option ->
   api_formatted_indexes_csv:string option ->
+  api_index_labels_csv:string option ->
   no_color:bool ->
   prefix:string option ->
   prefix_colors_csv:string option ->
@@ -72,6 +74,7 @@ val create_with_display :
   api_hide_indexes_csv:string option ->
   api_raw_indexes_csv:string option ->
   api_formatted_indexes_csv:string option ->
+  api_index_labels_csv:string option ->
   no_color:bool ->
   prefix:string option ->
   prefix_colors_csv:string option ->

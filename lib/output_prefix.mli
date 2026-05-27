@@ -9,6 +9,7 @@ type mode =
   | Template of string
 
 type options = {
+  index_labels : string list option;
   prefix_length : float;
   pad_prefix : bool;
   timestamp_format : string;

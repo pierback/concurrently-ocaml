@@ -12,7 +12,8 @@ const {
 const { tmpdir } = require("node:os");
 const { delimiter, dirname, resolve, sep } = require("node:path");
 const { spawn, spawnSync } = require("node:child_process");
-const { Writable } = require("node:stream");
+const { EventEmitter } = require("node:events");
+const { PassThrough, Writable } = require("node:stream");
 
 const npmConcurrentlyVersion = "9.2.1";
 const localBinary = resolve("_build", "default", "bin", "main.exe");
@@ -2054,8 +2055,16 @@ function runLocal(testCase) {
 
 async function runNativeApiSmoke() {
   await runNativeApiPerCommandKillSmoke();
+  await runNativeApiImmediateKillSmoke();
   await runNativeApiNativeKillPolicyManualKillSmoke();
   await runNativeApiExitedCommandKillSmoke();
+  await runNativeApiClosedIpcSendSmoke();
+  await runNativeApiControllerIndexLabelSmoke();
+  await runNativeApiControllerTemplateIndexAndStringColorSmoke();
+  await runNativeApiControllerIpcRejectSmoke();
+  await runNativeApiGlobalRawCommandFalseSmoke();
+  await runNativeApiNumericNameSuccessSelectorSmoke();
+  await runNativeApiNumericNameDefaultInputTargetSmoke();
 }
 
 async function runNativeApiPerCommandKillSmoke() {
@@ -2100,6 +2109,40 @@ async function runNativeApiPerCommandKillSmoke() {
     assertEqual(event.killed, true, `native JS API command ${index} killed`);
   });
   console.log("compat ok: native JS API per-command kill");
+}
+
+async function runNativeApiImmediateKillSmoke() {
+  const api = require(resolve("index.js"));
+  const sink = new Writable({
+    write(_chunk, _encoding, callback) {
+      callback();
+    },
+  });
+  const run = api.concurrently([nodeHangCommand()], {
+    outputStream: sink,
+    prefixColors: false,
+  });
+  const command = run.commands[0];
+
+  if (api.Command.canKill(command)) {
+    throw new Error("native JS API immediate Command.canKill was true before pid discovery");
+  }
+  if (command.pid !== undefined) {
+    throw new Error(`native JS API immediate kill already had pid: ${command.pid}`);
+  }
+  command.kill("SIGTERM");
+
+  const events = await run.result.then(
+    (value) => value,
+    (error) => error
+  );
+  if (!Array.isArray(events)) {
+    throw new Error(`native JS API immediate kill returned non-events: ${events}`);
+  }
+  assertEqual(events.length, 1, "native JS API immediate kill event count");
+  assertEqual(events[0].killed, true, "native JS API immediate kill flag");
+  assertEqual(command.killed, true, "native JS API immediate command kill flag");
+  console.log("compat ok: native JS API immediate kill before pid discovery");
 }
 
 async function runNativeApiNativeKillPolicyManualKillSmoke() {
@@ -2184,6 +2227,376 @@ async function runNativeApiExitedCommandKillSmoke() {
   assertEqual(first?.killed, false, "native JS API exited command stays un-killed");
   assertEqual(second?.killed, true, "native JS API hanging command is killed");
   console.log("compat ok: native JS API exited-command kill no-op");
+}
+
+async function runNativeApiClosedIpcSendSmoke() {
+  const api = require(resolve("index.js"));
+  class FakeChild extends EventEmitter {
+    constructor() {
+      super();
+      this.pid = 12345;
+      this.stdin = undefined;
+      this.stdout = new EventEmitter();
+      this.stderr = new EventEmitter();
+    }
+
+    send(_message, _handle, _options, callback) {
+      callback();
+    }
+  }
+
+  const child = new FakeChild();
+  const command = new api.Command(
+    { index: 0, name: "ipc", command: "ipc", ipc: 1 },
+    {},
+    () => child,
+    () => true
+  );
+  command.start();
+  child.emit("close", 0, null);
+
+  await command.send({ closed: true }).then(
+    () => {
+      throw new Error("native JS API closed IPC send resolved");
+    },
+    (error) => {
+      assertEqual(
+        error.message,
+        "Command IPC channel is closed",
+        "native JS API closed IPC send rejection"
+      );
+    }
+  );
+  console.log("compat ok: native JS API closed IPC send rejects");
+}
+
+async function runNativeApiControllerIndexLabelSmoke() {
+  const api = require(resolve("index.js"));
+  let output = "";
+  const sink = new Writable({
+    write(chunk, _encoding, callback) {
+      output += chunk.toString();
+      callback();
+    },
+  });
+  const run = api.concurrently([
+    nodePrintCommand("removed"),
+    { command: nodePrintCommand("kept"), name: "two" },
+  ], {
+    outputStream: sink,
+    prefix: "index",
+    prefixColors: false,
+    controllers: [
+      {
+        handle(commands) {
+          return { commands: [commands[1]] };
+        },
+      },
+    ],
+  });
+  const events = await run.result;
+
+  assertEqual(events.length, 1, "native JS API filtered controller event count");
+  assertEqual(events[0].index, 1, "native JS API filtered controller event index");
+  if (!output.includes("[1] kept")) {
+    throw new Error(
+      `native JS API filtered controller lost original output label: ${JSON.stringify(output)}`
+    );
+  }
+  if (output.includes("[0] kept")) {
+    throw new Error(
+      `native JS API filtered controller reused positional output label: ${JSON.stringify(output)}`
+    );
+  }
+  if (output.includes("[two] kept")) {
+    throw new Error(
+      `native JS API filtered controller used command name for index prefix: ${JSON.stringify(output)}`
+    );
+  }
+  console.log("compat ok: native JS API filtered controller output label");
+}
+
+async function runNativeApiControllerTemplateIndexAndStringColorSmoke() {
+  const api = require(resolve("index.js"));
+  let output = "";
+  const sink = new Writable({
+    write(chunk, _encoding, callback) {
+      output += chunk.toString();
+      callback();
+    },
+  });
+  const previousForceColor = process.env.FORCE_COLOR;
+  process.env.FORCE_COLOR = "1";
+  const run = api.concurrently([
+    nodePrintCommand("removed"),
+    nodePrintCommand("kept"),
+  ], {
+    outputStream: sink,
+    prefix: "cmd-{index}",
+    prefixColors: "red,blue",
+    controllers: [
+      {
+        handle(commands) {
+          return { commands: [commands[1]] };
+        },
+      },
+    ],
+  });
+  if (previousForceColor === undefined) {
+    delete process.env.FORCE_COLOR;
+  } else {
+    process.env.FORCE_COLOR = previousForceColor;
+  }
+  const events = await run.result;
+  const plainOutput = output.replace(/\u001b\[[0-9;]*m/g, "");
+
+  assertEqual(events.length, 1, "native JS API filtered template event count");
+  assertEqual(events[0].index, 1, "native JS API filtered template event index");
+  if (!plainOutput.includes("cmd-1 kept")) {
+    throw new Error(
+      `native JS API template prefix lost original index: ${JSON.stringify(output)}`
+    );
+  }
+  if (plainOutput.includes("cmd-0 kept")) {
+    throw new Error(
+      `native JS API template prefix reused positional index: ${JSON.stringify(output)}`
+    );
+  }
+  if (!output.includes("\u001b[34mcmd-1")) {
+    throw new Error(
+      `native JS API string prefix colors did not remap to public index: ${JSON.stringify(output)}`
+    );
+  }
+  if (output.includes("\u001b[31mcmd-1")) {
+    throw new Error(
+      `native JS API string prefix colors used positional color: ${JSON.stringify(output)}`
+    );
+  }
+  console.log("compat ok: native JS API template index and string prefix colors");
+}
+
+async function runNativeApiControllerIpcRejectSmoke() {
+  const api = require(resolve("index.js"));
+  const sink = new Writable({
+    write(_chunk, _encoding, callback) {
+      callback();
+    },
+  });
+  const ipcCommand = new api.Command({
+    index: 0,
+    name: "ipc",
+    command: nodeExitCommand(0),
+    ipc: 3,
+  });
+
+  try {
+    api.concurrently([nodeExitCommand(0)], {
+      raw: true,
+      outputStream: sink,
+      controllers: [
+        {
+          handle() {
+            return { commands: [ipcCommand] };
+          },
+        },
+      ],
+    });
+  } catch (error) {
+    assertEqual(error.name, "NativeApiUnsupportedError", "native JS API controller IPC error name");
+    if (!error.message.includes("command.ipc")) {
+      throw new Error(`native JS API controller IPC error message: ${error.message}`);
+    }
+    console.log("compat ok: native JS API controller IPC is rejected");
+    return;
+  }
+
+  throw new Error("native JS API controller IPC command was accepted");
+}
+
+async function runNativeApiGlobalRawCommandFalseSmoke() {
+  const api = require(resolve("index.js"));
+  let output = "";
+  const sink = new Writable({
+    write(chunk, _encoding, callback) {
+      output += chunk.toString();
+      callback();
+    },
+  });
+  await api
+    .concurrently([{ command: nodePrintCommand("raw-only"), raw: false }], {
+      raw: true,
+      timings: true,
+      outputStream: sink,
+      prefixColors: false,
+    })
+    .result;
+
+  if (!output.includes("[0] raw-only")) {
+    throw new Error(
+      `native JS API global raw command override stayed raw: ${JSON.stringify(output)}`
+    );
+  }
+  console.log("compat ok: native JS API global raw command false formats output");
+}
+
+async function runNativeApiNumericNameSuccessSelectorSmoke() {
+  const api = require(resolve("index.js"));
+  const sink = new Writable({
+    write(_chunk, _encoding, callback) {
+      callback();
+    },
+  });
+  const run = api.concurrently(
+    [
+      { name: "1", command: nodeExitCommand(7) },
+      { command: nodeExitCommand(0) },
+    ],
+    {
+      raw: true,
+      outputStream: sink,
+      successCondition: "!command-1",
+      controllers: [
+        {
+          handle(commands) {
+            return { commands: [commands[1], commands[0]] };
+          },
+        },
+      ],
+    }
+  );
+  const events = await run.result;
+
+  assertEqual(
+    events.some((event) => event.index === 0 && event.command.name === "1" && event.exitCode === 7),
+    true,
+    "native JS API numeric name selector includes named command"
+  );
+  assertEqual(
+    events.some((event) => event.index === 1 && event.exitCode === 0),
+    true,
+    "native JS API numeric name selector includes indexed command"
+  );
+
+  const publicIndexRun = api.concurrently(
+    [
+      { command: nodeExitCommand(7) },
+      { command: nodeExitCommand(0) },
+    ],
+    {
+      raw: true,
+      outputStream: sink,
+      successCondition: "command-1",
+      controllers: [
+        {
+          handle(commands) {
+            return { commands: [commands[1], commands[0]] };
+          },
+        },
+      ],
+    }
+  );
+  const publicIndexEvents = await publicIndexRun.result;
+  assertEqual(
+    publicIndexEvents.some((event) => event.index === 1 && event.exitCode === 0),
+    true,
+    "native JS API numeric selector uses public command index"
+  );
+  console.log("compat ok: native JS API numeric command name success selector");
+}
+
+async function runNativeApiNumericNameDefaultInputTargetSmoke() {
+  const api = require(resolve("index.js"));
+  let output = "";
+  const input = new PassThrough();
+  const sink = new Writable({
+    write(chunk, _encoding, callback) {
+      output += chunk.toString();
+      callback();
+    },
+  });
+  const namedCommand =
+    "node -e \"process.stdin.once('data',d=>{console.log('named:'+d.toString().trim());process.exit(0)}); setTimeout(()=>process.exit(2),1000)\"";
+  const indexedCommand =
+    "node -e \"process.stdin.once('data',d=>{console.log('indexed:'+d.toString().trim());process.exit(0)}); setTimeout(()=>process.exit(0),300)\"";
+  const run = api.concurrently(
+    [
+      { name: "1", command: namedCommand },
+      { command: indexedCommand },
+    ],
+    {
+      inputStream: input,
+      outputStream: sink,
+      defaultInputTarget: "1",
+      prefixColors: false,
+      controllers: [
+        {
+          handle(commands) {
+            return { commands: [commands[1], commands[0]] };
+          },
+        },
+      ],
+    }
+  );
+  input.end("hello\n");
+  await run.result;
+
+  if (!output.includes("named:hello")) {
+    throw new Error(
+      `native JS API numeric default input target missed named command: ${JSON.stringify(output)}`
+    );
+  }
+  if (output.includes("indexed:hello")) {
+    throw new Error(
+      `native JS API numeric default input target used indexed command: ${JSON.stringify(output)}`
+    );
+  }
+
+  let publicIndexOutput = "";
+  const publicIndexInput = new PassThrough();
+  const publicIndexSink = new Writable({
+    write(chunk, _encoding, callback) {
+      publicIndexOutput += chunk.toString();
+      callback();
+    },
+  });
+  const publicIndexRun = api.concurrently(
+    [
+      {
+        command:
+          "node -e \"process.stdin.once('data',d=>{console.log('zero:'+d.toString().trim());process.exit(0)}); setTimeout(()=>process.exit(0),300)\"",
+      },
+      {
+        command:
+          "node -e \"process.stdin.once('data',d=>{console.log('one:'+d.toString().trim());process.exit(0)}); setTimeout(()=>process.exit(0),300)\"",
+      },
+    ],
+    {
+      inputStream: publicIndexInput,
+      outputStream: publicIndexSink,
+      defaultInputTarget: 1,
+      prefixColors: false,
+      controllers: [
+        {
+          handle(commands) {
+            return { commands: [commands[1], commands[0]] };
+          },
+        },
+      ],
+    }
+  );
+  publicIndexInput.end("hello\n");
+  await publicIndexRun.result;
+  if (!publicIndexOutput.includes("one:hello")) {
+    throw new Error(
+      `native JS API numeric default input target missed public index: ${JSON.stringify(publicIndexOutput)}`
+    );
+  }
+  if (publicIndexOutput.includes("zero:hello")) {
+    throw new Error(
+      `native JS API numeric default input target used native position: ${JSON.stringify(publicIndexOutput)}`
+    );
+  }
+  console.log("compat ok: native JS API numeric command name input target");
 }
 
 function waitFor(predicate, timeoutMs, label) {

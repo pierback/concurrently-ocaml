@@ -171,6 +171,22 @@ const run = concurrently([{ command: "echo ok", ipc: 3 }], options);
 if (Command.canKill(run.commands[0])) {
   run.commands[0].process.pid?.toFixed();
 }
+
+const controllerCommand = new Command({
+  index: 0,
+  name: "controller",
+  command: "echo controller",
+});
+const controllerOptions: Partial<ConcurrentlyOptions> = {
+  controllers: [
+    {
+      handle() {
+        return { commands: [controllerCommand] };
+      },
+    },
+  ],
+};
+concurrently(["echo original"], controllerOptions);
 `
   );
   writeFileSync(
