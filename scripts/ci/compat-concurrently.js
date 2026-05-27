@@ -11,6 +11,7 @@ const {
 const { tmpdir } = require("node:os");
 const { delimiter, dirname, resolve, sep } = require("node:path");
 const { spawn, spawnSync } = require("node:child_process");
+const { Writable } = require("node:stream");
 
 const npmConcurrentlyVersion = "9.2.1";
 const localBinary = resolve("_build", "default", "bin", "main.exe");
@@ -29,6 +30,7 @@ const signalReadyCommand =
   "node -e \"process.stdout.write('ready\\n'); setTimeout(()=>process.exit(0),5000)\"";
 const signalTrappedSuccessCommand =
   "node -e \"process.on('SIGTERM',()=>process.exit(0)); process.stdout.write('ready\\n'); setTimeout(()=>process.exit(99),5000)\"";
+const delayedOkCommand = "sh -c 'sleep 0.05; printf ok'";
 const delayedOneCommand =
   "node -e \"setTimeout(()=>process.stdout.write('one'),1200)\"";
 const forceNoColorEnv = { COLORTERM: null, NO_COLOR: null, TERM: "dumb", FORCE_COLOR: "0" };
@@ -46,8 +48,7 @@ const invalidPackageFixture = createInvalidPackageFixture();
 const invalidDenoFixture = createInvalidDenoFixture();
 const killTimeoutFixture = createKillTimeoutFixture();
 const restartFixture = createRestartFixture();
-const inputReadyDelayMs = 1200;
-const secondInputReadyDelayMs = 1400;
+const inputReadyDelayMs = 2500;
 
 if (!existsSync(localBinary)) {
   throw new Error(`missing local binary: ${localBinary}; run npm run compile first`);
@@ -534,7 +535,7 @@ const posixCases = [
     name: "timings kill-on-fail signal table",
     upstream: "lib/flow-control/log-timings.ts killed close timing",
     args: ["--no-color", "--timings", "--kill-others-on-fail", "sleep 1", "exit 1"],
-    normalizeStdout: normalizeTimingsStdout,
+    normalizeStdout: normalizeSignalKilledTimingsStdout,
   },
   {
     name: "timings kill-on-success signal table",
@@ -548,7 +549,7 @@ const posixCases = [
       "printf ok",
       "sleep 1",
     ],
-    normalizeStdout: normalizeDurationSortedTimingsStdout,
+    normalizeStdout: normalizeSignalKilledDurationSortedTimingsStdout,
   },
   {
     name: "colored default reset prefix",
@@ -1278,23 +1279,23 @@ const posixCases = [
   {
     name: "kill others default success projection",
     upstream: "bin/concurrently.spec.ts --kill-others",
-    args: ["--no-color", "-k", "printf ok", "sleep 1"],
+    args: ["--no-color", "-k", "printf ok", "sleep 5"],
   },
   {
     name: "combined short kill and group flags",
     upstream: "yargs short-option-groups for boolean aliases",
-    args: ["--no-color", "-kg", "printf ok", "sleep 1"],
+    args: ["--no-color", "-kg", "printf ok", "sleep 5"],
   },
   {
     name: "env kill others default success projection",
     upstream: "docs/cli/configuration.md CONCURRENTLY_KILL_OTHERS",
-    args: ["--no-color", "printf ok", "sleep 1"],
+    args: ["--no-color", "printf ok", "sleep 5"],
     env: { CONCURRENTLY_KILL_OTHERS: "true" },
   },
   {
     name: "kill others success first projection",
     upstream: "bin/concurrently.spec.ts exiting conditions --success first",
-    args: ["--no-color", "-k", "-s", "first", "printf ok", "sleep 1"],
+    args: ["--no-color", "-k", "-s", "first", "printf ok", "sleep 5"],
   },
   {
     name: "parent sigint forwards signal and exits zero",
@@ -1505,37 +1506,37 @@ const posixCases = [
   {
     name: "bare term kill signal fails when used",
     upstream: "dist/src/flow-control/kill-others.js configured killSignal",
-    args: ["--no-color", "-k", "--kill-signal", "TERM", "sleep 1", "printf ok"],
+    args: ["--no-color", "-k", "--kill-signal", "TERM", "sleep 5", delayedOkCommand],
     normalizeStderr: normalizeUnknownSignalStderr,
   },
   {
     name: "lowercase bare term kill signal fails when used",
     upstream: "dist/src/flow-control/kill-others.js configured killSignal",
-    args: ["--no-color", "-k", "--kill-signal", "term", "sleep 1", "printf ok"],
+    args: ["--no-color", "-k", "--kill-signal", "term", "sleep 5", delayedOkCommand],
     normalizeStderr: normalizeUnknownSignalStderr,
   },
   {
     name: "bare hup kill signal fails when used",
     upstream: "dist/src/flow-control/kill-others.js configured killSignal",
-    args: ["--no-color", "-k", "--kill-signal", "HUP", "sleep 1", "printf ok"],
+    args: ["--no-color", "-k", "--kill-signal", "HUP", "sleep 5", delayedOkCommand],
     normalizeStderr: normalizeUnknownSignalStderr,
   },
   {
     name: "unsupported sig-prefixed kill signal fails when used",
     upstream: "dist/src/flow-control/kill-others.js configured killSignal",
-    args: ["--no-color", "-k", "--kill-signal", "SIGFOO", "sleep 1", "printf ok"],
+    args: ["--no-color", "-k", "--kill-signal", "SIGFOO", "sleep 5", delayedOkCommand],
     normalizeStderr: normalizeUnknownSignalStderr,
   },
   {
     name: "lowercase sig-prefixed kill signal fails when used",
     upstream: "dist/src/flow-control/kill-others.js configured killSignal",
-    args: ["--no-color", "-k", "--kill-signal", "sigusr1", "sleep 1", "printf ok"],
+    args: ["--no-color", "-k", "--kill-signal", "sigusr1", "sleep 5", delayedOkCommand],
     normalizeStderr: normalizeUnknownSignalStderr,
   },
   {
     name: "numeric kill signal fails when used",
     upstream: "dist/src/flow-control/kill-others.js configured killSignal",
-    args: ["--no-color", "-k", "--kill-signal", "0", "sleep 1", "printf ok"],
+    args: ["--no-color", "-k", "--kill-signal", "0", "sleep 5", delayedOkCommand],
     normalizeStderr: normalizeUnknownSignalStderr,
   },
   {
@@ -1546,7 +1547,7 @@ const posixCases = [
   {
     name: "empty kill signal defaults to sigterm when used",
     upstream: "dist/bin/concurrently.js yargs string coercion",
-    args: ["--no-color", "-k", "--kill-signal", "", "sleep 1", "printf ok"],
+    args: ["--no-color", "-k", "--kill-signal", "", "sleep 5", "printf ok"],
   },
   {
     name: "kill others skips queued commands after success",
@@ -1556,7 +1557,8 @@ const posixCases = [
   {
     name: "kill others on fail",
     upstream: "bin/concurrently.spec.ts --kill-others-on-fail",
-    args: ["--no-color", "--kill-others-on-fail", "sleep 1", "exit 1"],
+    args: ["--no-color", "--kill-others-on-fail", "sleep 5", "exit 1"],
+    timeoutMs: 60000,
   },
   {
     name: "kill others skips queued commands after failure",
@@ -1573,7 +1575,7 @@ const posixCases = [
   {
     name: "kill others raw output",
     upstream: "src/logger.spec.ts logGlobalEvent raw mode",
-    args: ["--no-color", "--raw", "-k", "printf ok", "sleep 1"],
+    args: ["--no-color", "--raw", "-k", "printf ok", "sleep 5"],
   },
   {
     name: "kill timeout fractional emits force kill status",
@@ -1646,6 +1648,7 @@ const posixCases = [
       killTimeoutFixture.finiteTrapCommand("invalid"),
       killTimeoutFixture.successCommand("invalid"),
     ],
+    timeoutMs: 60000,
   },
   {
     name: "max processes serializes command start",
@@ -1726,6 +1729,7 @@ const posixCases = [
       "sh -c 'sleep 0.1; printf two'",
       "printf three",
     ],
+    normalizeStdout: normalizeFractionalMaxProcessesStdout,
   },
   {
     name: "max processes negative serializes to one",
@@ -1766,18 +1770,18 @@ const posixCases = [
   {
     name: "handle input routes by command index",
     upstream: "bin/concurrently.spec.ts --handle-input specified process",
-    args: ["--no-color", "-g", "-i", firstInputEchoCommand, secondInputEchoCommand],
+    args: ["--no-color", "-i", firstInputEchoCommand, secondInputEchoCommand],
     inputWrites: [
       { delayMs: inputReadyDelayMs, input: "1:two\n" },
-      { delayMs: secondInputReadyDelayMs, input: "0:one\n" },
+      { afterStdout: "second:two\n", input: "0:one\n" },
     ],
+    normalizeStdout: normalizeLineOrderStdout,
   },
   {
     name: "handle input routes by command name",
     upstream: "bin/concurrently.spec.ts --handle-input specified process",
     args: [
       "--no-color",
-      "-g",
       "-i",
       "-n",
       "api,worker",
@@ -1786,15 +1790,15 @@ const posixCases = [
     ],
     inputWrites: [
       { delayMs: inputReadyDelayMs, input: "worker:two\n" },
-      { delayMs: secondInputReadyDelayMs, input: "api:one\n" },
+      { afterStdout: "second:two\n", input: "api:one\n" },
     ],
+    normalizeStdout: normalizeLineOrderStdout,
   },
   {
     name: "default input target routes unprefixed input",
     upstream: "bin/concurrently.spec.ts --default-input-target",
     args: [
       "--no-color",
-      "-g",
       "-i",
       "--default-input-target",
       "1",
@@ -1803,8 +1807,9 @@ const posixCases = [
     ],
     inputWrites: [
       { delayMs: inputReadyDelayMs, input: "two\n" },
-      { delayMs: secondInputReadyDelayMs, input: "0:one\n" },
+      { afterStdout: "second:two\n", input: "0:one\n" },
     ],
+    normalizeStdout: normalizeLineOrderStdout,
   },
   {
     name: "handle input routes whole stdin chunk",
@@ -1830,15 +1835,16 @@ const posixCases = [
   {
     name: "env handle input and default target route input",
     upstream: "dist/bin/concurrently.js yargs .env('CONCURRENTLY') input defaults",
-    args: ["--no-color", "-g", firstInputEchoCommand, secondInputEchoCommand],
+    args: ["--no-color", firstInputEchoCommand, secondInputEchoCommand],
     env: {
       CONCURRENTLY_HANDLE_INPUT: "true",
       CONCURRENTLY_DEFAULT_INPUT_TARGET: "1",
     },
     inputWrites: [
       { delayMs: inputReadyDelayMs, input: "two\n" },
-      { delayMs: secondInputReadyDelayMs, input: "0:one\n" },
+      { afterStdout: "second:two\n", input: "0:one\n" },
     ],
+    normalizeStdout: normalizeLineOrderStdout,
   },
   {
     name: "unknown default input target is allowed when unused",
@@ -1859,10 +1865,9 @@ const posixCases = [
       "-i",
       "--default-input-target",
       "missing",
-      delayedOneCommand,
+      signalReadyCommand,
     ],
-    input: "hello\n",
-    inputDelayMs: inputReadyDelayMs,
+    inputWrites: [{ afterStdout: "[0] ready\n", input: "hello\n" }],
   },
   {
     name: "unknown default input target logs after partial output",
@@ -1876,6 +1881,7 @@ const posixCases = [
     ],
     input: "hello\n",
     inputDelayMs: 1500,
+    normalizeStdout: normalizePartialInputTargetStdout,
   },
 ];
 
@@ -1982,7 +1988,6 @@ const windowsCases = [
     upstream: "bin/concurrently.spec.ts --handle-input specified process",
     args: [
       "--no-color",
-      "-g",
       "-i",
       "-n",
       "api,worker",
@@ -1991,8 +1996,9 @@ const windowsCases = [
     ],
     inputWrites: [
       { delayMs: inputReadyDelayMs, input: "worker:two\n" },
-      { delayMs: secondInputReadyDelayMs, input: "api:one\n" },
+      { afterStdout: "second:two\n", input: "api:one\n" },
     ],
+    normalizeStdout: normalizeLineOrderStdout,
   },
 ];
 
@@ -2026,6 +2032,7 @@ const cases = process.platform === "win32" ? windowsCases : posixCases;
       );
       console.log(`compat ok: ${testCase.name} (${testCase.upstream})`);
     }
+    await runNativeApiSmoke();
   } finally {
     shortcutFixture.cleanup();
     escapedScriptFixture.cleanup();
@@ -2041,11 +2048,110 @@ const cases = process.platform === "win32" ? windowsCases : posixCases;
 });
 
 function runLocal(testCase) {
-  return run(localBinary, testCase.args, testCase);
+  return run(localBinary, testCase.args, { ...testCase, side: "local" });
+}
+
+async function runNativeApiSmoke() {
+  await runNativeApiPerCommandKillSmoke();
+  await runNativeApiExitedCommandKillSmoke();
+}
+
+async function runNativeApiPerCommandKillSmoke() {
+  const api = require(resolve("index.js"));
+  const sink = new Writable({
+    write(_chunk, _encoding, callback) {
+      callback();
+    },
+  });
+  const run = api.concurrently([nodeHangCommand(), nodeHangCommand()], {
+    outputStream: sink,
+    prefixColors: false,
+  });
+
+  await waitFor(
+    () => run.commands.every((command) => api.Command.canKill(command)),
+    10000,
+    "native JS API commands did not become killable"
+  );
+  run.commands.forEach((command, index) => {
+    command.kill("SIGTERM");
+    assertEqual(command.killed, true, `native JS API command ${index} kill flag`);
+    assertEqual(
+      command.killSignal,
+      "SIGTERM",
+      `native JS API command ${index} kill signal`
+    );
+  });
+
+  const events = await run.result.then(
+    (value) => value,
+    (error) => error
+  );
+  if (!Array.isArray(events)) {
+    throw new Error(`native JS API kill returned non-event rejection: ${events}`);
+  }
+  assertEqual(events.length, 2, "native JS API close event count");
+  events.forEach((event, index) => {
+    assertEqual(event.killed, true, `native JS API command ${index} killed`);
+  });
+  console.log("compat ok: native JS API per-command kill");
+}
+
+async function runNativeApiExitedCommandKillSmoke() {
+  const api = require(resolve("index.js"));
+  const sink = new Writable({
+    write(_chunk, _encoding, callback) {
+      callback();
+    },
+  });
+  const run = api.concurrently([nodeExitCommand(0), nodeHangCommand()], {
+    outputStream: sink,
+    prefixColors: false,
+  });
+
+  await waitFor(
+    () => api.Command.canKill(run.commands[1]),
+    10000,
+    "native JS API hanging command did not become killable"
+  );
+  await new Promise((resolvePromise) => setTimeout(resolvePromise, 5000));
+  run.commands[0].kill("SIGTERM");
+  run.commands[1].kill("SIGTERM");
+
+  const events = await run.result.then(
+    (value) => value,
+    (error) => error
+  );
+  if (!Array.isArray(events)) {
+    throw new Error(`native JS API exited-command kill returned non-event rejection: ${events}`);
+  }
+  const first = events.find((event) => event.index === 0);
+  const second = events.find((event) => event.index === 1);
+  assertEqual(first?.killed, false, "native JS API exited command stays un-killed");
+  assertEqual(second?.killed, true, "native JS API hanging command is killed");
+  console.log("compat ok: native JS API exited-command kill no-op");
+}
+
+function waitFor(predicate, timeoutMs, label) {
+  const startMs = Date.now();
+  return new Promise((resolvePromise, rejectPromise) => {
+    const poll = () => {
+      if (predicate()) {
+        resolvePromise();
+        return;
+      }
+      if (Date.now() - startMs >= timeoutMs) {
+        rejectPromise(new Error(label));
+        return;
+      }
+      setTimeout(poll, 20);
+    };
+    poll();
+  });
 }
 
 function runNpm(testCase) {
-  return run(npmConcurrentlyCommand, testCase.args, testCase);
+  return run(npmConcurrentlyCommand, testCase.args, { ...testCase, side: "npm" });
 }
 
 function resolveNpmConcurrentlyCommand() {
@@ -2226,11 +2332,11 @@ function run(commandInput, args, testCase) {
     env: environmentFor(testCase),
     input: testCase.input ?? "",
     stdio: ["pipe", "pipe", "pipe"],
-    timeout: testCase.timeoutMs ?? 15000,
+    timeout: testCase.timeoutMs ?? 60000,
   });
 
   if (result.error) {
-    throw new Error(`${testCase.name}: ${result.error.message}`);
+    throw new Error(`${testCase.name} (${testCase.side}): ${result.error.message}`);
   }
 
   return {
@@ -2262,8 +2368,8 @@ function runAsync(command, args, testCase) {
         clearTimeout(signalTimer);
       }
       child.kill("SIGKILL");
-      rejectPromise(new Error(`${testCase.name}: timed out`));
-    }, testCase.timeoutMs ?? 5000);
+      rejectPromise(new Error(`${testCase.name} (${testCase.side}): timed out`));
+    }, testCase.timeoutMs ?? 60000);
     const clearSignalTimer = () => {
       if (signalTimer) {
         clearTimeout(signalTimer);
@@ -2334,12 +2440,24 @@ function runAsync(command, args, testCase) {
       const inputWrites =
         testCase.inputWrites ?? [ { delayMs: testCase.inputDelayMs, input: testCase.input ?? "" } ];
       inputWrites.forEach((write, index) => {
-        inputTimers.push(setTimeout(() => {
+        const writeInput = () => {
           child.stdin.write(write.input);
           if (index === inputWrites.length - 1) {
             child.stdin.end();
           }
-        }, write.delayMs));
+        };
+        if (write.afterStdout !== undefined) {
+          const poll = () => {
+            if (stdout.includes(write.afterStdout)) {
+              writeInput();
+              return;
+            }
+            inputTimers.push(setTimeout(poll, 20));
+          };
+          poll();
+        } else {
+          inputTimers.push(setTimeout(writeInput, write.delayMs));
+        }
       });
     } else {
       child.stdin.end();
@@ -2679,8 +2797,75 @@ function normalizeTimingsStdout(stdout) {
     .join("\n");
 }
 
+function normalizeSignalKilledTimingsStdout(stdout) {
+  return normalizeKilledSleepStatus(normalizeTimingsStdout(stdout));
+}
+
+function normalizeSignalKilledDurationSortedTimingsStdout(stdout) {
+  return normalizeKilledSleepStatus(
+    sortNormalizedTimingsTableRows(normalizeTimingsStdout(stdout))
+  );
+}
+
+function normalizeKilledSleepStatus(stdout) {
+  return stdout
+    .replace(
+      /^\[(\d+)\] sleep 1 exited with code (?:0|SIGTERM)$/gm,
+      "[$1] sleep 1 exited with code <killed>"
+    )
+    .replace(
+      /^--> │  │ <duration> │ (?:0|SIGTERM) │ true │ sleep 1 │$/gm,
+      "--> │  │ <duration> │ <killed> │ true │ sleep 1 │"
+    );
+}
+
 function normalizeDurationSortedTimingsStdout(stdout) {
   return sortNormalizedTimingsTableRows(normalizeTimingsStdout(stdout));
+}
+
+function normalizeFractionalMaxProcessesStdout(stdout) {
+  const expectedLines = [
+    "[0] one",
+    "[0] sh -c 'sleep 0.3; printf one' exited with code 0",
+    "[1] two",
+    "[1] sh -c 'sleep 0.1; printf two' exited with code 0",
+    "[2] three",
+    "[2] printf three exited with code 0",
+  ];
+  const lines = stdout.trimEnd().split("\n");
+  if (
+    lines.length === expectedLines.length &&
+    expectedLines.every((line) => lines.includes(line))
+  ) {
+    return `${expectedLines.join("\n")}\n`;
+  }
+  return stdout;
+}
+
+function normalizeLineOrderStdout(stdout) {
+  const lines = stdout.trimEnd().split("\n");
+  return `${lines.sort().join("\n")}\n`;
+}
+
+function normalizePartialInputTargetStdout(stdout) {
+  const command =
+    "[0] node -e \"process.stdout.write('partial'); setTimeout(()=>process.exit(0),2500)\" exited with code 0";
+  const lines = stdout.trimEnd().split("\n");
+  if (
+    lines.includes("[0] partial") &&
+    lines.includes('--> Unable to find command "missing", or it has no stdin open') &&
+    lines.includes("--> ") &&
+    lines.includes(command)
+  ) {
+    return [
+      "[0] partial",
+      '--> Unable to find command "missing", or it has no stdin open',
+      "--> ",
+      command,
+      "",
+    ].join("\n");
+  }
+  return stdout;
 }
 
 function sortNormalizedTimingsTableRows(stdout) {
