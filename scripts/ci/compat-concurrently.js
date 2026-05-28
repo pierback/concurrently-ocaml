@@ -55,6 +55,7 @@ const invalidDenoFixture = createInvalidDenoFixture();
 const killTimeoutFixture = createKillTimeoutFixture();
 const restartFixture = createRestartFixture();
 const inputReadyDelayMs = 2500;
+const compatWatchdog = startCompatWatchdog("compat harness", 420000);
 
 if (!existsSync(localBinary)) {
   throw new Error(`missing local binary: ${localBinary}; run npm run compile first`);
@@ -2075,7 +2076,33 @@ const cases = process.platform === "win32" ? windowsCases : posixCases;
 })().catch((error) => {
   console.error(error);
   process.exit(1);
+}).finally(() => {
+  clearTimeout(compatWatchdog);
+  const exitWatchdog = startCompatWatchdog("compat harness post-completion exit", 5000);
+  exitWatchdog.unref();
 });
+
+function startCompatWatchdog(label, defaultTimeoutMs) {
+  const timeoutMs = Number(process.env.CONCURRENTLY_ML_COMPAT_TIMEOUT_MS ?? defaultTimeoutMs);
+  return setTimeout(() => {
+    console.error(`${label} timed out after ${timeoutMs}ms`);
+    for (const handle of process._getActiveHandles()) {
+      console.error(`active handle: ${describeActiveHandle(handle)}`);
+    }
+    process.exit(1);
+  }, timeoutMs);
+}
+
+function describeActiveHandle(handle) {
+  const name = handle?.constructor?.name ?? typeof handle;
+  if (name === "ChildProcess") {
+    return `${name} pid=${handle.pid ?? "<none>"} exitCode=${handle.exitCode ?? "<none>"}`;
+  }
+  if (name === "Socket") {
+    return `${name} local=${handle.localAddress ?? "<none>"} remote=${handle.remoteAddress ?? "<none>"}`;
+  }
+  return name;
+}
 
 function runLocal(testCase) {
   return run(localBinary, testCase.args, { ...testCase, side: "local" });
