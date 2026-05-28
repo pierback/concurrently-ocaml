@@ -2035,6 +2035,7 @@ const cases = process.platform === "win32" ? windowsCases : posixCases;
       console.log(`compat ok: ${testCase.name} (${testCase.upstream})`);
     }
     await runNativeApiSmoke();
+    reportLeakedHandlesIfProcessStaysAlive();
   } finally {
     shortcutFixture.cleanup();
     escapedScriptFixture.cleanup();
@@ -2048,6 +2049,18 @@ const cases = process.platform === "win32" ? windowsCases : posixCases;
   console.error(error);
   process.exit(1);
 });
+
+function reportLeakedHandlesIfProcessStaysAlive() {
+  const timer = setTimeout(() => {
+    const handles =
+      typeof process._getActiveHandles === "function"
+        ? process._getActiveHandles().map((handle) => handle.constructor?.name ?? typeof handle)
+        : ["active handle introspection unavailable"];
+    console.error(`compat completed but process stayed alive: ${JSON.stringify(handles)}`);
+    process.exit(1);
+  }, 1000);
+  timer.unref();
+}
 
 function runLocal(testCase) {
   return run(localBinary, testCase.args, { ...testCase, side: "local" });
