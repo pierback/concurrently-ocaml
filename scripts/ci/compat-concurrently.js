@@ -54,6 +54,7 @@ const invalidPackageFixture = createInvalidPackageFixture();
 const invalidDenoFixture = createInvalidDenoFixture();
 const killTimeoutFixture = createKillTimeoutFixture();
 const restartFixture = createRestartFixture();
+const windowsCommandFixture = createWindowsCommandFixture();
 const inputReadyDelayMs = 2500;
 const compatWatchdog = startCompatWatchdog("compat harness", 420000);
 
@@ -1924,10 +1925,32 @@ const windowsCases = [
     normalizeStdout: normalizeVersionStdout,
   },
   {
+    name: "version short lowercase option",
+    upstream: "bin/concurrently.spec.ts -v",
+    args: ["-v"],
+    normalizeStdout: normalizeVersionStdout,
+  },
+  {
+    name: "version short uppercase option",
+    upstream: "bin/concurrently.spec.ts -V",
+    args: ["-V"],
+    normalizeStdout: normalizeVersionStdout,
+  },
+  {
     name: "help long option",
     upstream: "bin/concurrently.spec.ts --help",
     args: ["--help"],
     normalizeStdout: normalizeHelpStdout,
+  },
+  {
+    name: "help short option",
+    upstream: "bin/concurrently.spec.ts -h",
+    args: ["-h"],
+  },
+  {
+    name: "no commands prints help",
+    upstream: "bin/concurrently.ts default command handling",
+    args: ["--no-color"],
   },
   {
     name: "single success close notification",
@@ -1950,6 +1973,20 @@ const windowsCases = [
     args: ["--no-color", "--raw", nodePrintCommand("one")],
   },
   {
+    name: "hidden named command suppresses output",
+    upstream: "bin/concurrently.spec.ts --hide by name",
+    args: [
+      "--no-color",
+      "-g",
+      "-n",
+      "api,worker",
+      "--hide",
+      "api",
+      nodePrintCommand("hidden"),
+      nodePrintCommand("visible"),
+    ],
+  },
+  {
     name: "grouped output is ordered by command index",
     upstream: "bin/concurrently.spec.ts --group",
     args: [
@@ -1958,6 +1995,55 @@ const windowsCases = [
       nodeDelayPrintCommand("slow", 80),
       nodePrintCommand("fast"),
     ],
+  },
+  {
+    name: "pad prefix uses longest label",
+    upstream: "bin/concurrently.spec.ts --pad-prefix",
+    args: [
+      "--no-color",
+      "-g",
+      "--pad-prefix",
+      "-n",
+      "api,worker",
+      nodePrintCommand("api"),
+      nodePrintCommand("worker"),
+    ],
+  },
+  {
+    name: "template prefix renders command metadata",
+    upstream: "dist/src/logger.js template prefixes",
+    args: [
+      "--no-color",
+      "-g",
+      "-n",
+      "api",
+      "-p",
+      "{index}:{name}:{command}",
+      nodePrintCommand("ok"),
+    ],
+  },
+  {
+    name: "passthrough placeholders",
+    upstream: "src/command-parser/expand-arguments.spec.ts",
+    args: [
+      "--no-color",
+      "-g",
+      "-P",
+      [
+        nodeEvalCommand("process.stdout.write(process.argv.slice(1).join('|'))"),
+        "{1}",
+        "{@}",
+        "{*}",
+      ].join(" "),
+      "--",
+      "alpha",
+      "beta",
+    ],
+  },
+  {
+    name: "quoted cmd script path and spaced argument",
+    upstream: "Windows cmd.exe shell quoting",
+    args: ["--no-color", windowsCommandFixture.quotedScriptCommand],
   },
   {
     name: "cwd and env reach child command",
@@ -2072,6 +2158,7 @@ const cases = process.platform === "win32" ? windowsCases : posixCases;
     invalidDenoFixture.cleanup();
     killTimeoutFixture.cleanup();
     restartFixture.cleanup();
+    windowsCommandFixture.cleanup();
   }
 })().catch((error) => {
   console.error(error);
@@ -6032,6 +6119,20 @@ function createRestartFixture() {
     },
     cleanup() {
       rmSync(cwd, { force: true, recursive: true });
+    },
+  };
+}
+
+function createWindowsCommandFixture() {
+  const root = mkdtempSync(resolve(tmpdir(), "concurrently-ocaml-win-cmd-"));
+  const scriptDir = resolve(root, "script dir");
+  const script = resolve(scriptDir, "echo args.cmd");
+  mkdirSync(scriptDir, { recursive: true });
+  writeFileSync(script, "@echo off\r\necho script:%~1:%~2\r\n");
+  return {
+    quotedScriptCommand: `"${script}" "alpha beta" plain`,
+    cleanup() {
+      rmSync(root, { force: true, recursive: true });
     },
   };
 }
