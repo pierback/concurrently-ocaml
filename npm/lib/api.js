@@ -747,6 +747,7 @@ function subscribeSpawnApiCommand(command, state) {
       return;
     }
     command.spawnApiCompleted = true;
+    spawnApiCleanupKilledCommand(command);
     if (!hidden) {
       formatter.close(event);
     }
@@ -1986,6 +1987,17 @@ function spawnApiKillOthers(running, options, scheduler, signal, output, outputS
   scheduler.killTimers.add(timer);
 }
 
+function spawnApiCleanupKilledCommand(command) {
+  if (
+    process.platform === "win32" ||
+    !command.killed ||
+    !Number.isInteger(command.pid)
+  ) {
+    return;
+  }
+  spawnApiKillTree(command.pid, "SIGKILL", true, command.killTreePids);
+}
+
 function spawnApiLogGlobalEvent(message, options, outputState, output) {
   if (options.raw) {
     return;
@@ -2043,6 +2055,7 @@ function spawnApiOptions(command, options, hidden) {
       ...normalizeEnv(options.env),
       ...normalizeEnv(command.env),
     },
+    detached: process.platform !== "win32",
     shell: true,
     stdio,
   };
@@ -2096,6 +2109,7 @@ function spawnApiKillTree(pid, signal, force = false, knownDescendants = []) {
   for (const childPid of childPids) {
     spawnApiKillPid(childPid, killSignal);
   }
+  spawnApiKillProcessGroup(pid, killSignal);
   spawnApiKillPid(pid, killSignal);
   return childPids;
 }
@@ -2115,6 +2129,16 @@ function spawnApiValidateKillSignal(signal) {
 function spawnApiKillPid(pid, signal) {
   try {
     process.kill(pid, signal);
+  } catch (error) {
+    if (error?.code !== "ESRCH") {
+      throw error;
+    }
+  }
+}
+
+function spawnApiKillProcessGroup(pid, signal) {
+  try {
+    process.kill(-pid, signal);
   } catch (error) {
     if (error?.code !== "ESRCH") {
       throw error;
