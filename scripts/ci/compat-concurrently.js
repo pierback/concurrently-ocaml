@@ -2063,9 +2063,37 @@ async function runNativeApiSmoke() {
   await runNativeApiControllerTemplateIndexAndStringColorSmoke();
   await runNativeApiControllerIpcRejectSmoke();
   await runNativeApiGlobalRawCommandFalseSmoke();
-  await runNativeApiCustomSpawnSmoke();
+  await runNativeApiCustomSpawnWithTimeout();
   await runNativeApiNumericNameSuccessSelectorSmoke();
   await runNativeApiNumericNameDefaultInputTargetSmoke();
+}
+
+let nativeApiCustomSpawnPhase = "not started";
+
+async function runNativeApiCustomSpawnWithTimeout() {
+  const timeoutMs = process.platform === "win32" ? 120000 : 30000;
+  let timer;
+  try {
+    await Promise.race([
+      runNativeApiCustomSpawnSmoke(),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          reject(
+            new Error(
+              `native JS API custom spawn timed out after ${timeoutMs}ms at ${nativeApiCustomSpawnPhase}`
+            )
+          );
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function nativeApiCustomSpawnProgress(phase) {
+  nativeApiCustomSpawnPhase = phase;
+  console.log(`compat progress: native JS API custom spawn ${phase}`);
 }
 
 async function runNativeApiPerCommandKillSmoke() {
@@ -2442,6 +2470,7 @@ async function runNativeApiGlobalRawCommandFalseSmoke() {
 
 async function runNativeApiCustomSpawnSmoke() {
   const api = require(resolve("index.js"));
+  nativeApiCustomSpawnProgress("basic output");
   let output = "";
   const calls = [];
   const sink = new Writable({
@@ -2497,6 +2526,7 @@ async function runNativeApiCustomSpawnSmoke() {
     );
   }
 
+  nativeApiCustomSpawnProgress("default output");
   let defaultOutput = "";
   const originalStdoutWrite = process.stdout.write;
   process.stdout.write = function writeStdout(chunk, encoding, callback) {
@@ -2522,6 +2552,7 @@ async function runNativeApiCustomSpawnSmoke() {
     );
   }
 
+  nativeApiCustomSpawnProgress("prefix formats");
   let indexPrefixOutput = "";
   const indexPrefixSink = new Writable({
     write(chunk, _encoding, callback) {
@@ -2626,6 +2657,7 @@ async function runNativeApiCustomSpawnSmoke() {
     );
   }
 
+  nativeApiCustomSpawnProgress("input and global events");
   let globalPartialOutput = "";
   const globalPartialInput = new PassThrough();
   const globalPartialSink = new Writable({
@@ -2744,6 +2776,7 @@ async function runNativeApiCustomSpawnSmoke() {
     );
   }
 
+  nativeApiCustomSpawnProgress("colors");
   let autoColorPrefixOutput = "";
   const autoColorPrefixSink = new Writable({
     write(chunk, _encoding, callback) {
@@ -3103,6 +3136,7 @@ async function runNativeApiCustomSpawnSmoke() {
     );
   }
 
+  nativeApiCustomSpawnProgress("command prefixes");
   let timePrefixOutput = "";
   const timePrefixSink = new Writable({
     write(chunk, _encoding, callback) {
@@ -3195,6 +3229,7 @@ async function runNativeApiCustomSpawnSmoke() {
     );
   }
 
+  nativeApiCustomSpawnProgress("grouped output");
   let groupedOutput = "";
   const groupedSink = new Writable({
     write(chunk, _encoding, callback) {
@@ -3301,6 +3336,7 @@ async function runNativeApiCustomSpawnSmoke() {
     rmSync(groupedRestartRoot, { recursive: true, force: true });
   }
 
+  nativeApiCustomSpawnProgress("timings and stream routing");
   let timingsOutput = "";
   const timingsSink = new Writable({
     write(chunk, _encoding, callback) {
@@ -3422,6 +3458,7 @@ async function runNativeApiCustomSpawnSmoke() {
     );
   }
 
+  nativeApiCustomSpawnProgress("restart policy");
   const restartRoot = mkdtempSync(resolve(tmpdir(), "concurrently-ml-spawn-restart-"));
   try {
     const restartMarker = resolve(restartRoot, "marker");
@@ -3595,6 +3632,7 @@ async function runNativeApiCustomSpawnSmoke() {
     rmSync(startupThrowRoot, { recursive: true, force: true });
   }
 
+  nativeApiCustomSpawnProgress("kill policy");
   const killCalls = [];
   const killRun = api.concurrently(
     ["node -e \"setTimeout(()=>{}, 1000)\""],
@@ -3687,6 +3725,7 @@ async function runNativeApiCustomSpawnSmoke() {
     }
   }
 
+  nativeApiCustomSpawnProgress("spawn errors");
   const spawnErrorEvents = await api.concurrently(["ignored"], {
     raw: true,
     outputStream: sink,
@@ -3932,6 +3971,7 @@ async function runNativeApiCustomSpawnSmoke() {
     }
   }
 
+  nativeApiCustomSpawnProgress("stdin forwarding");
   let stdinEofOutput = "";
   const stdinEofSink = new Writable({
     write(chunk, _encoding, callback) {
@@ -4356,6 +4396,7 @@ async function runNativeApiCustomSpawnSmoke() {
     "native JS API custom spawn fractional restart event count"
   );
 
+  nativeApiCustomSpawnProgress("input edge cases");
   const closedStdinCode = `
     const { spawn } = require("node:child_process");
     const { PassThrough, Writable } = require("node:stream");
@@ -4539,6 +4580,7 @@ async function runNativeApiCustomSpawnSmoke() {
     rmSync(killOthersRestartRoot, { recursive: true, force: true });
   }
 
+  nativeApiCustomSpawnProgress("kill timeout");
   const killTimeoutRun = api.concurrently(
     [
       "node -e \"process.on('SIGTERM',()=>{});setInterval(()=>{},1000)\"",
@@ -4620,6 +4662,7 @@ async function runNativeApiCustomSpawnSmoke() {
     "native JS API custom spawn signal killTimeout completion"
   );
 
+  nativeApiCustomSpawnProgress("signal restart");
   const signalRestartRoot = mkdtempSync(
     resolve(tmpdir(), "concurrently-ml-spawn-signal-restart-")
   );
@@ -4878,6 +4921,7 @@ async function runNativeApiCustomSpawnSmoke() {
     "native JS API custom spawn restart timer completion"
   );
 
+  nativeApiCustomSpawnProgress("hidden commands");
   let hiddenOutput = "";
   const hiddenSink = new Writable({
     write(chunk, _encoding, callback) {
