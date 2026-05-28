@@ -2034,10 +2034,7 @@ function spawnApiKillTree(pid, signal) {
   const killSignal = signal ?? "SIGTERM";
   if (process.platform === "win32") {
     spawnApiValidateKillSignal(killSignal);
-    const args = ["/pid", String(pid), "/T"];
-    if (killSignal === "SIGKILL") {
-      args.push("/F");
-    }
+    const args = ["/pid", String(pid), "/T", "/F"];
     const child = spawnChildProcess("taskkill", args, {
       stdio: "ignore",
       windowsHide: true,
