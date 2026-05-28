@@ -19,6 +19,7 @@ const { runNative } = require("./native");
 
 const SHORTCUT_RUNNERS = new Set(["npm", "yarn", "pnpm", "bun", "node", "deno"]);
 const SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"];
+const SIGNAL_VALIDATION_PID = 2147483647;
 const AUTO_PREFIX_COLORS = [
   "cyan",
   "yellow",
@@ -2032,6 +2033,7 @@ function spawnApiKillProcess(command, options, signal) {
 function spawnApiKillTree(pid, signal) {
   const killSignal = signal ?? "SIGTERM";
   if (process.platform === "win32") {
+    spawnApiValidateKillSignal(killSignal);
     const args = ["/pid", String(pid), "/T"];
     if (killSignal === "SIGKILL") {
       args.push("/F");
@@ -2047,6 +2049,18 @@ function spawnApiKillTree(pid, signal) {
     spawnApiKillPid(childPid, killSignal);
   }
   spawnApiKillPid(pid, killSignal);
+}
+
+function spawnApiValidateKillSignal(signal) {
+  // Node validates the signal before PID lookup; ESRCH means this signal is valid.
+  try {
+    process.kill(SIGNAL_VALIDATION_PID, signal);
+  } catch (error) {
+    if (error?.code === "ESRCH") {
+      return;
+    }
+    throw error;
+  }
 }
 
 function spawnApiKillPid(pid, signal) {
