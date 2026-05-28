@@ -118,6 +118,7 @@ class Command {
     this.pid = undefined;
     this.stdin = undefined;
     this.killSignal = undefined;
+    this.killExitSignal = undefined;
     this.killProcess = undefined;
     this.killBeforePid = false;
     this.startedAt = undefined;
@@ -183,8 +184,10 @@ class Command {
         command: this,
         index: this.index,
         exitCode:
-          process.platform === "win32" && this.killed && this.killSignal
-            ? this.killSignal
+          process.platform === "win32" &&
+          this.killed &&
+          (this.killExitSignal || this.killSignal)
+            ? this.killExitSignal || this.killSignal
             : exitCode ?? String(signal),
         killed: this.killed,
         timings: {
@@ -265,6 +268,7 @@ class Command {
     if (killed !== false) {
       this.killed = true;
       this.killSignal = code;
+      this.killExitSignal = typeof killed === "string" ? killed : undefined;
     }
   }
 
@@ -1899,6 +1903,7 @@ function spawnApiResetCommand(command) {
   command.exited = false;
   command.killed = false;
   command.killSignal = undefined;
+  command.killExitSignal = undefined;
   command.killBeforePid = false;
   command.pid = undefined;
   command.process = undefined;
@@ -2029,7 +2034,12 @@ function spawnApiKillProcess(command, options, signal) {
   if (!Number.isInteger(command.pid)) {
     return false;
   }
-  spawnApiKillTree(command.pid, signal, !Number(options.killTimeout));
+  if (process.platform === "win32") {
+    spawnApiValidateKillSignal(signal ?? "SIGTERM");
+    spawnApiKillTree(command.pid, "SIGKILL", true);
+    return "SIGKILL";
+  }
+  spawnApiKillTree(command.pid, signal);
   return true;
 }
 
