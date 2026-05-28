@@ -4616,7 +4616,7 @@ async function runNativeApiCustomSpawnSmoke() {
   nativeApiCustomSpawnProgress("kill timeout");
   const killTimeoutRun = api.concurrently(
     [
-      "node -e \"process.on('SIGTERM',()=>{});setInterval(()=>{},1000)\"",
+      "kill-timeout-child",
       "node -e \"setTimeout(()=>process.exit(1),20)\"",
     ],
     {
@@ -4625,6 +4625,16 @@ async function runNativeApiCustomSpawnSmoke() {
       maxProcesses: 2,
       outputStream: sink,
       spawn(command, options) {
+        if (command === "kill-timeout-child") {
+          return spawn(
+            process.execPath,
+            ["-e", "process.on('SIGTERM',()=>{});setInterval(()=>{},1000)"],
+            {
+              ...options,
+              shell: false,
+            }
+          );
+        }
         return spawn(command, [], options);
       },
     }
