@@ -182,7 +182,10 @@ class Command {
       const closeEvent = {
         command: this,
         index: this.index,
-        exitCode: exitCode ?? String(signal),
+        exitCode:
+          process.platform === "win32" && this.killed && this.killSignal
+            ? this.killSignal
+            : exitCode ?? String(signal),
         killed: this.killed,
         timings: {
           startDate,
