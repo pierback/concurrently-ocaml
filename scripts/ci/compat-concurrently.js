@@ -2089,6 +2089,7 @@ function startCompatWatchdog(label, defaultTimeoutMs) {
     for (const handle of process._getActiveHandles()) {
       console.error(`active handle: ${describeActiveHandle(handle)}`);
     }
+    dumpProcessTableForDiagnostics();
     process.exit(1);
   }, timeoutMs);
 }
@@ -2102,6 +2103,25 @@ function describeActiveHandle(handle) {
     return `${name} local=${handle.localAddress ?? "<none>"} remote=${handle.remoteAddress ?? "<none>"}`;
   }
   return name;
+}
+
+function dumpProcessTableForDiagnostics() {
+  if (process.platform === "win32") {
+    return;
+  }
+  const result = spawnSync("ps", ["-eo", "pid,ppid,pgid,stat,comm,args"], {
+    encoding: "utf8",
+  });
+  if (result.error) {
+    console.error(`process table unavailable: ${result.error.message}`);
+    return;
+  }
+  if (result.status !== 0) {
+    console.error(`process table unavailable: ${result.stderr.trim()}`);
+    return;
+  }
+  console.error(`process table at watchdog timeout (node pid ${process.pid}):`);
+  console.error(result.stdout.trimEnd());
 }
 
 function runLocal(testCase) {
