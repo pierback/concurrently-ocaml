@@ -2130,14 +2130,34 @@ function spawnApiKillProcess(command, options, signal) {
     spawnApiKillTree(command.pid, "SIGKILL", true);
     return "SIGKILL";
   }
-  const killed = spawnApiKillTree(
-    command.pid,
-    signal,
-    false,
-    command.killTreePids,
-    command.processGroupId,
-    command.killTreeProcessGroupIds
-  );
+  let killed;
+  try {
+    killed = spawnApiKillTree(
+      command.pid,
+      signal,
+      false,
+      command.killTreePids,
+      command.processGroupId,
+      command.killTreeProcessGroupIds
+    );
+  } catch (error) {
+    try {
+      const cleaned = spawnApiKillTree(
+        command.pid,
+        "SIGKILL",
+        true,
+        command.killTreePids,
+        command.processGroupId,
+        command.killTreeProcessGroupIds
+      );
+      command.killTreePids = cleaned.pids;
+      command.killTreeProcessGroupIds = cleaned.processGroupIds;
+      spawnApiScheduleKilledCommandCleanup(command);
+    } catch (_cleanupError) {
+      // Preserve the public signal validation error; cleanup is best-effort.
+    }
+    throw error;
+  }
   command.killTreePids = killed.pids;
   command.killTreeProcessGroupIds = killed.processGroupIds;
   return true;
