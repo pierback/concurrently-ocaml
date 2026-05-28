@@ -4648,7 +4648,14 @@ async function runNativeApiCustomSpawnSmoke() {
         return spawn(command, [], options);
       },
     }).result.catch(() => {}).then(() => process.stdout.write("done"));
-    setTimeout(() => process.kill(process.pid, "SIGTERM"), 100);
+    const sendSelfSigterm = () => {
+      if (process.platform === "win32") {
+        process.emit("SIGTERM", "SIGTERM");
+        return;
+      }
+      process.kill(process.pid, "SIGTERM");
+    };
+    setTimeout(sendSelfSigterm, 100);
   `;
   const signalKillTimeout = spawnSync(
     process.execPath,
@@ -4700,7 +4707,14 @@ async function runNativeApiCustomSpawnSmoke() {
           process.exit(1);
         }
       );
-      setTimeout(() => process.kill(process.pid, "SIGTERM"), 100);
+      const sendSelfSigterm = () => {
+        if (process.platform === "win32") {
+          process.emit("SIGTERM", "SIGTERM");
+          return;
+        }
+        process.kill(process.pid, "SIGTERM");
+      };
+      setTimeout(sendSelfSigterm, 100);
     `;
     const signalRestart = spawnSync(process.execPath, ["-e", signalRestartCode], {
       cwd: resolve("."),
@@ -4757,7 +4771,11 @@ async function runNativeApiCustomSpawnSmoke() {
       );
       const signalWhenReady = () => {
         if (require("node:fs").existsSync(${JSON.stringify(signalKillTimeoutMarker)})) {
-          process.kill(process.pid, "SIGTERM");
+          if (process.platform === "win32") {
+            process.emit("SIGTERM", "SIGTERM");
+          } else {
+            process.kill(process.pid, "SIGTERM");
+          }
           return;
         }
         setTimeout(signalWhenReady, 25);
@@ -4819,7 +4837,11 @@ async function runNativeApiCustomSpawnSmoke() {
       };
       const signalWhenReady = () => {
         if (existsSync(pidFile)) {
-          process.kill(process.pid, "SIGTERM");
+          if (process.platform === "win32") {
+            process.emit("SIGTERM", "SIGTERM");
+          } else {
+            process.kill(process.pid, "SIGTERM");
+          }
           return;
         }
         setTimeout(signalWhenReady, 25);
@@ -4867,7 +4889,14 @@ async function runNativeApiCustomSpawnSmoke() {
         return spawn(command, [], options);
       },
     }).result.catch(() => {}).then(() => process.stdout.write("done"));
-    setTimeout(() => process.kill(process.pid, "SIGTERM"), 100);
+    const sendSelfSigterm = () => {
+      if (process.platform === "win32") {
+        process.emit("SIGTERM", "SIGTERM");
+        return;
+      }
+      process.kill(process.pid, "SIGTERM");
+    };
+    setTimeout(sendSelfSigterm, 100);
   `;
   const signalPendingRestart = spawnSync(
     process.execPath,
