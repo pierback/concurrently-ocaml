@@ -29,6 +29,10 @@ let print_deprecation_warnings deprecated_name_separator_used =
       "[concurrently] name-separator is deprecated. Use commas as name \
        separators instead."
 
+let configure_default_eio_backend () =
+  if (not Sys.win32) && Option.is_none (Sys.getenv_opt "EIO_BACKEND") then
+    Unix.putenv "EIO_BACKEND" "posix"
+
 let print_runner_error error =
   match error with
   | `Unsupported_kill_signal _ -> prerr_endline (Runner.error_message error)
@@ -508,6 +512,7 @@ let command ~passthrough_argv_arguments ~deprecated_name_separator_used =
 
 let () =
   configure_binary_stdio ();
+  configure_default_eio_backend ();
   if Cli_argv.requests_help_before_separator Sys.argv then (
     print_string npm_compatible_help;
     exit 0);
