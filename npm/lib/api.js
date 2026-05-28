@@ -329,8 +329,8 @@ class Logger {
     return text;
   }
   logCommandEvent() {}
-  logCommandText(text) {
-    this.log("", text);
+  logCommandText(text, command) {
+    this.log("", text, command);
   }
   logGlobalEvent(text) {
     this.log("", text);
@@ -338,7 +338,7 @@ class Logger {
   logTable(rows) {
     this.log("", `${JSON.stringify(rows)}\n`);
   }
-  log(prefix, text) {
+  log(prefix, text, _command) {
     const stream = this.options.outputStream ?? process.stdout;
     stream.write(`${prefix}${text}`);
   }
@@ -397,6 +397,7 @@ function concurrently(commandInputs, options = {}) {
   if (
     options.spawn !== undefined ||
     commandsNeedSpawnApi(controlledCommands) ||
+    loggerNeedsCommandContext(options.logger) ||
     (options.kill !== undefined && nativeKillPolicyMayStopCommands(options))
   ) {
     return runSpawnApi(controlledCommands, controlled.onFinishCallbacks, options);
@@ -557,20 +558,7 @@ function assertNativeLogger(logger) {
     typeof logger.log !== "function"
   ) {
     throw new Error(
-      "options.logger must implement logCommandText(text) or log(prefix, text)"
-    );
-  }
-  if (
-    typeof logger.logCommandText === "function" &&
-    logger.logCommandText.length > 1
-  ) {
-    throw new Error(
-      "options.logger logCommandText(text, command) is unsupported by the native merged output stream"
-    );
-  }
-  if (typeof logger.log === "function" && logger.log.length > 2) {
-    throw new Error(
-      "options.logger log(prefix, text, command) is unsupported by the native merged output stream"
+      "options.logger must implement logCommandText(text, command) or log(prefix, text, command)"
     );
   }
 }
@@ -714,6 +702,15 @@ function commandsNeedSpawnApi(commands) {
   return commands.some((command) => command.ipc != null);
 }
 
+function loggerNeedsCommandContext(logger) {
+  return Boolean(
+    logger &&
+      ((typeof logger.logCommandText === "function" &&
+        logger.logCommandText.length > 1) ||
+        (typeof logger.log === "function" && logger.log.length > 2))
+  );
+}
+
 function subscribeSpawnApiCommand(command, state) {
   const {
     closeEvents,
@@ -848,7 +845,7 @@ function subscribeSpawnApiCommand(command, state) {
 
 function spawnApiOutputSink(options) {
   return apiOutputSink(options) ?? {
-    write(chunk, callback) {
+    write(chunk, _command, callback) {
       process.stdout.write(chunk, callback);
     },
   };
@@ -877,13 +874,13 @@ function outputWriter(outputSink) {
     }
   };
   return {
-    write(chunk) {
+    write(chunk, command) {
       if (!outputSink) {
         return;
       }
       pendingWrites += 1;
       try {
-        outputSink.write(chunk, (error) => {
+        outputSink.write(chunk, command, (error) => {
           if (error && !outputError) {
             outputError = error;
           }
@@ -1418,7 +1415,7 @@ function spawnApiWriteOutput(command, chunk, outputState, output, trackLineState
 }
 
 function spawnApiWriteVisibleOutput(command, chunk, outputState, output, trackLineState = true) {
-  output.write(chunk);
+  output.write(chunk, command);
   if (!trackLineState) {
     return;
   }
@@ -3438,10 +3435,10 @@ function apiOutputSink(options) {
       logger && !streamBackedDefaultLogger(logger, outputStreams);
     const loggerDecoder = writesLogger ? new StringDecoder("utf8") : undefined;
     return {
-      write(chunk, callback) {
+      write(chunk, command, callback) {
         try {
           if (writesLogger) {
-            writeLoggerText(logger, decodeLoggerChunk(loggerDecoder, chunk));
+            writeLoggerText(logger, decodeLoggerChunk(loggerDecoder, chunk), command);
           }
           writeOutputStreams(outputStreams, chunk, callback);
         } catch (error) {
@@ -3513,15 +3510,15 @@ function decodeLoggerChunk(decoder, chunk) {
   return Buffer.isBuffer(chunk) ? decoder.write(chunk) : String(chunk);
 }
 
-function writeLoggerText(logger, text) {
+function writeLoggerText(logger, text, command) {
   if (text === "") {
     return;
   }
   if (typeof logger.logCommandText === "function") {
-    logger.logCommandText(text);
+    logger.logCommandText(text, command);
     return;
   }
-  logger.log("", text);
+  logger.log("", text, command);
 }
 
 function commandInfo(command) {
