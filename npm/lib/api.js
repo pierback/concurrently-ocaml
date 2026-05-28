@@ -2026,15 +2026,18 @@ function spawnApiKillProcess(command, options, signal) {
   if (!Number.isInteger(command.pid)) {
     return false;
   }
-  spawnApiKillTree(command.pid, signal);
+  spawnApiKillTree(command.pid, signal, !Number(options.killTimeout));
   return true;
 }
 
-function spawnApiKillTree(pid, signal) {
+function spawnApiKillTree(pid, signal, force = false) {
   const killSignal = signal ?? "SIGTERM";
   if (process.platform === "win32") {
     spawnApiValidateKillSignal(killSignal);
-    const args = ["/pid", String(pid), "/T", "/F"];
+    const args = ["/pid", String(pid), "/T"];
+    if (force || killSignal === "SIGKILL") {
+      args.push("/F");
+    }
     const child = spawnChildProcess("taskkill", args, {
       stdio: "ignore",
       windowsHide: true,
