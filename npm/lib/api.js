@@ -2056,6 +2056,7 @@ function spawnApiKillTree(pid, signal, force = false) {
       windowsHide: true,
     });
     child.on("error", () => {});
+    child.unref();
     return;
   }
   for (const childPid of spawnApiDescendantPids(pid)) {
