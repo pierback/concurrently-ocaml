@@ -228,6 +228,7 @@ jobs:
       - run: npm run audit:npm-api
 
       - run: npm run compat:concurrently
+        timeout-minutes: 6
 
       - run: npm run smoke:windows-native
 
