@@ -583,6 +583,7 @@ function runSpawnApi(commands, onFinishCallbacks, options) {
     killTimers: new Set(),
     restartTimers: new Map(),
     pendingFailure: undefined,
+    signalKillScheduled: false,
     settle: undefined,
   };
   const restartCounts = new Map();
@@ -1864,19 +1865,33 @@ function spawnApiRestartCommand(command, state) {
 
 function spawnApiAttachSignals(commands, running, scheduler, options) {
   const signalListener = (signal) => {
+    if (scheduler.settled) {
+      return;
+    }
     scheduler.caughtSignal = signal;
     scheduler.stopStarting = true;
     spawnApiCancelRestartTimers(scheduler, running);
-    try {
-      spawnApiKillOthers(running, options, scheduler, signal);
-    } catch (_error) {
-      for (const command of commands) {
-        if (running.has(command)) {
-          command.kill(signal);
+    spawnApiMarkRunningCommandsKilled(running, signal);
+    if (scheduler.signalKillScheduled) {
+      return;
+    }
+    scheduler.signalKillScheduled = true;
+    setImmediate(() => {
+      scheduler.signalKillScheduled = false;
+      if (scheduler.settled) {
+        return;
+      }
+      try {
+        spawnApiKillOthers(running, options, scheduler, scheduler.caughtSignal);
+      } catch (_error) {
+        for (const command of commands) {
+          if (running.has(command)) {
+            command.kill(scheduler.caughtSignal);
+          }
         }
       }
-    }
-    scheduler.settle?.();
+      scheduler.settle?.();
+    });
   };
   for (const signal of SIGNALS) {
     process.on(signal, signalListener);
@@ -1888,6 +1903,15 @@ function spawnApiAttachSignals(commands, running, scheduler, options) {
       }
     },
   };
+}
+
+function spawnApiMarkRunningCommandsKilled(running, signal) {
+  for (const command of running) {
+    if (commandCanRequestKill(command)) {
+      command.killed = true;
+      command.killSignal = signal;
+    }
+  }
 }
 
 function spawnApiCancelRestartTimers(scheduler, running) {
