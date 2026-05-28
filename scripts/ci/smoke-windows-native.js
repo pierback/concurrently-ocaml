@@ -31,6 +31,7 @@ const tempDir = mkdtempSync(join(tmpdir(), "concurrently-ml-windows-"));
     smokeShellQuoting();
     smokeStdin();
     smokeFailureExitStatus();
+    await smokeKillOthersCleansSiblingTree();
     await smokeProcessTreeCleanup();
     console.log("windows native smoke ok");
   } finally {
@@ -104,6 +105,59 @@ function smokeFailureExitStatus() {
     `[0] ${command} exited with code 7\n`,
     "failure stdout"
   );
+}
+
+async function smokeKillOthersCleansSiblingTree() {
+  const marker = join(tempDir, "kill-others-child.pid");
+  const failingCommand = nodeEvalCommand(
+    "const fs=require('fs');" +
+      "const marker=process.env.CONCURRENTLY_WINDOWS_KILL_OTHERS_MARKER;" +
+      "const startedAt=Date.now();" +
+      "function poll(){" +
+      "if(fs.existsSync(marker)){process.exit(1)}" +
+      "if(Date.now()-startedAt>5000){process.exit(2)}" +
+      "setTimeout(poll,25)" +
+      "}" +
+      "poll()"
+  );
+  const longRunningCommand = nodeEvalCommand(
+    "const cp=require('child_process');" +
+      "const fs=require('fs');" +
+      "const child=cp.spawn(process.execPath," +
+      "['-e','setInterval(function(){},1000)'],{stdio:'ignore'});" +
+      "fs.writeFileSync(process.env.CONCURRENTLY_WINDOWS_KILL_OTHERS_MARKER," +
+      "String(child.pid));" +
+      "setInterval(function(){},1000)"
+  );
+  const result = runSync(
+    ["--no-color", "--kill-others-on-fail", failingCommand, longRunningCommand],
+    {
+      cwd: tempDir,
+      env: { CONCURRENTLY_WINDOWS_KILL_OTHERS_MARKER: marker },
+    }
+  );
+  assertEqual(result.status, 1, "kill-others command status", result);
+  assertEqual(result.stderr, "", "kill-others stderr");
+  assertFile(marker, "kill-others child pid marker");
+
+  const childPid = Number(readFileSync(marker, "utf8"));
+  if (!Number.isInteger(childPid) || childPid <= 0) {
+    throw new Error(
+      `invalid kill-others child pid marker: ${readFileSync(marker, "utf8")}`
+    );
+  }
+
+  await sleep(750);
+  if (pidIsRunning(childPid)) {
+    try {
+      process.kill(childPid);
+    } catch (_error) {
+      // Best-effort cleanup before failing the smoke.
+    }
+    throw new Error(
+      `kill-others left child process ${childPid} running\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`
+    );
+  }
 }
 
 async function smokeProcessTreeCleanup() {
@@ -276,5 +330,11 @@ function assertEqual(actual, expected, label, detail) {
     throw new Error(
       `${label}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}${suffix}`
     );
+  }
+}
+
+function assertFile(path, label) {
+  if (!existsSync(path)) {
+    throw new Error(`${label}: missing ${path}`);
   }
 }
