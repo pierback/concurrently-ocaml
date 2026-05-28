@@ -40,7 +40,8 @@ jobs:
 
       - run: opam install . --deps-only --with-test
 
-      - run: opam exec -- dune build @install @runtest
+      - run: opam exec -- dune build @install @runtest --verbose
+        timeout-minutes: 12
 
       - run: npm run audit:npm-api
 
@@ -100,7 +101,8 @@ jobs:
 
       - run: opam install . --deps-only --with-test
 
-      - run: opam exec -- dune build @install @runtest
+      - run: opam exec -- dune build @install @runtest --verbose
+        timeout-minutes: 12
 
       - name: Create npm platform package
         run: |
