@@ -346,16 +346,69 @@ try {
           );
         }
 
-        try {
-          concurrently(['node -e "process.exit(0)"'], {
-            logger: { logCommandText(_text, _command) {} },
+        const commandLoggerRecords = [];
+        const commandLogger = {
+          logCommandText(text, command) {
+            commandLoggerRecords.push({
+              text,
+              index: command?.index,
+              name: command?.name,
+              command: command?.command,
+            });
+          },
+        };
+        await concurrently(
+          [{ name: "api", command: 'node -e "process.stdout.write(\\'command-log\\')"' }],
+          {
+            logger: commandLogger,
             raw: true,
-          });
-          throw new Error("command-aware logger was accepted");
-        } catch (error) {
-          if (!String(error && error.message).includes("unsupported")) {
-            throw error;
           }
+        ).result;
+        if (
+          !commandLoggerRecords.some(
+            (record) =>
+              record.text.includes("command-log") &&
+              record.index === 0 &&
+              record.name === "api" &&
+              record.command.includes("command-log")
+          )
+        ) {
+          throw new Error(
+            "command-aware logger did not receive command context: " +
+              JSON.stringify(commandLoggerRecords)
+          );
+        }
+
+        const commandLogRecords = [];
+        const commandLogLogger = new concurrently.Logger();
+        commandLogLogger.log = function log(prefix, text, command) {
+          commandLogRecords.push({
+            prefix,
+            text,
+            index: command?.index,
+            name: command?.name,
+            command: command?.command,
+          });
+        };
+        await concurrently(
+          [{ name: "web", command: 'node -e "process.stdout.write(\\'method-log\\')"' }],
+          {
+            logger: commandLogLogger,
+          }
+        ).result;
+        if (
+          !commandLogRecords.some(
+            (record) =>
+              record.text.includes("method-log") &&
+              record.index === 0 &&
+              record.name === "web" &&
+              record.command.includes("method-log")
+          )
+        ) {
+          throw new Error(
+            "command-aware logger.log did not receive command context: " +
+              JSON.stringify(commandLogRecords)
+          );
         }
 
         process.stdout.write("logger smoke ok\\n");
@@ -460,7 +513,7 @@ try {
     `
       const concurrently = require(${JSON.stringify(publicPackageName)});
       const { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } = require("node:fs");
-      const { fork, spawn } = require("node:child_process");
+      const { fork, spawn, spawnSync } = require("node:child_process");
       const { tmpdir } = require("node:os");
       const { delimiter, join } = require("node:path");
       const { PassThrough, Writable } = require("node:stream");
@@ -904,7 +957,7 @@ try {
       const filteredInput = new PassThrough();
       const filteredInputRun = concurrently([
         'node -e "process.exit(9)"',
-        'node -e "process.stdin.on(\\'data\\',()=>process.exit(0)); setTimeout(()=>process.exit(5),500)"',
+        'node -e "process.stdin.on(\\'data\\',()=>process.exit(0)); setTimeout(()=>process.exit(5),5000)"',
       ], {
         raw: true,
         inputStream: filteredInput,
@@ -1094,18 +1147,41 @@ try {
           throw new Error("undefined hook options changed API execution: " + JSON.stringify(events));
         }
       });
-      try {
-        concurrently(['node -e "process.exit(0)"'], {
-          raw: true,
-          kill() {},
-          killOthersOn: ["success"],
+      const customKillPolicyCalls = [];
+      const customKillPolicyRun = concurrently([
+        'node -e "process.exit(0)"',
+        'node -e "setTimeout(()=>{},60000)"',
+      ], {
+        raw: true,
+        outputStream: shortcutOutputSink,
+        killOthersOn: ["success"],
+        kill(pid, signal) {
+          customKillPolicyCalls.push({ pid, signal });
+          if (process.platform === "win32") {
+            spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"], {
+              stdio: "ignore",
+            });
+            return;
+          }
+          process.kill(-pid, signal);
+        },
+      });
+      const customKillPolicyResult = customKillPolicyRun.result
+        .then((events) => events, (events) => events)
+        .then((events) => {
+          if (!Array.isArray(events)) {
+            throw new Error("custom kill policy returned non-events: " + events);
+          }
+          if (customKillPolicyCalls.length === 0) {
+            throw new Error("custom kill policy did not call options.kill");
+          }
+          if (customKillPolicyCalls[0].signal !== "SIGTERM") {
+            throw new Error(
+              "custom kill policy used wrong signal: " +
+                JSON.stringify(customKillPolicyCalls)
+            );
+          }
         });
-        throw new Error("options.kill with native kill policy did not fail loudly");
-      } catch (error) {
-        if (!String(error && error.message).includes("options.kill with options.killOthers/killOthersOn")) {
-          throw error;
-        }
-      }
       const createConcurrentlyRun = concurrently.createConcurrently(['node -e "process.exit(0)"'], {
         raw: true,
         outputStream: shortcutOutputSink,
@@ -2069,6 +2145,7 @@ try {
         missingPositiveSelectorResult,
         missingNegatedSelectorResult,
         undefinedHookOptionsResult,
+        customKillPolicyResult,
         createConcurrentlyResult,
         sanitizedResult,
         envResult,
