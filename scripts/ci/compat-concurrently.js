@@ -6055,6 +6055,12 @@ function normalizeShellSignalDiagnosticStdout(stdout) {
     .replace(
       /^\[0\] (trap 'exit 129' HUP; sleep 1) exited with code (?:0|129|SIGHUP)$/gm,
       "[0] $1 exited with code <SIGHUP>"
+    )
+    // Node's negative setTimeout warning path races shell process-group
+    // termination; upstream can report either signal for this fixture.
+    .replace(
+      /^\[0\] (sh -c "trap '' TERM; while :; do : > '[^']+\/negative\.ready'; sleep 0\.01; done") exited with code (?:SIGTERM|SIGKILL)$/gm,
+      "[0] $1 exited with code <SIGTERM_OR_SIGKILL>"
     );
 }
 
