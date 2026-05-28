@@ -2132,6 +2132,7 @@ async function runNativeApiSmoke() {
   await runNativeApiPerCommandKillSmoke();
   await runNativeApiImmediateKillSmoke();
   await runNativeApiNativeKillPolicyManualKillSmoke();
+  await runNativeApiCustomKillPolicySmoke();
   await runNativeApiExitedCommandKillSmoke();
   await runNativeApiClosedIpcSendSmoke();
   await runNativeApiControllerIndexLabelSmoke();
@@ -2297,6 +2298,45 @@ async function runNativeApiNativeKillPolicyManualKillSmoke() {
   }
 
   console.log("compat ok: native JS API kill policy manual kill cleans descendants");
+}
+
+async function runNativeApiCustomKillPolicySmoke() {
+  const api = require(resolve("index.js"));
+  const calls = [];
+  const sink = new Writable({
+    write(_chunk, _encoding, callback) {
+      callback();
+    },
+  });
+  const run = api.concurrently([nodeExitCommand(0), nodeHangCommand()], {
+    killOthersOn: ["success"],
+    outputStream: sink,
+    prefixColors: false,
+    kill(pid, signal) {
+      calls.push({ pid, signal });
+      if (process.platform === "win32") {
+        spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"], {
+          stdio: "ignore",
+        });
+        return;
+      }
+      process.kill(-pid, signal);
+    },
+  });
+
+  const events = await run.result.catch((error) => error);
+  if (!Array.isArray(events)) {
+    throw new Error(`native JS API custom kill policy returned non-events: ${events}`);
+  }
+  if (calls.length === 0) {
+    throw new Error("native JS API custom kill policy did not call kill callback");
+  }
+  assertEqual(
+    calls[0].signal,
+    "SIGTERM",
+    "native JS API custom kill policy signal"
+  );
+  console.log("compat ok: native JS API custom kill policy");
 }
 
 async function runNativeApiExitedCommandKillSmoke() {
