@@ -28,8 +28,10 @@ let shell_args command = [ "/bin/sh"; "-c"; Command.text command ]
 
 let close_status = function
   | Unix.WEXITED code -> Close_event.Exited code
-  | Unix.WSIGNALED signal -> Close_event.Signaled (string_of_int signal)
-  | Unix.WSTOPPED signal -> Close_event.Signaled ("STOP:" ^ string_of_int signal)
+  | Unix.WSIGNALED signal ->
+      Close_event.Signaled (string_of_int (Sys.signal_to_int signal))
+  | Unix.WSTOPPED signal ->
+      Close_event.Signaled ("STOP:" ^ string_of_int (Sys.signal_to_int signal))
 
 let split_env_entry entry =
   match String.index_opt entry '=' with
@@ -109,7 +111,8 @@ let spawn ~sw ~command =
           | Ok _ | Error _ -> ())
     in
     let signal signal =
-      if Eio.Promise.is_resolved exit_status then Ok false
+      if Eio.Promise.is_resolved exit_status && signal <> Sys.sigkill then
+        Ok false
       else Posix_process_group.signal_group ~pid signal
     in
     { Runner_backend.process_id = string_of_int pid
@@ -118,11 +121,13 @@ let spawn ~sw ~command =
     ; stdout = (stdout_pipe.source :> Runner_backend.source)
     ; stderr = (stderr_pipe.source :> Runner_backend.source)
     ; signal
+    ; cleanup_after_exit =
+        (fun () ->
+          match Posix_process_group.signal_group ~pid Sys.sigkill with
+          | Ok _ | Error _ -> ())
     ; await =
         (fun () ->
           let status = Eio.Promise.await native_process.exit_status in
-          (match Posix_process_group.signal_group ~pid Sys.sigkill with
-          | Ok _ | Error _ -> ());
           close_status status)
     }
   | exception exn ->

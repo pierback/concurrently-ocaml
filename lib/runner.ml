@@ -106,11 +106,13 @@ let create_close_event ~command ~attempt ~killed ~status ~started_at ~ended_at =
   | Ok close_event -> Closed close_event
   | Error error -> Failed (`Close_event_error (Command.index command, error))
 
+let signaled_status signal =
+  Close_event.Signaled (string_of_int (Sys.signal_to_int signal))
+
 let cancelled_close_event ~now ~attempt ~signal command =
   let timestamp = now () in
   create_close_event ~command ~attempt ~killed:true
-    ~status:(Close_event.Signaled (string_of_int signal))
-    ~started_at:timestamp ~ended_at:timestamp
+    ~status:(signaled_status signal) ~started_at:timestamp ~ended_at:timestamp
 
 let teardown_spawn_error_event ~command ~message =
   let chunk = "teardown command failed to spawn: " ^ message in
@@ -165,6 +167,7 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
     let retry_pending_command_indexes = ref [] in
     let killed_command_indexes = ref [] in
     let force_killed_command_indexes = ref [] in
+    let pending_force_kill_completions = Hashtbl.create command_count in
     let closed_command_indexes = ref [] in
     let current_attempts = Array.make command_count 0 in
     let state_mutex = Eio.Mutex.create () in
@@ -303,6 +306,38 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
       Eio.Mutex.use_ro state_mutex (fun () ->
           List.mem command_index !force_killed_command_indexes)
     in
+    let pending_force_kill_completion command_index =
+      Eio.Mutex.use_ro state_mutex (fun () ->
+          Hashtbl.find_opt pending_force_kill_completions command_index)
+    in
+    let remove_pending_force_kill command_index =
+      Eio.Mutex.use_rw ~protect:true state_mutex (fun () ->
+          Hashtbl.remove pending_force_kill_completions command_index)
+    in
+    let pending_force_kill_is_current command_index completion =
+      Eio.Mutex.use_ro state_mutex (fun () ->
+          match Hashtbl.find_opt pending_force_kill_completions command_index with
+          | Some (current_completion, _) -> current_completion == completion
+          | None -> false)
+    in
+    let process_status_matches_signal ~signal = function
+      | Close_event.Signaled exited_signal ->
+          exited_signal = string_of_int signal
+          || exited_signal = string_of_int (Sys.signal_to_int signal)
+      | Close_event.Exited _ | Close_event.Spawn_error _ -> false
+    in
+    let pending_force_kill_for_status ~process_status command_index =
+      match pending_force_kill_completion command_index with
+      | None -> None
+      | Some (completion, initial_signal) ->
+          if
+            not
+              (process_status_matches_signal ~signal:initial_signal process_status)
+          then (
+            remove_pending_force_kill command_index;
+            None)
+          else Some completion
+    in
     let command_is_closed command_index =
       Eio.Mutex.use_ro state_mutex (fun () ->
           List.mem command_index !closed_command_indexes)
@@ -418,58 +453,103 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
             record_failure (`Unexpected_runner_error message)
           else ()
     in
-    let force_kill_after_timeout ~sw ~initial_signal command_indexes =
-      match (command_indexes, Run_policy.kill_timeout_ms policy) with
+    let force_kill_after_timeout ~sw ~initial_signal running_processes =
+      match (running_processes, Run_policy.kill_timeout_ms policy) with
       | [], _ | _, None | _, Some 0 -> ()
       | _, Some timeout_ms when initial_signal = Sys.sigkill -> ()
       | _, Some timeout_ms ->
           Option.iter (emit_once kill_timeout_warning_emitted)
             (Run_policy.kill_timeout_warning policy);
-          Eio.Fiber.fork_daemon ~sw (fun () ->
-              (match sleep (float_of_int (max 0 timeout_ms) /. 1000.0) with
-              | () ->
-                  let processes_to_kill =
-                    Eio.Mutex.use_ro state_mutex (fun () ->
-                        let exited_command_indexes = !exited_command_indexes in
-                        !running_processes
-                        |> List.filter (fun running_process ->
-                               List.mem running_process.command_index
-                                 command_indexes
-                               && not
-                                    (List.mem running_process.command_index
-                                       exited_command_indexes)))
-                  in
-                  if processes_to_kill <> [] then
-                    Output_event.status_message ~after_command:None
-                      ~stream:Output_event.Stdout
-                      ~chunk:
-                        (Printf.sprintf
-                           "--> Sending SIGKILL to %d processes.."
-                           (List.length processes_to_kill))
-                    |> emit_best_effort;
-                  List.iter
-                    (fun running_process ->
-                      match
-                        running_process.process.Runner_backend.signal
-                          Sys.sigkill
-                      with
-                      | Ok true ->
-                          Eio.Mutex.use_rw ~protect:true state_mutex
-                            (fun () ->
-                              force_killed_command_indexes :=
-                                running_process.command_index
-                                :: !force_killed_command_indexes
-                                |> List.sort_uniq Int.compare)
-                      | Ok false -> ()
-                      | Error message ->
-                          if
-                            command_running_after_yields
-                              running_process.command_index 32
-                          then record_failure (`Unexpected_runner_error message)
-                          else ())
-                    processes_to_kill
-              | exception _ -> ());
-              `Stop_daemon)
+          let pending_force_kills =
+            Eio.Mutex.use_rw ~protect:true state_mutex (fun () ->
+                running_processes
+                |> List.filter_map (fun running_process ->
+                       match
+                         Hashtbl.find_opt pending_force_kill_completions
+                           running_process.command_index
+                       with
+                       | Some _ -> None
+                       | None ->
+                           let completion, resolve_completion =
+                             Eio.Promise.create ()
+                           in
+                           Hashtbl.add pending_force_kill_completions
+                             running_process.command_index
+                             (completion, initial_signal);
+                           Some (running_process, completion, resolve_completion)))
+          in
+          if pending_force_kills <> [] then
+            let complete_pending_force_kills () =
+              List.iter
+                (fun (running_process, completion, resolve_completion) ->
+                  ignore (Eio.Promise.try_resolve resolve_completion ());
+                  if
+                    pending_force_kill_is_current running_process.command_index
+                      completion
+                  then remove_pending_force_kill running_process.command_index)
+                pending_force_kills
+            in
+            Eio.Fiber.fork_daemon ~sw (fun () ->
+                (match
+                   Fun.protect ~finally:complete_pending_force_kills (fun () ->
+                       sleep (float_of_int (max 0 timeout_ms) /. 1000.0);
+                       let force_kill_results =
+                         pending_force_kills
+                         |> List.filter_map
+                              (fun (running_process, completion, _) ->
+                                if
+                                  not
+                                    (pending_force_kill_is_current
+                                       running_process.command_index completion)
+                                then None
+                                else
+                                  let root_already_exited =
+                                    Eio.Mutex.use_ro state_mutex (fun () ->
+                                        List.mem running_process.command_index
+                                          !exited_command_indexes)
+                                  in
+                                  match
+                                    running_process.process.Runner_backend.signal
+                                      Sys.sigkill
+                                  with
+                                  | Ok true ->
+                                      Some (running_process, root_already_exited)
+                                  | Ok false -> None
+                                  | Error message ->
+                                      if
+                                        command_running_after_yields
+                                          running_process.command_index 32
+                                      then
+                                        record_failure
+                                          (`Unexpected_runner_error message);
+                                      None)
+                       in
+                       if force_kill_results <> [] then
+                         Output_event.status_message ~after_command:None
+                           ~stream:Output_event.Stdout
+                           ~chunk:
+                             (Printf.sprintf
+                                "--> Sending SIGKILL to %d processes.."
+                                (List.length force_kill_results))
+                         |> emit_best_effort;
+                       let root_force_killed_command_indexes =
+                         force_kill_results
+                         |> List.filter_map
+                              (fun (running_process, root_already_exited) ->
+                                if root_already_exited then None
+                                else Some running_process.command_index)
+                       in
+                       if root_force_killed_command_indexes <> [] then
+                         Eio.Mutex.use_rw ~protect:true state_mutex (fun () ->
+                             force_killed_command_indexes :=
+                               root_force_killed_command_indexes
+                               |> List.rev_append !force_killed_command_indexes
+                               |> List.sort_uniq Int.compare))
+                 with
+                | () ->
+                    ()
+                | exception _ -> ());
+                `Stop_daemon)
     in
     let close_event_completes_command close_event =
       Run_policy.close_event_completes_command policy close_event
@@ -648,37 +728,41 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
         match Process_signal.number (Run_policy.kill_signal policy) with
         | Error error -> Error (error :> run_error)
         | Ok signal ->
-          let signaled_command_indexes, signal_errors =
+          let signaled_processes, signal_errors =
             processes_to_signal
             |> List.fold_left
-                 (fun (signaled_command_indexes, signal_errors) running_process
+                 (fun (signaled_processes, signal_errors) running_process
                     ->
                    match running_process.process.signal signal with
                    | Ok true ->
-                       ( running_process.command_index
-                         :: signaled_command_indexes,
-                         signal_errors )
-                   | Ok false -> (signaled_command_indexes, signal_errors)
+                       (running_process :: signaled_processes, signal_errors)
+                   | Ok false -> (signaled_processes, signal_errors)
                    | Error message ->
                        if
                          command_running_after_yields
                            running_process.command_index 32
                        then
-                         ( signaled_command_indexes,
+                         ( signaled_processes,
                            `Unexpected_runner_error message :: signal_errors )
-                       else (signaled_command_indexes, signal_errors))
+                       else (signaled_processes, signal_errors))
                  ([], [])
           in
           match List.rev signal_errors with
           | error :: _ -> Error error
           | [] ->
+              let signaled_processes = List.rev signaled_processes in
+              let signaled_command_indexes =
+                List.map
+                  (fun running_process -> running_process.command_index)
+                  signaled_processes
+              in
               Eio.Mutex.use_rw ~protect:true state_mutex (fun () ->
                   killed_command_indexes :=
                     signaled_command_indexes
                     |> List.rev_append !killed_command_indexes
                     |> List.sort_uniq Int.compare);
               force_kill_after_timeout ~sw ~initial_signal:signal
-                signaled_command_indexes;
+                signaled_processes;
               let cancelled_stop_events =
                 commands_to_cancel
                 |> List.filter_map (fun command ->
@@ -934,11 +1018,18 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
                     let process_ended_at = now () in
                     let killed = command_was_killed command_index in
                     mark_exited command_index;
+                    let pending_force_kill =
+                      if killed then
+                        pending_force_kill_for_status ~process_status
+                          command_index
+                      else None
+                    in
+                    if Option.is_none pending_force_kill then
+                      process.Runner_backend.cleanup_after_exit ();
                     let create_close_action ~ended_at =
                       let status =
                         if killed && command_was_force_killed command_index then
-                          Close_event.Signaled
-                            (string_of_int (Sys.signal_to_int Sys.sigkill))
+                          signaled_status Sys.sigkill
                         else process_status
                       in
                       match
@@ -959,8 +1050,31 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
                       if killed then None
                       else Some (create_close_action ~ended_at:process_ended_at)
                     in
-                    let stdout_result = await_reader stdout_reader in
-                    let stderr_result = await_reader stderr_reader in
+                    let await_readers () =
+                      let stdout_result = await_reader stdout_reader in
+                      let stderr_result = await_reader stderr_reader in
+                      (stdout_result, stderr_result)
+                    in
+                    let stdout_result, stderr_result =
+                      match pending_force_kill with
+                      | None -> await_readers ()
+                      | Some completion -> (
+                          match
+                            Eio.Fiber.first
+                              (fun () -> `Readers (await_readers ()))
+                              (fun () ->
+                                Eio.Promise.await completion;
+                                `Force_kill_timeout)
+                          with
+                          | `Readers results ->
+                              remove_pending_force_kill command_index;
+                              process.Runner_backend.cleanup_after_exit ();
+                              results
+                          | `Force_kill_timeout ->
+                              process.Runner_backend.cleanup_after_exit ();
+                              remove_pending_force_kill command_index;
+                              await_readers ())
+                    in
                     let reader_error =
                       match
                         (forced_reader_error, stdout_result, stderr_result)
@@ -1137,6 +1251,7 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
                 | status -> Some status
                 | exception _ -> None
               in
+              process.Runner_backend.cleanup_after_exit ();
               (match Eio.Promise.await_exn stdout_reader with
               | () -> ()
               | exception _ -> ());

@@ -109,6 +109,19 @@ let test_signal_reaches_running_process_group () =
   assert (process.await () = Close_event.Exited 130);
   assert (read_all process.stdout = "term")
 
+let test_signaled_process_reports_host_signal_number () =
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let process =
+    Posix_runner_backend.backend.spawn ~sw
+      ~command:(command "trap - TERM; while :; do sleep 10; done")
+  in
+  Eio.Time.sleep (Eio.Stdenv.clock env) 0.05;
+  assert (process.signal Sys.sigterm = Ok true);
+  assert (
+    process.await ()
+    = Close_event.Signaled (string_of_int (Sys.signal_to_int Sys.sigterm)))
+
 let rec wait_until_pid_gone clock pid deadline =
   match Unix.kill pid 0 with
   | exception Unix.Unix_error (Unix.ESRCH, _, _) -> ()
@@ -171,6 +184,7 @@ let () =
   test_child_stdin_is_blocking ();
   test_signal_after_exit_reports_not_running ();
   test_signal_reaches_running_process_group ();
+  test_signaled_process_reports_host_signal_number ();
   test_switch_release_kills_running_process ();
   test_cancelled_await_does_not_block_switch_release ();
   test_cancelled_stdout_reader_does_not_block_switch_release ()

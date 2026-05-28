@@ -227,6 +227,7 @@ let spawn ~sw ~command =
         stdout = (stdout_pipe.source :> Runner_backend.source);
         stderr = (stderr_pipe.source :> Runner_backend.source);
         signal;
+        cleanup_after_exit = (fun () -> ());
         await =
           (fun () ->
             let exit_code =
