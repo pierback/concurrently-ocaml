@@ -2139,6 +2139,7 @@ async function runNativeApiSmoke() {
   await runNativeApiControllerIpcSmoke();
   await runNativeApiGlobalRawCommandFalseSmoke();
   await runNativeApiCustomSpawnWithTimeout();
+  await runNativeApiTeardownCustomSpawnSmoke();
   await runNativeApiNumericNameSuccessSelectorSmoke();
   await runNativeApiNumericNameDefaultInputTargetSmoke();
 }
@@ -2488,12 +2489,21 @@ async function runNativeApiControllerIpcSmoke() {
   });
   const childSource =
     'process.on("message",(message)=>{process.send({pong:message.ping});});setTimeout(()=>process.exit(0),100);';
-  const ipcCommand = new api.Command({
-    index: 0,
-    name: "ipc",
-    command: `${process.execPath} -e ${JSON.stringify(childSource)}`,
-    ipc: 3,
-  });
+  const ipcCommand = new api.Command(
+    {
+      index: 0,
+      name: "ipc",
+      command: "ipc-child",
+      ipc: 3,
+    },
+    {
+      cwd: process.cwd(),
+      env: process.env,
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe", "ipc"],
+    },
+    (_command, options) => spawn(process.execPath, ["-e", childSource], options)
+  );
 
   const run = api.concurrently([nodeExitCommand(0)], {
     raw: true,
@@ -5124,6 +5134,49 @@ async function runNativeApiCustomSpawnSmoke() {
     "native JS API custom spawn hidden raw stdout"
   );
   console.log("compat ok: native JS API custom spawn");
+}
+
+async function runNativeApiTeardownCustomSpawnSmoke() {
+  const api = require(resolve("index.js"));
+  const calls = [];
+  let output = "";
+  const sink = new Writable({
+    write(chunk, _encoding, callback) {
+      output += chunk.toString();
+      callback();
+    },
+  });
+
+  const run = api.concurrently([nodePrintCommand("main")], {
+    outputStream: sink,
+    prefixColors: false,
+    spawn(command, options) {
+      calls.push(command);
+      return spawn(command, [], options);
+    },
+    teardown: [nodePrintCommand("teardown")],
+  });
+  const events = await run.result;
+
+  assertEqual(events.length, 1, "native JS API custom spawn teardown event count");
+  assertEqual(events[0].exitCode, 0, "native JS API custom spawn teardown exit code");
+  assertEqual(calls.length, 2, "native JS API custom spawn teardown call count");
+  if (!output.includes("[0] main")) {
+    throw new Error(
+      `native JS API custom spawn teardown dropped main output: ${JSON.stringify(output)}`
+    );
+  }
+  if (!output.includes("Running teardown command")) {
+    throw new Error(
+      `native JS API custom spawn teardown missed start log: ${JSON.stringify(output)}`
+    );
+  }
+  if (!output.includes("teardown")) {
+    throw new Error(
+      `native JS API custom spawn teardown missed raw output: ${JSON.stringify(output)}`
+    );
+  }
+  console.log("compat ok: native JS API custom spawn teardown");
 }
 
 async function runNativeApiNumericNameSuccessSelectorSmoke() {

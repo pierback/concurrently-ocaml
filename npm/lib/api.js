@@ -577,9 +577,6 @@ function assertNativeLogger(logger) {
 }
 
 function runSpawnApi(commands, onFinishCallbacks, options) {
-  if (arrayOption(options.teardown).length > 0) {
-    throw new NativeApiUnsupportedError("options.teardown with options.spawn");
-  }
   const output = spawnApiOutput(spawnApiOutputSink(options));
   const closeEvents = [];
   const hiddenPositions = new Set(hiddenCommands(commands, options));
@@ -633,17 +630,26 @@ function runSpawnApi(commands, onFinishCallbacks, options) {
       signals.finish();
       input.finish();
       spawnApiFlushGroupedOutput(outputState, output);
-      spawnApiWriteTimings(closeEvents, options, output);
-      output.finish().then(
-        () => {
-          if (closeEventsSucceeded(closeEvents, options.successCondition)) {
-            resolve(closeEvents);
-          } else {
-            reject(closeEvents);
+      spawnApiRunTeardown(options, outputState, output)
+        .then(() => {
+          spawnApiWriteTimings(closeEvents, options, output);
+          return output.finish();
+        })
+        .then(
+          () => {
+            if (closeEventsSucceeded(closeEvents, options.successCondition)) {
+              resolve(closeEvents);
+            } else {
+              reject(closeEvents);
+            }
+          },
+          (error) => {
+            output.finish().then(
+              () => reject(error),
+              () => reject(error)
+            );
           }
-        },
-        (error) => reject(error)
-      );
+        );
     };
     scheduler.settle = settle;
     const startNext = () => {
@@ -835,9 +841,10 @@ function subscribeSpawnApiCommand(command, state) {
       }
     });
   });
-  command.spawn = options.spawn ?? spawnApiDefaultSpawn;
-  command.spawnOpts = spawnApiOptions(command, options, hidden);
-  command.killProcess = (signal) => spawnApiKillProcess(command, options, signal);
+  command.spawn = command.spawn ?? options.spawn ?? spawnApiDefaultSpawn;
+  command.spawnOpts = command.spawnOpts ?? spawnApiOptions(command, options, hidden);
+  command.killProcess =
+    command.killProcess ?? ((signal) => spawnApiKillProcess(command, options, signal));
 }
 
 function spawnApiOutputSink(options) {
@@ -2123,6 +2130,20 @@ function spawnApiOptions(command, options, hidden) {
   };
 }
 
+function spawnApiTeardownOptions(options) {
+  const output = apiCapturesOutput(options) ? "pipe" : "inherit";
+  return {
+    cwd: invocationCwd(options),
+    env: {
+      ...process.env,
+      ...normalizeEnv(options.env),
+    },
+    detached: process.platform !== "win32",
+    shell: true,
+    stdio: ["inherit", output, output],
+  };
+}
+
 function spawnApiDefaultSpawn(command, options) {
   const { shell: _shell, ...spawnOptions } = options;
   if (process.platform === "win32") {
@@ -2132,6 +2153,71 @@ function spawnApiDefaultSpawn(command, options) {
     });
   }
   return spawnChildProcess("/bin/sh", ["-c", command], spawnOptions);
+}
+
+function spawnApiRunTeardown(options, outputState, output) {
+  const teardownCommands = arrayOption(options.teardown);
+  if (teardownCommands.length === 0) {
+    return Promise.resolve();
+  }
+  return teardownCommands.reduce(
+    (previous, command) =>
+      previous.then((shouldContinue) =>
+        shouldContinue
+          ? spawnApiRunTeardownCommand(command, options, outputState, output)
+          : false
+      ),
+    Promise.resolve(true)
+  );
+}
+
+function spawnApiRunTeardownCommand(command, options, outputState, output) {
+  return new Promise((resolve, reject) => {
+    spawnApiLogGlobalEvent(
+      `Running teardown command "${command}"`,
+      options,
+      outputState,
+      output
+    );
+    let child;
+    try {
+      child = (options.spawn ?? spawnApiDefaultSpawn)(
+        command,
+        spawnApiTeardownOptions(options)
+      );
+    } catch (error) {
+      spawnApiLogTeardownError(command, error, options, outputState, output);
+      reject(error);
+      return;
+    }
+    child.stdout?.on?.("data", (chunk) => output.write(chunk));
+    child.stderr?.on?.("data", (chunk) => output.write(chunk));
+    child.once?.("error", (error) => {
+      spawnApiLogTeardownError(command, error, options, outputState, output);
+      reject(error);
+    });
+    child.once?.("close", (exitCode, signal) => {
+      const code = exitCode ?? signal;
+      spawnApiLogGlobalEvent(
+        `Teardown command "${command}" exited with code ${code}`,
+        options,
+        outputState,
+        output
+      );
+      resolve(signal !== "SIGINT");
+    });
+  });
+}
+
+function spawnApiLogTeardownError(command, error, options, outputState, output) {
+  const errorText = String(error instanceof Error ? error.stack || error : error);
+  spawnApiLogGlobalEvent(
+    `Teardown command "${command}" errored:`,
+    options,
+    outputState,
+    output
+  );
+  spawnApiLogGlobalEvent(errorText, options, outputState, output);
 }
 
 function spawnApiForwardsInput(options) {
