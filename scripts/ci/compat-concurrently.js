@@ -3619,14 +3619,12 @@ async function runNativeApiCustomSpawnSmoke() {
   let startupThrowPid;
   try {
     const startupThrowReady = resolve(startupThrowRoot, "ready");
+    const startupThrowSource = `process.on('SIGTERM',()=>{}); require('node:fs').writeFileSync(${JSON.stringify(
+      startupThrowReady
+    )}, '1'); setInterval(()=>{},1000)`;
     const startupThrowRun = api.concurrently(
       [
-        "node -e " +
-          JSON.stringify(
-            `process.on('SIGTERM',()=>{}); require('node:fs').writeFileSync(${JSON.stringify(
-              startupThrowReady
-            )}, '1'); setInterval(()=>{},1000)`
-          ),
+        "startup-child",
         "throw-on-start",
       ],
       {
@@ -3637,7 +3635,10 @@ async function runNativeApiCustomSpawnSmoke() {
           if (command === "throw-on-start") {
             throw new Error("startup-spawn-boom");
           }
-          const child = spawn(command, [], options);
+          const child = spawn(process.execPath, ["-e", startupThrowSource], {
+            ...options,
+            shell: false,
+          });
           startupThrowPid = child.pid;
           const startedAt = Date.now();
           while (!existsSync(startupThrowReady) && Date.now() - startedAt < 1000) {
