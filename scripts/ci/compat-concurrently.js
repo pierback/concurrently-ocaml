@@ -1656,7 +1656,7 @@ const posixCases = [
       "--kill-timeout",
       "-1",
       "-k",
-      killTimeoutFixture.trapCommand("negative-raw"),
+      killTimeoutFixture.finiteTrapCommand("negative-raw"),
       killTimeoutFixture.successCommand("negative-raw"),
     ],
     normalizeStderr: normalizeNodeTimerWarningPid,
