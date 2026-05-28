@@ -394,7 +394,11 @@ function concurrently(commandInputs, options = {}) {
       result: runOnFinishCallbacks(Promise.resolve([]), controlled.onFinishCallbacks),
     };
   }
-  if (options.spawn !== undefined || commandsNeedSpawnApi(controlledCommands)) {
+  if (
+    options.spawn !== undefined ||
+    commandsNeedSpawnApi(controlledCommands) ||
+    (options.kill !== undefined && nativeKillPolicyMayStopCommands(options))
+  ) {
     return runSpawnApi(controlledCommands, controlled.onFinishCallbacks, options);
   }
   const eventDir = mkdtempSync(join(tmpdir(), "concurrently-ml-api-"));
@@ -544,11 +548,6 @@ function assertNativeOptions(options) {
   }
   if (options.kill !== undefined && typeof options.kill !== "function") {
     throw new Error("options.kill must be a function");
-  }
-  if (options.kill !== undefined && nativeKillPolicyMayStopCommands(options)) {
-    throw new NativeApiUnsupportedError(
-      "options.kill with options.killOthers/killOthersOn"
-    );
   }
 }
 
