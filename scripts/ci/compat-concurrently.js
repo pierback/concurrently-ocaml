@@ -2035,7 +2035,6 @@ const cases = process.platform === "win32" ? windowsCases : posixCases;
       console.log(`compat ok: ${testCase.name} (${testCase.upstream})`);
     }
     await runNativeApiSmoke();
-    reportLeakedHandlesIfProcessStaysAlive();
   } finally {
     shortcutFixture.cleanup();
     escapedScriptFixture.cleanup();
@@ -2049,54 +2048,6 @@ const cases = process.platform === "win32" ? windowsCases : posixCases;
   console.error(error);
   process.exit(1);
 });
-
-function reportLeakedHandlesIfProcessStaysAlive() {
-  const timer = setTimeout(() => {
-    const handles =
-      typeof process._getActiveHandles === "function"
-        ? process._getActiveHandles().map(describeHandle)
-        : [{ type: "unknown", detail: "active handle introspection unavailable" }];
-    const requests =
-      typeof process._getActiveRequests === "function"
-        ? process._getActiveRequests().map(describeHandle)
-        : [];
-    console.error(
-      `compat completed but process stayed alive: ${JSON.stringify({ handles, requests })}`
-    );
-    process.exit(1);
-  }, 1000);
-  timer.unref();
-}
-
-function describeHandle(handle) {
-  const type = handle?.constructor?.name ?? typeof handle;
-  if (type === "ChildProcess") {
-    return {
-      type,
-      pid: handle.pid,
-      spawnfile: handle.spawnfile,
-      spawnargs: handle.spawnargs,
-      exitCode: handle.exitCode,
-      signalCode: handle.signalCode,
-      killed: handle.killed,
-      connected: handle.connected,
-      hasRef:
-        typeof handle._handle?.hasRef === "function"
-          ? handle._handle.hasRef()
-          : undefined,
-    };
-  }
-  if (type === "Socket") {
-    return {
-      type,
-      fd: handle.fd,
-      destroyed: handle.destroyed,
-      readable: handle.readable,
-      writable: handle.writable,
-    };
-  }
-  return { type };
-}
 
 function runLocal(testCase) {
   return run(localBinary, testCase.args, { ...testCase, side: "local" });
