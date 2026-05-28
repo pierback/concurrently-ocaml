@@ -3459,6 +3459,7 @@ async function runNativeApiCustomSpawnSmoke() {
   }
 
   nativeApiCustomSpawnProgress("restart policy");
+  nativeApiCustomSpawnProgress("restart policy marker restart");
   const restartRoot = mkdtempSync(resolve(tmpdir(), "concurrently-ml-spawn-restart-"));
   try {
     const restartMarker = resolve(restartRoot, "marker");
@@ -3511,6 +3512,7 @@ async function runNativeApiCustomSpawnSmoke() {
   } finally {
     rmSync(restartRoot, { recursive: true, force: true });
   }
+  nativeApiCustomSpawnProgress("restart policy exponential delay");
   const exponentialStartedAt = Date.now();
   let exponentialCalls = 0;
   const exponentialEvents = await api.concurrently(
@@ -3539,6 +3541,7 @@ async function runNativeApiCustomSpawnSmoke() {
     throw new Error("native JS API custom spawn exponential restart did not delay");
   }
 
+  nativeApiCustomSpawnProgress("restart policy restart throw");
   let restartThrowPid;
   let restartThrowCalls = 0;
   const restartThrowRun = api.concurrently(
@@ -3581,6 +3584,7 @@ async function runNativeApiCustomSpawnSmoke() {
     }
   }
 
+  nativeApiCustomSpawnProgress("restart policy startup throw");
   const startupThrowRoot = mkdtempSync(
     resolve(tmpdir(), "concurrently-ml-spawn-startup-throw-")
   );
