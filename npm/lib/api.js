@@ -119,6 +119,7 @@ class Command {
     this.stdin = undefined;
     this.killSignal = undefined;
     this.killExitSignal = undefined;
+    this.killTreePids = [];
     this.killProcess = undefined;
     this.killBeforePid = false;
     this.startedAt = undefined;
@@ -1928,6 +1929,7 @@ function spawnApiResetCommand(command) {
   command.killed = false;
   command.killSignal = undefined;
   command.killExitSignal = undefined;
+  command.killTreePids = [];
   command.killBeforePid = false;
   command.pid = undefined;
   command.process = undefined;
@@ -2063,11 +2065,16 @@ function spawnApiKillProcess(command, options, signal) {
     spawnApiKillTree(command.pid, "SIGKILL", true);
     return "SIGKILL";
   }
-  spawnApiKillTree(command.pid, signal);
+  command.killTreePids = spawnApiKillTree(
+    command.pid,
+    signal,
+    false,
+    command.killTreePids
+  );
   return true;
 }
 
-function spawnApiKillTree(pid, signal, force = false) {
+function spawnApiKillTree(pid, signal, force = false, knownDescendants = []) {
   const killSignal = signal ?? "SIGTERM";
   if (process.platform === "win32") {
     spawnApiValidateKillSignal(killSignal);
@@ -2083,10 +2090,14 @@ function spawnApiKillTree(pid, signal, force = false) {
     child.unref();
     return;
   }
-  for (const childPid of spawnApiDescendantPids(pid)) {
+  const childPids = [
+    ...new Set([...spawnApiDescendantPids(pid), ...knownDescendants]),
+  ].filter((childPid) => childPid !== pid);
+  for (const childPid of childPids) {
     spawnApiKillPid(childPid, killSignal);
   }
   spawnApiKillPid(pid, killSignal);
+  return childPids;
 }
 
 function spawnApiValidateKillSignal(signal) {
