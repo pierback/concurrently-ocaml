@@ -13,10 +13,11 @@ type process =
   ; signal : int -> (bool, string) result
   (** [signal n] returns [Ok true] when the signal was sent and [Ok false]
       when the process has already exited. *)
-  (** [await] returns the primary process status. Backends must make inherited
-      stdout/stderr handles drain promptly after this returns, including
-      cleaning up descendants that kept pipe handles open. *)
+  ; cleanup_after_exit : unit -> unit
+  (** [cleanup_after_exit ()] reclaims backend-owned descendants after the root
+      process exits without emitting another logical signal result. *)
   ; await : unit -> Close_event.exit_status
+  (** [await] returns the primary process status. *)
   }
 
 type t =
