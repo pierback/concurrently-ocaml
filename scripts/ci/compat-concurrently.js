@@ -4705,43 +4705,68 @@ async function runNativeApiCustomSpawnSmoke() {
     `native JS API custom spawn killTimeout timer kept process alive: ${killTimeoutBackstopRun.stderr || killTimeoutBackstopRun.error}`
   );
 
-  nativeApiCustomSpawnProgress("kill timeout signal backstop");
-  const signalKillTimeoutCode = `
-    const { Writable } = require("node:stream");
-    const { spawn } = require("node:child_process");
-    const api = require(${JSON.stringify(resolve("index.js"))});
-    const sink = new Writable({ write(_chunk, _encoding, callback) { callback(); } });
-    api.concurrently([${JSON.stringify("node -e \"process.on('SIGTERM',()=>{});setInterval(()=>{},1000)\"")}], {
-      killTimeout: 100,
-      outputStream: sink,
-      spawn(command, options) {
-        return spawn(command, [], options);
-      },
-    }).result.catch(() => {}).then(() => process.stdout.write("done"));
-    const sendSelfSigterm = () => {
-      if (process.platform === "win32") {
-        process.emit("SIGTERM", "SIGTERM");
-        return;
-      }
-      process.kill(process.pid, "SIGTERM");
-    };
-    setTimeout(sendSelfSigterm, 100);
-  `;
-  const signalKillTimeout = spawnSync(
-    process.execPath,
-    ["-e", signalKillTimeoutCode],
-    { cwd: resolve("."), encoding: "utf8", killSignal: "SIGKILL", timeout: 1200 }
+  const signalKillTimeoutBackstopRoot = mkdtempSync(
+    resolve(tmpdir(), "concurrently-ml-spawn-signal-kill-backstop-")
   );
-  assertEqual(
-    signalKillTimeout.status,
-    0,
-    `native JS API custom spawn signal killTimeout hung: ${signalKillTimeout.stderr || signalKillTimeout.error}`
-  );
-  assertEqual(
-    signalKillTimeout.stdout,
-    "done",
-    "native JS API custom spawn signal killTimeout completion"
-  );
+  try {
+    nativeApiCustomSpawnProgress("kill timeout signal backstop");
+    const signalKillTimeoutBackstopMarker = resolve(
+      signalKillTimeoutBackstopRoot,
+      "marker"
+    );
+    const signalKillTimeoutBackstopCommand =
+      "node -e " +
+      JSON.stringify(
+        `const fs=require('node:fs');fs.writeFileSync(${JSON.stringify(
+          signalKillTimeoutBackstopMarker
+        )},'1');process.on('SIGTERM',()=>{});setInterval(()=>{},1000)`
+      );
+    const signalKillTimeoutCode = `
+      const { Writable } = require("node:stream");
+      const { spawn } = require("node:child_process");
+      const api = require(${JSON.stringify(resolve("index.js"))});
+      const sink = new Writable({ write(_chunk, _encoding, callback) { callback(); } });
+      api.concurrently([${JSON.stringify(signalKillTimeoutBackstopCommand)}], {
+        killTimeout: 100,
+        outputStream: sink,
+        spawn(command, options) {
+          return spawn(command, [], options);
+        },
+      }).result.catch(() => {}).then(() => process.stdout.write("done"));
+      const sendSelfSigterm = () => {
+        if (process.platform === "win32") {
+          process.emit("SIGTERM", "SIGTERM");
+          return;
+        }
+        process.kill(process.pid, "SIGTERM");
+      };
+      const signalWhenReady = () => {
+        if (require("node:fs").existsSync(${JSON.stringify(signalKillTimeoutBackstopMarker)})) {
+          sendSelfSigterm();
+          return;
+        }
+        setTimeout(signalWhenReady, 25);
+      };
+      signalWhenReady();
+    `;
+    const signalKillTimeout = spawnSync(
+      process.execPath,
+      ["-e", signalKillTimeoutCode],
+      { cwd: resolve("."), encoding: "utf8", killSignal: "SIGKILL", timeout: 2500 }
+    );
+    assertEqual(
+      signalKillTimeout.status,
+      0,
+      `native JS API custom spawn signal killTimeout hung: ${signalKillTimeout.stderr || signalKillTimeout.error}`
+    );
+    assertEqual(
+      signalKillTimeout.stdout,
+      "done",
+      "native JS API custom spawn signal killTimeout completion"
+    );
+  } finally {
+    rmSync(signalKillTimeoutBackstopRoot, { recursive: true, force: true });
+  }
 
   nativeApiCustomSpawnProgress("signal restart");
   const signalRestartRoot = mkdtempSync(
