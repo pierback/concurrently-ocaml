@@ -59,8 +59,7 @@ try {
   assertRuntimeExports(projectDir, "commonjs");
   assertRuntimeExports(projectDir, "module");
   assertTypescriptConsumer(projectDir);
-  assertIpcRuntime(projectDir, publicPackageName);
-  assertIpcRuntime(projectDir, upstreamPackageName);
+  assertIpcRuntime(projectDir);
 
   console.log(`api surface audit ok: concurrently@${upstreamVersion}`);
 } finally {
@@ -232,7 +231,40 @@ concurrently(["echo original"], controllerOptions);
   }
 }
 
-function assertIpcRuntime(projectDir, packageName) {
+function assertIpcRuntime(projectDir) {
+  const upstreamDefault = inspectIpcRuntime(
+    projectDir,
+    upstreamPackageName,
+    "default shell spawn"
+  );
+  const localDefault = inspectIpcRuntime(
+    projectDir,
+    publicPackageName,
+    "default shell spawn"
+  );
+  if (localDefault.ok !== upstreamDefault.ok) {
+    throw new Error(
+      `default shell IPC parity mismatch on ${process.platform}\nlocal:\n${formatIpcResult(
+        localDefault
+      )}\nupstream:\n${formatIpcResult(upstreamDefault)}`
+    );
+  }
+  if (upstreamDefault.ok) {
+    assertIpcResult(localDefault, `${publicPackageName} default shell IPC`);
+  }
+
+  assertIpcResult(
+    inspectIpcRuntime(projectDir, publicPackageName, "custom spawn"),
+    `${publicPackageName} custom spawn IPC`
+  );
+  assertIpcResult(
+    inspectIpcRuntime(projectDir, upstreamPackageName, "custom spawn"),
+    `${upstreamPackageName} custom spawn IPC`
+  );
+}
+
+function inspectIpcRuntime(projectDir, packageName, mode) {
+  const customSpawn = mode === "custom spawn";
   const childSource =
     'process.on("message",(message)=>{process.send({pong:message.ping});});setTimeout(()=>process.exit(0),100);';
   const result = spawnSync(
@@ -242,10 +274,36 @@ function assertIpcRuntime(projectDir, packageName) {
       `
       (async () => {
         const concurrently = require(${JSON.stringify(packageName)});
+        const runConcurrently = ${
+          customSpawn ? "concurrently.createConcurrently" : "concurrently"
+        };
+        if (typeof runConcurrently !== "function") {
+          throw new Error("missing concurrently entrypoint for ${mode}");
+        }
         const childSource = ${JSON.stringify(childSource)};
-        const run = concurrently(
-          [{ command: process.execPath + " -e " + JSON.stringify(childSource), ipc: 3 }],
-          { raw: true }
+        const command = ${
+          customSpawn
+            ? JSON.stringify("ipc-child")
+            : 'process.execPath + " -e " + JSON.stringify(childSource)'
+        };
+        const run = runConcurrently(
+          [{ command, ipc: 3 }],
+          {
+            raw: true,
+            ${
+              customSpawn
+                ? `
+            spawn(_command, options) {
+              const { spawn } = require("node:child_process");
+              return spawn(process.execPath, ["-e", childSource], {
+                ...options,
+                shell: false,
+              });
+            },
+            `
+                : ""
+            }
+          }
         );
         const incoming = [];
         run.commands[0].messages.incoming.subscribe({
@@ -269,14 +327,29 @@ function assertIpcRuntime(projectDir, packageName) {
     ],
     { cwd: projectDir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }
   );
+  return {
+    ok: !result.error && result.status === 0,
+    mode,
+    packageName,
+    error: result.error,
+    status: result.status,
+    stdout: result.stdout,
+    stderr: result.stderr,
+  };
+}
+
+function assertIpcResult(result, label) {
+  if (result.ok) {
+    return;
+  }
   if (result.error) {
     throw result.error;
   }
-  if (result.status !== 0) {
-    throw new Error(
-      `${packageName} IPC runtime audit exited ${result.status}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`
-    );
-  }
+  throw new Error(`${label} runtime audit failed\n${formatIpcResult(result)}`);
+}
+
+function formatIpcResult(result) {
+  return `${result.packageName} ${result.mode} exited ${result.status}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`;
 }
 
 function assertBinSurface(localBin, upstreamBin, localPackageDir) {
