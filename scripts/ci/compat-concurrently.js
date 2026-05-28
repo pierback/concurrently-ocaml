@@ -3629,7 +3629,7 @@ async function runNativeApiCustomSpawnSmoke() {
     );
   } finally {
     if (processRunning(restartThrowPid)) {
-      process.kill(restartThrowPid, "SIGKILL");
+      forceKillProcessForTest(restartThrowPid);
     }
   }
 
@@ -3680,7 +3680,7 @@ async function runNativeApiCustomSpawnSmoke() {
     );
   } finally {
     if (processRunning(startupThrowPid)) {
-      process.kill(startupThrowPid, "SIGKILL");
+      forceKillProcessForTest(startupThrowPid);
     }
     rmSync(startupThrowRoot, { recursive: true, force: true });
   }
@@ -3774,7 +3774,7 @@ async function runNativeApiCustomSpawnSmoke() {
     );
   } finally {
     if (processRunning(invalidKillSignalPid)) {
-      process.kill(invalidKillSignalPid, "SIGKILL");
+      forceKillProcessForTest(invalidKillSignalPid);
     }
   }
 
@@ -3926,7 +3926,7 @@ async function runNativeApiCustomSpawnSmoke() {
     );
   } finally {
     if (processRunning(throwingSpawnPid)) {
-      process.kill(throwingSpawnPid, "SIGKILL");
+      forceKillProcessForTest(throwingSpawnPid);
     }
   }
 
@@ -4903,10 +4903,7 @@ async function runNativeApiCustomSpawnSmoke() {
         const childPid = Number(readFileSync(pidFile, "utf8"));
         const childRunning = isRunning(childPid);
         if (childRunning) {
-          try {
-            process.kill(childPid, "SIGKILL");
-          } catch (_error) {
-          }
+          forceKillProcessForTest(childPid);
         }
         process.exit(childRunning ? 1 : 0);
       }, 1200);
@@ -5241,6 +5238,20 @@ function processRunning(pid) {
     return false;
   }
   return !result.stdout.trim().startsWith("Z");
+}
+
+function forceKillProcessForTest(pid) {
+  if (!Number.isInteger(pid)) {
+    return;
+  }
+  if (process.platform === "win32") {
+    spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore" });
+    return;
+  }
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch (_error) {
+  }
 }
 
 function runNpm(testCase) {
