@@ -3171,6 +3171,7 @@ function attachInput(child, options) {
     if (child.stdin && typeof inputStream.unpipe === "function") {
       inputStream.unpipe(child.stdin);
     }
+    child.stdin?.end?.();
     if (options.pauseInputStreamOnFinish !== false && typeof inputStream.pause === "function") {
       inputStream.pause();
     }
