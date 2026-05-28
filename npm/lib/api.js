@@ -394,7 +394,7 @@ function concurrently(commandInputs, options = {}) {
       result: runOnFinishCallbacks(Promise.resolve([]), controlled.onFinishCallbacks),
     };
   }
-  if (options.spawn !== undefined) {
+  if (options.spawn !== undefined || commandsNeedSpawnApi(controlledCommands)) {
     return runSpawnApi(controlledCommands, controlled.onFinishCallbacks, options);
   }
   const eventDir = mkdtempSync(join(tmpdir(), "concurrently-ml-api-"));
@@ -705,6 +705,10 @@ function runSpawnApi(commands, onFinishCallbacks, options) {
   };
 }
 
+function commandsNeedSpawnApi(commands) {
+  return commands.some((command) => command.ipc != null);
+}
+
 function subscribeSpawnApiCommand(command, state) {
   const {
     closeEvents,
@@ -831,7 +835,7 @@ function subscribeSpawnApiCommand(command, state) {
       }
     });
   });
-  command.spawn = options.spawn;
+  command.spawn = options.spawn ?? spawnApiDefaultSpawn;
   command.spawnOpts = spawnApiOptions(command, options, hidden);
   command.killProcess = (signal) => spawnApiKillProcess(command, options, signal);
 }
@@ -2100,6 +2104,12 @@ function spawnApiOptions(command, options, hidden) {
     : raw && !apiCapturesOutput(options)
       ? [stdin, "inherit", "inherit"]
       : [stdin, "pipe", "pipe"];
+  if (command.ipc != null) {
+    if (!(command.ipc > 2)) {
+      throw new Error("[concurrently] the IPC channel number should be > 2");
+    }
+    stdio[command.ipc] = "ipc";
+  }
   return {
     cwd: commandCwd(command) ?? invocationCwd(options),
     env: {
@@ -2111,6 +2121,17 @@ function spawnApiOptions(command, options, hidden) {
     shell: true,
     stdio,
   };
+}
+
+function spawnApiDefaultSpawn(command, options) {
+  const { shell: _shell, ...spawnOptions } = options;
+  if (process.platform === "win32") {
+    return spawnChildProcess("cmd.exe", ["/s", "/c", `"${command}"`], {
+      ...spawnOptions,
+      windowsVerbatimArguments: true,
+    });
+  }
+  return spawnChildProcess("/bin/sh", ["-c", command], spawnOptions);
 }
 
 function spawnApiForwardsInput(options) {
@@ -2381,9 +2402,6 @@ function normalizeCommands(commandInputs) {
     if (!input || typeof input !== "object" || typeof input.command !== "string") {
       throw new Error(`command ${index} must be a string or command object`);
     }
-    if (input.ipc) {
-      throw new NativeApiUnsupportedError("command.ipc");
-    }
     return new Command({
       index,
       name: input.name ?? "",
@@ -2461,9 +2479,6 @@ function assertUniqueCommandIndexes(commands) {
   for (const command of commands) {
     if (!(command instanceof Command)) {
       throw new Error("controllers must return Command objects");
-    }
-    if (command.ipc != null) {
-      throw new NativeApiUnsupportedError("command.ipc");
     }
     if (!Number.isInteger(command.index)) {
       throw new Error("controllers must return commands with integer indexes");

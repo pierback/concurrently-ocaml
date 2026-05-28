@@ -59,6 +59,8 @@ try {
   assertRuntimeExports(projectDir, "commonjs");
   assertRuntimeExports(projectDir, "module");
   assertTypescriptConsumer(projectDir);
+  assertIpcRuntime(projectDir, publicPackageName);
+  assertIpcRuntime(projectDir, upstreamPackageName);
 
   console.log(`api surface audit ok: concurrently@${upstreamVersion}`);
 } finally {
@@ -226,6 +228,53 @@ concurrently(["echo original"], controllerOptions);
   if (result.status !== 0) {
     throw new Error(
       `TypeScript consumer audit exited ${result.status}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`
+    );
+  }
+}
+
+function assertIpcRuntime(projectDir, packageName) {
+  const childSource =
+    'process.on("message",(message)=>{process.send({pong:message.ping});});setTimeout(()=>process.exit(0),100);';
+  const result = spawnSync(
+    process.execPath,
+    [
+      "-e",
+      `
+      (async () => {
+        const concurrently = require(${JSON.stringify(packageName)});
+        const childSource = ${JSON.stringify(childSource)};
+        const run = concurrently(
+          [{ command: process.execPath + " -e " + JSON.stringify(childSource), ipc: 3 }],
+          { raw: true }
+        );
+        const incoming = [];
+        run.commands[0].messages.incoming.subscribe({
+          next(event) {
+            incoming.push(event.message);
+          },
+        });
+        await run.commands[0].send({ ping: 7 });
+        const events = await run.result;
+        if (events.length !== 1 || events[0].exitCode !== 0) {
+          throw new Error("unexpected IPC close events: " + JSON.stringify(events));
+        }
+        if (!incoming.some((message) => message && message.pong === 7)) {
+          throw new Error("missing IPC response: " + JSON.stringify(incoming));
+        }
+      })().catch((error) => {
+        console.error(error);
+        process.exitCode = 1;
+      });
+      `,
+    ],
+    { cwd: projectDir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }
+  );
+  if (result.error) {
+    throw result.error;
+  }
+  if (result.status !== 0) {
+    throw new Error(
+      `${packageName} IPC runtime audit exited ${result.status}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`
     );
   }
 }
