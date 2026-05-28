@@ -41,8 +41,12 @@ const forceBasicColorEnv = { COLORTERM: null, NO_COLOR: null, TERM: "dumb", FORC
 const forceAnsi256ColorEnv = { COLORTERM: null, NO_COLOR: null, TERM: "xterm-256color", FORCE_COLOR: "2" };
 const forceAnsi256SuffixColorEnv = { COLORTERM: null, NO_COLOR: null, TERM: "xterm-256color", FORCE_COLOR: "2foo" };
 const forceTruecolorEnv = { COLORTERM: "truecolor", NO_COLOR: null, TERM: "xterm-256color", FORCE_COLOR: "3" };
+const forceGithubActionsColorEnv = { ...forceTruecolorEnv, CI: "true", GITHUB_ACTIONS: "true" };
+const forceGithubActionsDumbColorEnv = { ...forceTruecolorEnv, TERM: "dumb", CI: "true", GITHUB_ACTIONS: "true" };
 const forceSpacedZeroColorEnv = { COLORTERM: null, NO_COLOR: null, TERM: "dumb", FORCE_COLOR: " 0" };
 const forceNanColorEnv = { COLORTERM: null, NO_COLOR: null, TERM: "dumb", FORCE_COLOR: "NaN" };
+const forceGithubActionsNanColorEnv = { ...forceNanColorEnv, TERM: "xterm-256color", CI: "true", GITHUB_ACTIONS: "true" };
+const forceGithubActionsNegativeColorEnv = { ...forceNanColorEnv, TERM: "xterm-256color", FORCE_COLOR: "-1", CI: "true", GITHUB_ACTIONS: "true" };
 const shortcutFixture = createShortcutFixture();
 const escapedScriptFixture = createEscapedScriptFixture();
 const literalWildcardFixture = createLiteralWildcardFixture();
@@ -576,6 +580,30 @@ const posixCases = [
     upstream: "dist/src/logger.js chalk.hex",
     args: ["-c", "#336699", "printf one"],
     env: forceTruecolorEnv,
+  },
+  {
+    name: "colored hex prefix github actions color level",
+    upstream: "supports-color GitHub Actions color level",
+    args: ["-c", "#336699", "printf one"],
+    env: forceGithubActionsColorEnv,
+  },
+  {
+    name: "colored hex prefix github actions dumb terminal color level",
+    upstream: "supports-color TERM=dumb before GitHub Actions CI level",
+    args: ["-c", "#336699", "printf one"],
+    env: forceGithubActionsDumbColorEnv,
+  },
+  {
+    name: "colored hex prefix github actions invalid force color",
+    upstream: "supports-color invalid FORCE_COLOR before GitHub Actions CI level",
+    args: ["-c", "#336699", "printf one"],
+    env: forceGithubActionsNanColorEnv,
+  },
+  {
+    name: "colored hex prefix github actions negative force color",
+    upstream: "supports-color negative FORCE_COLOR before GitHub Actions CI level",
+    args: ["-c", "#336699", "printf one"],
+    env: forceGithubActionsNegativeColorEnv,
   },
   {
     name: "colored hex prefix basic color level",
