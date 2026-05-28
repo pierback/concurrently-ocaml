@@ -20,6 +20,7 @@ const { runNative } = require("./native");
 const SHORTCUT_RUNNERS = new Set(["npm", "yarn", "pnpm", "bun", "node", "deno"]);
 const SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"];
 const SIGNAL_VALIDATION_PID = 2147483647;
+const KILLED_COMMAND_CLEANUP_RETRY_DELAYS_MS = [25, 100];
 const AUTO_PREFIX_COLORS = [
   "cyan",
   "yellow",
@@ -277,11 +278,15 @@ class Command {
   }
 
   cleanup() {
+    const child = this.process;
     for (const subscription of this.subscriptions) {
       subscription.unsubscribe();
     }
     this.subscriptions = [];
     this.messages.outgoing = new SimpleReplaySubject();
+    if (this.killed) {
+      spawnApiDestroyChildStreams(child);
+    }
     this.process = undefined;
     this.stdin = undefined;
   }
@@ -2008,6 +2013,37 @@ function spawnApiCleanupKilledCommand(command) {
     command.processGroupId,
     command.killTreeProcessGroupIds
   );
+  spawnApiScheduleKilledCommandCleanup(command);
+}
+
+function spawnApiScheduleKilledCommandCleanup(command) {
+  const pid = command.pid;
+  const processGroupId = command.processGroupId;
+  const killTreePids = command.killTreePids;
+  const killTreeProcessGroupIds = command.killTreeProcessGroupIds;
+  for (const delayMs of KILLED_COMMAND_CLEANUP_RETRY_DELAYS_MS) {
+    const cleanupTimer = setTimeout(() => {
+      try {
+        spawnApiKillTree(
+          pid,
+          "SIGKILL",
+          true,
+          killTreePids,
+          processGroupId,
+          killTreeProcessGroupIds
+        );
+      } catch (_error) {
+        // Cleanup retries run after the public close path; they must not crash the host.
+      }
+    }, delayMs);
+    cleanupTimer.unref?.();
+  }
+}
+
+function spawnApiDestroyChildStreams(child) {
+  child?.stdin?.destroy?.();
+  child?.stdout?.destroy?.();
+  child?.stderr?.destroy?.();
 }
 
 function spawnApiLogGlobalEvent(message, options, outputState, output) {
