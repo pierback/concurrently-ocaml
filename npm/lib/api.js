@@ -2710,7 +2710,7 @@ function eventWrapperCommand(
     "child.on('error',error=>{write({code:1,signal:null,error:error.message});process.exit(1)})",
     "child.on('exit',(code,signal)=>{write({code,signal});if(signal){process.exit(exitCode(signal))}else{process.exit(code??1)}})",
   ].join(";");
-  const runner = process.platform === "win32" ? "call " : "command ";
+  const runner = process.platform === "win32" ? "call " : "exec ";
   return `${runner}${shellArg(process.execPath)} -e ${shellArg(source)}`;
 }
 
