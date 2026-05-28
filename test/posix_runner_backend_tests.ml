@@ -28,6 +28,16 @@ let with_process command_text test =
   in
   test process
 
+let with_closed_stdin test =
+  let saved_stdin = Unix.dup Unix.stdin in
+  Fun.protect
+    ~finally:(fun () ->
+      Unix.dup2 saved_stdin Unix.stdin;
+      Unix.close saved_stdin)
+    (fun () ->
+      Unix.close Unix.stdin;
+      test ())
+
 let test_spawn_maps_cwd_env_stdout_stderr_and_exit () =
   Eio_main.run @@ fun _env ->
   Eio.Switch.run @@ fun sw ->
@@ -52,6 +62,33 @@ let test_stdin_write_and_close_reaches_child () =
   assert (read_all process.stdout = "hello\n");
   assert (read_all process.stderr = "")
 
+let test_stdin_survives_when_runtime_stdin_fd_is_reused () =
+  Eio_main.run @@ fun _env ->
+  with_closed_stdin @@ fun () ->
+  Eio.Switch.run @@ fun sw ->
+  let process =
+    Posix_runner_backend.backend.spawn ~sw ~command:(command "cat")
+  in
+  process.write_stdin "hello\n";
+  process.close_stdin ();
+  assert (process.await () = Close_event.Exited 0);
+  assert (read_all process.stdout = "hello\n");
+  assert (read_all process.stderr = "")
+
+let test_child_stdin_is_blocking () =
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  let process =
+    Posix_runner_backend.backend.spawn ~sw
+      ~command:(command "dd bs=5 count=1 2>/dev/null")
+  in
+  Eio.Time.sleep (Eio.Stdenv.clock env) 0.2;
+  process.write_stdin "hello";
+  process.close_stdin ();
+  assert (process.await () = Close_event.Exited 0);
+  assert (read_all process.stdout = "hello");
+  assert (read_all process.stderr = "")
+
 let test_signal_after_exit_reports_not_running () =
   with_process "printf done" @@ fun process ->
   assert (process.await () = Close_event.Exited 0);
@@ -72,8 +109,68 @@ let test_signal_reaches_running_process_group () =
   assert (process.await () = Close_event.Exited 130);
   assert (read_all process.stdout = "term")
 
+let rec wait_until_pid_gone clock pid deadline =
+  match Unix.kill pid 0 with
+  | exception Unix.Unix_error (Unix.ESRCH, _, _) -> ()
+  | exception exn -> raise exn
+  | () ->
+    if Eio.Time.now clock >= deadline then assert false;
+    Eio.Time.sleep clock 0.01;
+    wait_until_pid_gone clock pid deadline
+
+let test_switch_release_kills_running_process () =
+  Eio_main.run @@ fun env ->
+  let clock = Eio.Stdenv.clock env in
+  let pid = ref None in
+  Eio.Switch.run (fun sw ->
+      let process =
+        Posix_runner_backend.backend.spawn ~sw ~command:(command "sleep 10")
+      in
+      pid := Some (int_of_string process.process_id);
+      Eio.Time.sleep clock 0.05);
+  match !pid with
+  | None -> assert false
+  | Some pid -> wait_until_pid_gone clock pid (Eio.Time.now clock +. 1.0)
+
+let test_cancelled_await_does_not_block_switch_release () =
+  Eio_main.run @@ fun env ->
+  let clock = Eio.Stdenv.clock env in
+  Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+    match
+      Eio.Switch.run (fun sw ->
+        let process =
+          Posix_runner_backend.backend.spawn ~sw ~command:(command "sleep 10")
+        in
+        Eio.Fiber.fork ~sw (fun () -> ignore (process.await ()));
+        Eio.Time.sleep clock 0.05;
+        raise Exit)
+    with
+    | () -> assert false
+    | exception Exit -> ())
+
+let test_cancelled_stdout_reader_does_not_block_switch_release () =
+  Eio_main.run @@ fun env ->
+  let clock = Eio.Stdenv.clock env in
+  Eio.Time.with_timeout_exn clock 1.0 (fun () ->
+    match
+      Eio.Switch.run (fun sw ->
+        let process =
+          Posix_runner_backend.backend.spawn ~sw ~command:(command "sleep 10")
+        in
+        Eio.Fiber.fork ~sw (fun () -> ignore (read_all process.stdout));
+        Eio.Time.sleep clock 0.05;
+        raise Exit)
+    with
+    | () -> assert false
+    | exception Exit -> ())
+
 let () =
   test_spawn_maps_cwd_env_stdout_stderr_and_exit ();
   test_stdin_write_and_close_reaches_child ();
+  test_stdin_survives_when_runtime_stdin_fd_is_reused ();
+  test_child_stdin_is_blocking ();
   test_signal_after_exit_reports_not_running ();
-  test_signal_reaches_running_process_group ()
+  test_signal_reaches_running_process_group ();
+  test_switch_release_kills_running_process ();
+  test_cancelled_await_does_not_block_switch_release ();
+  test_cancelled_stdout_reader_does_not_block_switch_release ()

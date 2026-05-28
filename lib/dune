@@ -11,7 +11,7 @@
  (foreign_stubs
   (language c)
   (names posix_process_group_stubs))
- (libraries concurrentlyocaml eio eio.unix eio_posix unix))
+ (libraries concurrentlyocaml eio eio.unix threads unix))
 
 (library
  (name concurrentlyocaml_windows)
