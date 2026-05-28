@@ -4493,6 +4493,7 @@ async function runNativeApiCustomSpawnSmoke() {
   const closedStdinRun = spawnSync(process.execPath, ["-e", closedStdinCode], {
     cwd: resolve("."),
     encoding: "utf8",
+    killSignal: "SIGKILL",
     timeout: 2500,
   });
   assertEqual(
@@ -4641,6 +4642,7 @@ async function runNativeApiCustomSpawnSmoke() {
   }
 
   nativeApiCustomSpawnProgress("kill timeout");
+  nativeApiCustomSpawnProgress("kill timeout force kill");
   const killTimeoutRun = api.concurrently(
     [
       "kill-timeout-child",
@@ -4673,6 +4675,7 @@ async function runNativeApiCustomSpawnSmoke() {
     );
   }
 
+  nativeApiCustomSpawnProgress("kill timeout timer backstop");
   const killTimeoutBackstopCode = `
     const { Writable } = require("node:stream");
     const { spawn } = require("node:child_process");
@@ -4694,7 +4697,7 @@ async function runNativeApiCustomSpawnSmoke() {
   const killTimeoutBackstopRun = spawnSync(
     process.execPath,
     ["-e", killTimeoutBackstopCode],
-    { cwd: resolve("."), encoding: "utf8", timeout: 1200 }
+    { cwd: resolve("."), encoding: "utf8", killSignal: "SIGKILL", timeout: 1200 }
   );
   assertEqual(
     killTimeoutBackstopRun.status,
@@ -4702,6 +4705,7 @@ async function runNativeApiCustomSpawnSmoke() {
     `native JS API custom spawn killTimeout timer kept process alive: ${killTimeoutBackstopRun.stderr || killTimeoutBackstopRun.error}`
   );
 
+  nativeApiCustomSpawnProgress("kill timeout signal backstop");
   const signalKillTimeoutCode = `
     const { Writable } = require("node:stream");
     const { spawn } = require("node:child_process");
@@ -4726,7 +4730,7 @@ async function runNativeApiCustomSpawnSmoke() {
   const signalKillTimeout = spawnSync(
     process.execPath,
     ["-e", signalKillTimeoutCode],
-    { cwd: resolve("."), encoding: "utf8", timeout: 1200 }
+    { cwd: resolve("."), encoding: "utf8", killSignal: "SIGKILL", timeout: 1200 }
   );
   assertEqual(
     signalKillTimeout.status,
@@ -4785,6 +4789,7 @@ async function runNativeApiCustomSpawnSmoke() {
     const signalRestart = spawnSync(process.execPath, ["-e", signalRestartCode], {
       cwd: resolve("."),
       encoding: "utf8",
+      killSignal: "SIGKILL",
       timeout: 5000,
     });
     assertEqual(
@@ -4805,6 +4810,7 @@ async function runNativeApiCustomSpawnSmoke() {
     resolve(tmpdir(), "concurrently-ml-spawn-signal-kill-timeout-")
   );
   try {
+    nativeApiCustomSpawnProgress("signal kill timeout restart");
     const signalKillTimeoutMarker = resolve(signalKillTimeoutRoot, "marker");
     const signalKillTimeoutCommand =
       "node -e " +
@@ -4851,7 +4857,7 @@ async function runNativeApiCustomSpawnSmoke() {
     const signalKillTimeout = spawnSync(
       process.execPath,
       ["-e", signalKillTimeoutCode],
-      { cwd: resolve("."), encoding: "utf8", timeout: 2500 }
+      { cwd: resolve("."), encoding: "utf8", killSignal: "SIGKILL", timeout: 2500 }
     );
     assertEqual(
       signalKillTimeout.status,
@@ -4871,6 +4877,7 @@ async function runNativeApiCustomSpawnSmoke() {
     resolve(tmpdir(), "concurrently-ml-spawn-signal-")
   );
   try {
+    nativeApiCustomSpawnProgress("signal child cleanup");
     const signalChildPidFile = resolve(signalChildRoot, "child.pid");
     const signalChildCommand =
       "node -e " +
@@ -4928,6 +4935,7 @@ async function runNativeApiCustomSpawnSmoke() {
     const signalChild = spawnSync(process.execPath, ["-e", signalChildCode], {
       cwd: resolve("."),
       encoding: "utf8",
+      killSignal: "SIGKILL",
       timeout: 2500,
     });
     assertEqual(
@@ -4939,6 +4947,7 @@ async function runNativeApiCustomSpawnSmoke() {
     rmSync(signalChildRoot, { recursive: true, force: true });
   }
 
+  nativeApiCustomSpawnProgress("signal pending restart");
   const signalPendingRestartCode = `
     const { Writable } = require("node:stream");
     const { spawn } = require("node:child_process");
@@ -4964,7 +4973,7 @@ async function runNativeApiCustomSpawnSmoke() {
   const signalPendingRestart = spawnSync(
     process.execPath,
     ["-e", signalPendingRestartCode],
-    { cwd: resolve("."), encoding: "utf8", timeout: 1200 }
+    { cwd: resolve("."), encoding: "utf8", killSignal: "SIGKILL", timeout: 1200 }
   );
   assertEqual(
     signalPendingRestart.status,
@@ -4977,6 +4986,7 @@ async function runNativeApiCustomSpawnSmoke() {
     "native JS API custom spawn signal pending restart completion"
   );
 
+  nativeApiCustomSpawnProgress("restart timer backstop");
   const restartTimerBackstopCode = `
     const { Writable } = require("node:stream");
     const { spawn } = require("node:child_process");
@@ -5004,7 +5014,7 @@ async function runNativeApiCustomSpawnSmoke() {
   const restartTimerBackstopRun = spawnSync(
     process.execPath,
     ["-e", restartTimerBackstopCode],
-    { cwd: resolve("."), encoding: "utf8", timeout: 1200 }
+    { cwd: resolve("."), encoding: "utf8", killSignal: "SIGKILL", timeout: 1200 }
   );
   assertEqual(
     restartTimerBackstopRun.status,
