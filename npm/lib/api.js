@@ -116,6 +116,7 @@ class Command {
     this.exited = false;
     this.state = "stopped";
     this.pid = undefined;
+    this.processGroupId = undefined;
     this.stdin = undefined;
     this.killSignal = undefined;
     this.killExitSignal = undefined;
@@ -155,6 +156,7 @@ class Command {
     const child = this.spawn(this.command, this.spawnOpts);
     this.process = child;
     this.pid = child.pid;
+    this.processGroupId = spawnApiProcessGroupId(child.pid);
     this.changeState("started");
     const startDate = new Date();
     const highResStartTime = process.hrtime();
@@ -1933,6 +1935,7 @@ function spawnApiResetCommand(command) {
   command.killTreePids = [];
   command.killBeforePid = false;
   command.pid = undefined;
+  command.processGroupId = undefined;
   command.process = undefined;
   command.stdin = undefined;
   command.spawnApiCompleted = false;
@@ -1995,7 +1998,13 @@ function spawnApiCleanupKilledCommand(command) {
   ) {
     return;
   }
-  spawnApiKillTree(command.pid, "SIGKILL", true, command.killTreePids);
+  spawnApiKillTree(
+    command.pid,
+    "SIGKILL",
+    true,
+    command.killTreePids,
+    command.processGroupId
+  );
 }
 
 function spawnApiLogGlobalEvent(message, options, outputState, output) {
@@ -2082,12 +2091,19 @@ function spawnApiKillProcess(command, options, signal) {
     command.pid,
     signal,
     false,
-    command.killTreePids
+    command.killTreePids,
+    command.processGroupId
   );
   return true;
 }
 
-function spawnApiKillTree(pid, signal, force = false, knownDescendants = []) {
+function spawnApiKillTree(
+  pid,
+  signal,
+  force = false,
+  knownDescendants = [],
+  processGroupId = pid
+) {
   const killSignal = signal ?? "SIGTERM";
   if (process.platform === "win32") {
     spawnApiValidateKillSignal(killSignal);
@@ -2109,7 +2125,7 @@ function spawnApiKillTree(pid, signal, force = false, knownDescendants = []) {
   for (const childPid of childPids) {
     spawnApiKillPid(childPid, killSignal);
   }
-  spawnApiKillProcessGroup(pid, killSignal);
+  spawnApiKillProcessGroup(processGroupId, killSignal);
   spawnApiKillPid(pid, killSignal);
   return childPids;
 }
@@ -2137,6 +2153,9 @@ function spawnApiKillPid(pid, signal) {
 }
 
 function spawnApiKillProcessGroup(pid, signal) {
+  if (!Number.isInteger(pid)) {
+    return;
+  }
   try {
     process.kill(-pid, signal);
   } catch (error) {
@@ -2144,6 +2163,25 @@ function spawnApiKillProcessGroup(pid, signal) {
       throw error;
     }
   }
+}
+
+function spawnApiProcessGroupId(pid) {
+  if (process.platform === "win32" || !Number.isInteger(pid)) {
+    return undefined;
+  }
+  for (const command of ["/bin/ps", "/usr/bin/ps", "ps"]) {
+    const result = spawnSync(command, ["-o", "pgid=", "-p", String(pid)], {
+      encoding: "utf8",
+    });
+    if (!result.error && result.status === 0) {
+      const pgid = Number(result.stdout.trim());
+      return Number.isInteger(pgid) ? pgid : undefined;
+    }
+    if (result.error?.code !== "ENOENT") {
+      return undefined;
+    }
+  }
+  return undefined;
 }
 
 function spawnApiDescendantPids(pid) {
