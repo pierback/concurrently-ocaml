@@ -121,6 +121,7 @@ class Command {
     this.killSignal = undefined;
     this.killExitSignal = undefined;
     this.killTreePids = [];
+    this.killTreeProcessGroupIds = [];
     this.killProcess = undefined;
     this.killBeforePid = false;
     this.startedAt = undefined;
@@ -1933,6 +1934,7 @@ function spawnApiResetCommand(command) {
   command.killSignal = undefined;
   command.killExitSignal = undefined;
   command.killTreePids = [];
+  command.killTreeProcessGroupIds = [];
   command.killBeforePid = false;
   command.pid = undefined;
   command.processGroupId = undefined;
@@ -2003,7 +2005,8 @@ function spawnApiCleanupKilledCommand(command) {
     "SIGKILL",
     true,
     command.killTreePids,
-    command.processGroupId
+    command.processGroupId,
+    command.killTreeProcessGroupIds
   );
 }
 
@@ -2087,13 +2090,16 @@ function spawnApiKillProcess(command, options, signal) {
     spawnApiKillTree(command.pid, "SIGKILL", true);
     return "SIGKILL";
   }
-  command.killTreePids = spawnApiKillTree(
+  const killed = spawnApiKillTree(
     command.pid,
     signal,
     false,
     command.killTreePids,
-    command.processGroupId
+    command.processGroupId,
+    command.killTreeProcessGroupIds
   );
+  command.killTreePids = killed.pids;
+  command.killTreeProcessGroupIds = killed.processGroupIds;
   return true;
 }
 
@@ -2102,7 +2108,8 @@ function spawnApiKillTree(
   signal,
   force = false,
   knownDescendants = [],
-  processGroupId = pid
+  processGroupId = pid,
+  knownProcessGroupIds = []
 ) {
   const killSignal = signal ?? "SIGTERM";
   if (process.platform === "win32") {
@@ -2117,17 +2124,26 @@ function spawnApiKillTree(
     });
     child.on("error", () => {});
     child.unref();
-    return;
+    return { pids: [], processGroupIds: [] };
   }
-  const childPids = [
-    ...new Set([...spawnApiDescendantPids(pid), ...knownDescendants]),
-  ].filter((childPid) => childPid !== pid);
+  const descendants = spawnApiDescendantProcesses(pid);
+  const childPids = [...new Set([
+    ...descendants.map((descendant) => descendant.pid),
+    ...knownDescendants,
+  ])].filter((childPid) => childPid !== pid);
+  const processGroupIds = [...new Set([
+    processGroupId,
+    ...descendants.map((descendant) => descendant.processGroupId),
+    ...knownProcessGroupIds,
+  ])].filter((groupId) => Number.isInteger(groupId));
   for (const childPid of childPids) {
     spawnApiKillPid(childPid, killSignal);
   }
-  spawnApiKillProcessGroup(processGroupId, killSignal);
+  for (const groupId of processGroupIds) {
+    spawnApiKillProcessGroup(groupId, killSignal);
+  }
   spawnApiKillPid(pid, killSignal);
-  return childPids;
+  return { pids: childPids, processGroupIds };
 }
 
 function spawnApiValidateKillSignal(signal) {
@@ -2184,19 +2200,20 @@ function spawnApiProcessGroupId(pid) {
   return undefined;
 }
 
-function spawnApiDescendantPids(pid) {
-  const childrenByParent = spawnApiChildrenByParentPid();
+function spawnApiDescendantProcesses(pid) {
+  const processesByParent = spawnApiProcessesByParentPid();
   const descendants = [];
   const visited = new Set([pid]);
   const stack = [pid];
   while (stack.length > 0) {
     const parentPid = stack.pop();
-    for (const childPid of childrenByParent.get(parentPid) ?? []) {
+    for (const child of processesByParent.get(parentPid) ?? []) {
+      const childPid = child.pid;
       if (visited.has(childPid)) {
         continue;
       }
       visited.add(childPid);
-      descendants.push(childPid);
+      descendants.push(child);
       stack.push(childPid);
     }
   }
@@ -2204,27 +2221,32 @@ function spawnApiDescendantPids(pid) {
   return descendants.reverse();
 }
 
-function spawnApiChildrenByParentPid() {
-  const childrenByParent = new Map();
+function spawnApiProcessesByParentPid() {
+  const processesByParent = new Map();
   const table = spawnApiPsProcessTable();
   for (const line of table.split(/\r?\n/)) {
-    const [pidText, parentPidText] = line.trim().split(/\s+/);
+    const [pidText, parentPidText, processGroupIdText] = line.trim().split(/\s+/);
     const pid = Number(pidText);
     const parentPid = Number(parentPidText);
-    if (!Number.isInteger(pid) || !Number.isInteger(parentPid)) {
+    const processGroupId = Number(processGroupIdText);
+    if (
+      !Number.isInteger(pid) ||
+      !Number.isInteger(parentPid) ||
+      !Number.isInteger(processGroupId)
+    ) {
       continue;
     }
-    const children = childrenByParent.get(parentPid) ?? [];
-    children.push(pid);
-    childrenByParent.set(parentPid, children);
+    const children = processesByParent.get(parentPid) ?? [];
+    children.push({ pid, processGroupId });
+    processesByParent.set(parentPid, children);
   }
 
-  return childrenByParent;
+  return processesByParent;
 }
 
 function spawnApiPsProcessTable() {
   for (const command of ["/bin/ps", "/usr/bin/ps", "ps"]) {
-    const result = spawnSync(command, ["-eo", "pid=,ppid="], {
+    const result = spawnSync(command, ["-eo", "pid=,ppid=,pgid="], {
       encoding: "utf8",
     });
     if (!result.error && result.status === 0) {
