@@ -1,0 +1,681 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Porting concurrently to OCaml with Codex</title>
+    <style>
+      :root {
+        --bg: #ffffff;
+        --text: #080808;
+        --muted: #5f5f5f;
+        --line: #d6d6d6;
+        --panel: #f6f6f6;
+        --accent: #080808;
+        --dark: #080808;
+        --good: #2f2f2f;
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+      }
+
+      body {
+        background: var(--bg);
+        color: var(--text);
+        overflow: hidden;
+      }
+
+      .deck {
+        height: 100vh;
+        position: relative;
+        overflow: hidden;
+      }
+
+      .slide {
+        position: absolute;
+        inset: 0;
+        display: none;
+        grid-template-rows: auto 1fr auto;
+        gap: 28px;
+        padding: clamp(30px, 5vw, 72px);
+        border-top: 10px solid var(--dark);
+      }
+
+      .slide.active {
+        display: grid;
+      }
+
+      header,
+      footer {
+        display: flex;
+        justify-content: space-between;
+        gap: 24px;
+        color: var(--muted);
+        font-size: clamp(13px, 1.15vw, 16px);
+      }
+
+      .section {
+        color: var(--text);
+        font-weight: 750;
+      }
+
+      .count {
+        white-space: nowrap;
+      }
+
+      .content {
+        display: grid;
+        align-content: center;
+        gap: 30px;
+        max-width: 1180px;
+        width: 100%;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        max-width: 1000px;
+        font-size: clamp(42px, 7vw, 84px);
+        line-height: 0.98;
+        letter-spacing: 0;
+      }
+
+      h2 {
+        max-width: 1000px;
+        font-size: clamp(34px, 5vw, 62px);
+        line-height: 1;
+        letter-spacing: 0;
+      }
+
+      h3 {
+        font-size: clamp(20px, 1.8vw, 26px);
+        line-height: 1.15;
+      }
+
+      p,
+      li,
+      td,
+      th {
+        font-size: clamp(18px, 1.55vw, 23px);
+        line-height: 1.36;
+      }
+
+      .lede {
+        max-width: 900px;
+        color: var(--muted);
+        font-size: clamp(21px, 2.1vw, 30px);
+      }
+
+      .accent {
+        color: var(--text);
+      }
+
+      .two-col {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 24px;
+      }
+
+      .panel {
+        border: 1px solid var(--line);
+        background: var(--panel);
+        padding: 24px;
+      }
+
+      ul,
+      ol {
+        margin: 0;
+        padding-left: 1.15em;
+      }
+
+      li + li {
+        margin-top: 11px;
+      }
+
+      code,
+      pre {
+        font-family:
+          "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      }
+
+      pre {
+        margin: 0;
+        white-space: pre-wrap;
+        border: 1px solid var(--line);
+        background: var(--dark);
+        color: #ffffff;
+        padding: 22px;
+        font-size: clamp(15px, 1.35vw, 20px);
+        line-height: 1.45;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        border: 1px solid var(--line);
+      }
+
+      th,
+      td {
+        border-bottom: 1px solid var(--line);
+        padding: 14px 16px;
+        text-align: left;
+        vertical-align: top;
+      }
+
+      th {
+        background: var(--dark);
+        color: #ffffff;
+        font-weight: 750;
+      }
+
+      tr:last-child td {
+        border-bottom: 0;
+      }
+
+      .number {
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+
+      .good {
+        color: var(--good);
+        font-weight: 750;
+      }
+
+      .callout {
+        border-left: 8px solid var(--dark);
+        background: var(--panel);
+        padding: 18px 22px;
+        max-width: 960px;
+      }
+
+      .controls {
+        position: fixed;
+        z-index: 10;
+        right: 20px;
+        bottom: 20px;
+        display: flex;
+        gap: 8px;
+      }
+
+      button {
+        min-height: 40px;
+        padding: 0 14px;
+        border: 1px solid var(--line);
+        background: #ffffff;
+        color: var(--text);
+        font: inherit;
+        cursor: pointer;
+      }
+
+      button:focus-visible {
+        outline: 3px solid var(--text);
+        outline-offset: 2px;
+      }
+
+      .progress {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: 4px;
+        background: #eeeeee;
+      }
+
+      .progress span {
+        display: block;
+        height: 100%;
+        width: 0;
+        background: var(--dark);
+      }
+
+      .note {
+        display: none;
+      }
+
+      .notes {
+        position: fixed;
+        left: 20px;
+        right: 20px;
+        bottom: 72px;
+        display: none;
+        max-height: 32vh;
+        overflow: auto;
+        border: 1px solid var(--line);
+        background: #ffffff;
+        padding: 18px;
+        box-shadow: 0 8px 28px rgba(0, 0, 0, 0.14);
+      }
+
+      body.show-notes .notes {
+        display: block;
+      }
+
+      .notes h3 {
+        margin: 0 0 8px;
+        color: var(--text);
+        font-size: 18px;
+      }
+
+      .notes p {
+        font-size: 16px;
+        color: var(--text);
+      }
+
+      @media (max-width: 850px) {
+        body {
+          overflow: auto;
+        }
+
+        .deck {
+          height: auto;
+          min-height: 100vh;
+        }
+
+        .slide {
+          position: relative;
+          min-height: 100vh;
+          padding-bottom: 88px;
+        }
+
+        .two-col {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      @media print {
+        body {
+          overflow: visible;
+        }
+
+        .deck {
+          height: auto;
+        }
+
+        .slide {
+          position: relative;
+          display: grid;
+          min-height: 100vh;
+          page-break-after: always;
+        }
+
+        .controls,
+        .progress,
+        .notes {
+          display: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="deck">
+      <section class="slide active" data-title="Title">
+        <header>
+          <span class="section">Engineering weekly</span>
+          <span class="count"></span>
+        </header>
+        <div class="content">
+          <h1>Porting npm <code>concurrently</code> to <span class="accent">OCaml</span></h1>
+          <p class="lede">
+            A Codex goal-driven port: how we steered the work, why we chose a
+            native runtime, what shipped, and what the benchmarks show.
+          </p>
+        </div>
+        <footer>
+          <span>Target: npm <code>concurrently@9.2.1</code></span>
+          <span>May 27, 2026</span>
+        </footer>
+        <aside class="note">
+          Keep the opening practical. This is a story about using Codex to push
+          a serious port through compatibility, packaging, and benchmarking.
+        </aside>
+      </section>
+
+      <section class="slide" data-title="How">
+        <header>
+          <span class="section">1. How we did it</span>
+          <span class="count"></span>
+        </header>
+        <div class="content">
+          <h2>We used Codex goals to keep the port strict.</h2>
+          <ol>
+            <li>
+              Set one concrete goal: port <code>concurrently</code> to native
+              OCaml with npm-compatible behavior.
+            </li>
+            <li>
+              Gave Codex hard constraints: no JS runtime fallback, no backward
+              compatibility layer, validate against pinned upstream behavior.
+            </li>
+            <li>
+              Worked in slices: CLI surface, terminal output, process behavior,
+              npm packaging, compatibility tests, then performance evidence.
+            </li>
+            <li>
+              After each slice, Codex ran the relevant build, test, compatibility,
+              smoke, or benchmark command before moving on.
+            </li>
+          </ol>
+        </div>
+        <footer>
+          <span>The important part: the goal stayed fixed while implementation slices changed.</span>
+        </footer>
+        <aside class="note">
+          This replaces the earlier implementation-detail slide. The audience
+          should understand the workflow: goal, constraints, slices, verification.
+        </aside>
+      </section>
+
+      <section class="slide" data-title="Why OCaml">
+        <header>
+          <span class="section">2. Why OCaml instead of Node?</span>
+          <span class="count"></span>
+        </header>
+        <div class="content">
+          <h2>Because this CLI pays fixed runtime costs very often.</h2>
+          <div class="two-col">
+            <div class="panel">
+              <h3>Node is good at the ecosystem part</h3>
+              <ul>
+                <li>npm install and package-script ergonomics</li>
+                <li>existing user expectations</li>
+                <li>programmatic import surface</li>
+              </ul>
+            </div>
+            <div class="panel">
+              <h3>OCaml is better for this runtime path</h3>
+              <ul>
+                <li>native startup avoids V8/bootstrap overhead</li>
+                <li>typed run state makes invalid lifecycle states loud</li>
+                <li>Eio gives direct-style concurrent process supervision</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+        <footer>
+          <span>Decision: keep npm as delivery; move execution into a native binary.</span>
+        </footer>
+        <aside class="note">
+          Do not make this a language-war slide. The answer is workload fit:
+          short CLI startup plus process supervision.
+        </aside>
+      </section>
+
+      <section class="slide" data-title="What Shipped">
+        <header>
+          <span class="section">3. What the result is</span>
+          <span class="count"></span>
+        </header>
+        <div class="content">
+          <h2>A native runner that still looks like npm <code>concurrently</code>.</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Area</th>
+                <th>Result</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Usage</td>
+                <td><code>concurrently</code> and <code>conc</code> still resolve from npm scripts.</td>
+              </tr>
+              <tr>
+                <td>Runtime</td>
+                <td>Native OCaml binary executes the CLI path; JS is launcher and facade.</td>
+              </tr>
+              <tr>
+                <td>Compatibility</td>
+                <td>Deterministic cases compare against pinned <code>concurrently@9.2.1</code>.</td>
+              </tr>
+              <tr>
+                <td>Distribution</td>
+                <td>Optional native npm packages for supported OS/CPU targets.</td>
+              </tr>
+            </tbody>
+          </table>
+          <pre>npm install --save-dev concurrently@npm:@pierback/concurrently-ml</pre>
+        </div>
+        <footer>
+          <span>Compatibility is measured, not assumed.</span>
+        </footer>
+        <aside class="note">
+          This is outcome-focused. No module names needed unless someone asks
+          in Q&A.
+        </aside>
+      </section>
+
+      <section class="slide" data-title="Hyperfine">
+        <header>
+          <span class="section">4. Hyperfine results</span>
+          <span class="count"></span>
+        </header>
+        <div class="content">
+          <h2>Checked-in hyperfine results.</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Workload</th>
+                <th>OCaml native</th>
+                <th>npm original</th>
+                <th>Median speedup</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>--version</code>, no shell</td>
+                <td class="number">7.6ms</td>
+                <td class="number">189.3ms</td>
+                <td class="number good">24.8x</td>
+              </tr>
+              <tr>
+                <td>one raw no-op command</td>
+                <td class="number">27.8ms</td>
+                <td class="number">161.7ms</td>
+                <td class="number good">5.8x</td>
+              </tr>
+              <tr>
+                <td>two raw no-op commands</td>
+                <td class="number">33.6ms</td>
+                <td class="number">172.1ms</td>
+                <td class="number good">5.1x</td>
+              </tr>
+              <tr>
+                <td>ten raw no-op commands</td>
+                <td class="number">101.2ms</td>
+                <td class="number">299.9ms</td>
+                <td class="number good">3.0x</td>
+              </tr>
+              <tr>
+                <td>twenty raw no-op commands</td>
+                <td class="number">157.0ms</td>
+                <td class="number">322.6ms</td>
+                <td class="number good">2.1x</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <footer>
+          <span>Source: <code>dist/bench/*hyperfine*</code>. Timings are host-dependent.</span>
+        </footer>
+        <aside class="note">
+          Explain the shape, not just the numbers. Startup-heavy cases get the
+          largest gain; command-heavy cases still improve but less dramatically.
+        </aside>
+      </section>
+
+      <section class="slide" data-title="Perf Harness">
+        <header>
+          <span class="section">5. Current perf harness</span>
+          <span class="count"></span>
+        </header>
+        <div class="content">
+          <h2>The maintained harness shows the same pattern.</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Workload</th>
+                <th>Native median</th>
+                <th>npm median</th>
+                <th>Median speedup</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>--version</code></td>
+                <td class="number">14.11ms</td>
+                <td class="number">231.14ms</td>
+                <td class="number good">16.38x</td>
+              </tr>
+              <tr>
+                <td>24 raw short commands</td>
+                <td class="number">195.42ms</td>
+                <td class="number">448.49ms</td>
+                <td class="number good">2.29x</td>
+              </tr>
+              <tr>
+                <td>1000 raw streamed lines</td>
+                <td class="number">135.97ms</td>
+                <td class="number">350.46ms</td>
+                <td class="number good">2.58x</td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="callout">
+            <p>
+              Takeaway: the native port removes fixed startup cost and keeps a
+              real advantage on short orchestration and output-heavy workloads.
+            </p>
+          </div>
+        </div>
+        <footer>
+          <span>Source: <code>docs/architecture/performance-evidence.md</code>.</span>
+        </footer>
+        <aside class="note">
+          This is the strongest wording: not everything is 25x faster, but the
+          workload shape is clearly favorable.
+        </aside>
+      </section>
+
+      <section class="slide" data-title="Close">
+        <header>
+          <span class="section">Close</span>
+          <span class="count"></span>
+        </header>
+        <div class="content">
+          <h2>What to remember.</h2>
+          <ol>
+            <li>Codex goal mode helped keep a long-running port pointed at one fixed outcome.</li>
+            <li>OCaml was chosen to remove Node runtime startup from the execution path.</li>
+            <li>The result keeps npm ergonomics while running native code.</li>
+            <li>The benchmarks show the largest wins where this CLI spends avoidable fixed cost.</li>
+          </ol>
+        </div>
+        <footer>
+          <span>Ask: try it in real projects and report mismatches with command, platform, expected output, and actual output.</span>
+        </footer>
+        <aside class="note">
+          End with the practical ask. This presentation is about workflow,
+          reasoning, and evidence, not internal architecture trivia.
+        </aside>
+      </section>
+    </main>
+
+    <nav class="controls" aria-label="Slide controls">
+      <button type="button" data-prev>Prev</button>
+      <button type="button" data-notes>Notes</button>
+      <button type="button" data-next>Next</button>
+    </nav>
+    <div class="progress" aria-hidden="true"><span></span></div>
+    <aside class="notes" aria-label="Speaker notes">
+      <h3>Speaker notes</h3>
+      <p id="notes-text"></p>
+    </aside>
+
+    <script>
+      const slides = Array.from(document.querySelectorAll(".slide"));
+      const progress = document.querySelector(".progress span");
+      const notes = document.querySelector("#notes-text");
+      const params = new URLSearchParams(location.search);
+      let index = Math.max(0, Math.min(slides.length - 1, Number(params.get("slide") || 1) - 1));
+
+      function show(nextIndex, updateUrl = true) {
+        index = Math.max(0, Math.min(slides.length - 1, nextIndex));
+        slides.forEach((slide, slideIndex) => {
+          slide.classList.toggle("active", slideIndex === index);
+          const count = slide.querySelector(".count");
+          if (count) {
+            count.textContent = `${slideIndex + 1} / ${slides.length}`;
+          }
+        });
+        progress.style.width = `${((index + 1) / slides.length) * 100}%`;
+        const note = slides[index].querySelector(".note");
+        notes.textContent = note ? note.textContent.trim() : "";
+        if (updateUrl) {
+          const url = new URL(location.href);
+          url.searchParams.set("slide", String(index + 1));
+          history.replaceState(null, "", url);
+        }
+      }
+
+      function next() {
+        show(index + 1);
+      }
+
+      function prev() {
+        show(index - 1);
+      }
+
+      document.querySelector("[data-next]").addEventListener("click", next);
+      document.querySelector("[data-prev]").addEventListener("click", prev);
+      document.querySelector("[data-notes]").addEventListener("click", () => {
+        document.body.classList.toggle("show-notes");
+      });
+
+      document.addEventListener("keydown", (event) => {
+        if (event.metaKey || event.ctrlKey || event.altKey) {
+          return;
+        }
+        if (event.key === "ArrowRight" || event.key === "PageDown" || event.key === " ") {
+          event.preventDefault();
+          next();
+        } else if (event.key === "ArrowLeft" || event.key === "PageUp") {
+          event.preventDefault();
+          prev();
+        } else if (event.key === "Home") {
+          event.preventDefault();
+          show(0);
+        } else if (event.key === "End") {
+          event.preventDefault();
+          show(slides.length - 1);
+        } else if (event.key.toLowerCase() === "n") {
+          document.body.classList.toggle("show-notes");
+        } else if (event.key.toLowerCase() === "f" && document.fullscreenEnabled) {
+          if (document.fullscreenElement) {
+            document.exitFullscreen();
+          } else {
+            document.documentElement.requestFullscreen();
+          }
+        }
+      });
+
+      show(index, false);
+    </script>
+  </body>
+</html>
