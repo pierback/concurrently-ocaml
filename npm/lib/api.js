@@ -7,13 +7,36 @@ const {
   rmSync,
   writeFileSync,
 } = require("node:fs");
-const { tmpdir } = require("node:os");
+const { cpus, tmpdir } = require("node:os");
 const { join, resolve } = require("node:path");
 const { Writable } = require("node:stream");
 const { StringDecoder } = require("node:string_decoder");
+const {
+  spawn: spawnChildProcess,
+  spawnSync,
+} = require("node:child_process");
 const { runNative } = require("./native");
 
 const SHORTCUT_RUNNERS = new Set(["npm", "yarn", "pnpm", "bun", "node", "deno"]);
+const SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"];
+const AUTO_PREFIX_COLORS = [
+  "cyan",
+  "yellow",
+  "greenBright",
+  "blueBright",
+  "magentaBright",
+  "white",
+  "grey",
+  "red",
+  "bgCyan",
+  "bgYellow",
+  "bgGreenBright",
+  "bgBlueBright",
+  "bgMagenta",
+  "bgWhiteBright",
+  "bgGrey",
+  "bgRed",
+];
 
 class NativeApiUnsupportedError extends Error {
   constructor(feature) {
@@ -38,9 +61,13 @@ class SimpleSubject {
   }
 
   next(value) {
+    let accepted = true;
     for (const subscriber of [...this.subscribers]) {
-      subscriber(value);
+      if (subscriber(value) === false) {
+        accepted = false;
+      }
     }
+    return accepted;
   }
 
   complete() {
@@ -106,6 +133,8 @@ class Command {
     this.process = undefined;
     this.spawn = spawn;
     this.spawnOpts = spawnOpts;
+    this.runId = 0;
+    this.spawnApiCompleted = false;
     this.killProcess =
       typeof killProcess === "function"
         ? (code) => killProcess(this.pid, code)
@@ -117,6 +146,9 @@ class Command {
     if (typeof this.spawn !== "function") {
       throw new NativeApiUnsupportedError("Command.start()");
     }
+    this.runId += 1;
+    const runId = this.runId;
+    this.spawnApiCompleted = false;
     const child = this.spawn(this.command, this.spawnOpts);
     this.process = child;
     this.pid = child.pid;
@@ -126,6 +158,9 @@ class Command {
     this.timer.next({ startDate });
     this.subscriptions = this.setupIpc(child);
     child.on?.("error", (error) => {
+      if (this.runId !== runId) {
+        return;
+      }
       this.cleanup();
       const endDate = new Date();
       this.timer.next({ startDate, endDate });
@@ -133,6 +168,9 @@ class Command {
       this.changeState("errored");
     });
     child.on?.("close", (exitCode, signal) => {
+      if (this.runId !== runId) {
+        return;
+      }
       this.cleanup();
       this.exited = true;
       if (this.state !== "errored") {
@@ -152,11 +190,12 @@ class Command {
         },
       };
       this.timer.next({ startDate, endDate });
-      this.close.next(closeEvent);
+      (this.spawnApiClose ?? this.close).next(closeEvent);
     });
     child.stdout?.on?.("data", (chunk) => this.stdout.next(chunk));
     child.stderr?.on?.("data", (chunk) => this.stderr.next(chunk));
     this.stdin = child.stdin || undefined;
+    this.stdin?.on?.("error", () => {});
   }
 
   changeState(state) {
@@ -232,6 +271,7 @@ class Command {
     this.subscriptions = [];
     this.messages.outgoing = new SimpleReplaySubject();
     this.process = undefined;
+    this.stdin = undefined;
   }
 
   static canKill(command) {
@@ -336,6 +376,9 @@ function concurrently(commandInputs, options = {}) {
       commands: controlledCommands,
       result: runOnFinishCallbacks(Promise.resolve([]), controlled.onFinishCallbacks),
     };
+  }
+  if (options.spawn !== undefined) {
+    return runSpawnApi(controlledCommands, controlled.onFinishCallbacks, options);
   }
   const eventDir = mkdtempSync(join(tmpdir(), "concurrently-ml-api-"));
   let cleanedEventDir = false;
@@ -470,13 +513,8 @@ function assertCommandInputs(commandInputs) {
 }
 
 function assertNativeOptions(options) {
-  for (const key of ["spawn"]) {
-    if (
-      Object.prototype.hasOwnProperty.call(options, key) &&
-      options[key] !== undefined
-    ) {
-      throw new NativeApiUnsupportedError(`options.${key}`);
-    }
+  if (options.spawn !== undefined && typeof options.spawn !== "function") {
+    throw new Error("options.spawn must be a function");
   }
   if (
     options.outputStream !== undefined &&
@@ -519,6 +557,1603 @@ function assertNativeLogger(logger) {
       "options.logger log(prefix, text, command) is unsupported by the native merged output stream"
     );
   }
+}
+
+function runSpawnApi(commands, onFinishCallbacks, options) {
+  if (arrayOption(options.teardown).length > 0) {
+    throw new NativeApiUnsupportedError("options.teardown with options.spawn");
+  }
+  const output = spawnApiOutput(spawnApiOutputSink(options));
+  const closeEvents = [];
+  const hiddenPositions = new Set(hiddenCommands(commands, options));
+  const outputState = spawnApiOutputState(commands, options);
+  const running = new Set();
+  const scheduler = {
+    settled: false,
+    stopStarting: false,
+    timers: new Set(),
+    killTimers: new Set(),
+    restartTimers: new Map(),
+    pendingFailure: undefined,
+    settle: undefined,
+  };
+  const restartCounts = new Map();
+  let nextIndex = 0;
+  const maxProcesses = spawnApiMaxProcesses(options.maxProcesses, commands.length);
+  const input = spawnApiAttachInput(commands, options, outputState, output);
+  const signals = spawnApiAttachSignals(commands, running, scheduler, options);
+  const restartLimit = spawnApiRestartLimit(options.restartTries);
+  const restartDelay = (command) =>
+    spawnApiRestartDelay(options.restartDelay, restartCounts.get(command) ?? 1);
+
+  const result = new Promise((resolve, reject) => {
+    const fail = (error) => {
+      if (scheduler.settled) {
+        return;
+      }
+      scheduler.settled = true;
+      scheduler.stopStarting = true;
+      spawnApiClearTimers(scheduler);
+      signals.finish();
+      input.finish();
+      spawnApiFlushGroupedOutput(outputState, output);
+      output.finish().then(
+        () => reject(error),
+        () => reject(error)
+      );
+    };
+    const settle = () => {
+      if (
+        scheduler.settled ||
+        running.size !== 0 ||
+        (!scheduler.stopStarting && nextIndex < commands.length)
+      ) {
+        return;
+      }
+      scheduler.settled = true;
+      spawnApiClearTimers(scheduler);
+      signals.finish();
+      input.finish();
+      spawnApiFlushGroupedOutput(outputState, output);
+      spawnApiWriteTimings(closeEvents, options, output);
+      output.finish().then(
+        () => {
+          if (closeEventsSucceeded(closeEvents, options.successCondition)) {
+            resolve(closeEvents);
+          } else {
+            reject(closeEvents);
+          }
+        },
+        (error) => reject(error)
+      );
+    };
+    scheduler.settle = settle;
+    const startNext = () => {
+      while (
+        !scheduler.settled &&
+        !scheduler.stopStarting &&
+        running.size < maxProcesses &&
+        nextIndex < commands.length
+      ) {
+        const position = nextIndex;
+        const command = commands[position];
+        nextIndex += 1;
+        running.add(command);
+        subscribeSpawnApiCommand(command, {
+          closeEvents,
+          hidden: hiddenPositions.has(String(position)),
+          output,
+          outputState,
+          fail,
+          restartCounts,
+          restartDelay,
+          restartLimit,
+          running,
+          scheduler,
+          input,
+          settle,
+          startNext,
+          options,
+        });
+        try {
+          command.start();
+          input.flush(command);
+        } catch (error) {
+          scheduler.stopStarting = true;
+          running.delete(command);
+          spawnApiCancelRestartTimers(scheduler, running);
+          try {
+            spawnApiKillOthers(running, options, scheduler);
+          } catch (killError) {
+            fail(killError);
+            return;
+          }
+          if (running.size !== 0) {
+            scheduler.pendingFailure = error;
+            return;
+          }
+          fail(error);
+          return;
+        }
+      }
+      settle();
+    };
+    startNext();
+  });
+
+  return {
+    commands,
+    result: runOnFinishCallbacks(result, onFinishCallbacks),
+  };
+}
+
+function subscribeSpawnApiCommand(command, state) {
+  const {
+    closeEvents,
+    hidden,
+    output,
+    outputState,
+    fail,
+    restartCounts,
+    restartDelay,
+    restartLimit,
+    running,
+    scheduler,
+    input,
+    settle,
+    startNext,
+    options,
+  } = state;
+  const formatter = spawnApiOutputFormatter(command, options, output, outputState);
+  command.spawnApiClose = new SimpleSubject();
+  if (!hidden) {
+    command.stdout.subscribe((chunk) => formatter.stdout(chunk));
+    command.stderr.subscribe((chunk) => formatter.stderr(chunk));
+  }
+  if (options.timings && !options.raw && !hidden) {
+    command.timer.subscribe((event) => {
+      if (!event.startDate) {
+        return;
+      }
+      if (event.endDate) {
+        formatter.event(
+          `${command.command} stopped at ${spawnApiFormatDate(
+            event.endDate,
+            options.timestampFormat
+          )} after ${event.endDate.getTime() - event.startDate.getTime()}ms\n`
+        );
+      } else {
+        formatter.event(
+          `${command.command} started at ${spawnApiFormatDate(
+            event.startDate,
+            options.timestampFormat
+          )}\n`
+        );
+      }
+    });
+  }
+  const completeCommand = (event) => {
+    if (command.spawnApiCompleted) {
+      return;
+    }
+    command.spawnApiCompleted = true;
+    if (!hidden) {
+      formatter.close(event);
+    }
+    if (
+      spawnApiShouldRestart(
+        event,
+        command,
+        restartCounts,
+        restartLimit,
+        scheduler
+      )
+    ) {
+      spawnApiRestartCommand(command, {
+        input,
+        options,
+        output,
+        outputState,
+        restartFormatter: hidden ? undefined : formatter,
+        restartDelay,
+        running,
+        scheduler,
+        fail,
+        settle,
+        startNext,
+      });
+      return;
+    }
+    if (scheduler.caughtSignal === "SIGINT") {
+      event.exitCode = 0;
+    }
+    running.delete(command);
+    spawnApiFlushClosedGroups(command, outputState, output);
+    if (scheduler.pendingFailure) {
+      if (running.size === 0) {
+        fail(scheduler.pendingFailure);
+      }
+      return;
+    }
+    if (
+      !spawnApiShouldPublishCloseEvent(
+        event,
+        command,
+        restartCounts,
+        restartLimit,
+        scheduler
+      )
+    ) {
+      startNext();
+      settle();
+      return;
+    }
+    const publicEvent = spawnApiPublicCloseEvent(event);
+    command.close.next(publicEvent);
+    closeEvents.push(publicEvent);
+    if (spawnApiShouldKillOthers(publicEvent, options)) {
+      scheduler.stopStarting = true;
+      try {
+        spawnApiKillOthers(running, options, scheduler, undefined, output, outputState);
+      } catch (error) {
+        fail(error);
+        return;
+      }
+    }
+    startNext();
+    settle();
+  };
+  command.spawnApiClose.subscribe(completeCommand);
+  command.error.subscribe((error) => {
+    const runId = command.runId;
+    setImmediate(() => {
+      if (command.runId === runId && !command.spawnApiCompleted) {
+        completeCommand(spawnApiErrorCloseEvent(command, error));
+      }
+    });
+  });
+  command.spawn = options.spawn;
+  command.spawnOpts = spawnApiOptions(command, options, hidden);
+  command.killProcess = (signal) => spawnApiKillProcess(command, options, signal);
+}
+
+function spawnApiOutputSink(options) {
+  return apiOutputSink(options) ?? {
+    write(chunk, callback) {
+      process.stdout.write(chunk, callback);
+    },
+  };
+}
+
+function spawnApiOutput(outputSink) {
+  return outputWriter(outputSink);
+}
+
+function outputWriter(outputSink) {
+  let pendingWrites = 0;
+  let outputError;
+  let ended = false;
+  const waiters = [];
+  const settleWaiters = () => {
+    if (pendingWrites !== 0) {
+      return;
+    }
+    while (waiters.length > 0) {
+      const waiter = waiters.shift();
+      if (outputError) {
+        waiter.reject(outputError);
+      } else {
+        waiter.resolve();
+      }
+    }
+  };
+  return {
+    write(chunk) {
+      if (!outputSink) {
+        return;
+      }
+      pendingWrites += 1;
+      try {
+        outputSink.write(chunk, (error) => {
+          if (error && !outputError) {
+            outputError = error;
+          }
+          pendingWrites -= 1;
+          settleWaiters();
+        });
+      } catch (error) {
+        if (!outputError) {
+          outputError = error;
+        }
+        pendingWrites -= 1;
+        settleWaiters();
+      }
+    },
+    finish() {
+      if (!ended) {
+        ended = true;
+        try {
+          outputSink?.end?.();
+        } catch (error) {
+          if (!outputError) {
+            outputError = error;
+          }
+        }
+      }
+      if (pendingWrites === 0) {
+        return outputError ? Promise.reject(outputError) : Promise.resolve();
+      }
+      return new Promise((resolve, reject) => {
+        waiters.push({ resolve, reject });
+      });
+    },
+  };
+}
+
+function spawnApiOutputState(commands, options) {
+  return {
+    activeGroupPosition: 0,
+    groupBuffers: options.group
+      ? new Map(commands.map((command) => [command, []]))
+      : undefined,
+    groupLineStates: options.group ? new Map() : undefined,
+    groupPositions: options.group
+      ? new Map(commands.map((command, position) => [command, position]))
+      : undefined,
+    autoColorPositions: new Map(commands.map((command, position) => [command, position])),
+    prefixColors: spawnApiPrefixColorsForCommands(commands, options.prefixColors),
+    pendingRestarts: options.group ? new Set() : undefined,
+    raw: Boolean(options.raw),
+    lastWriteChar: undefined,
+    lastWriteCommand: undefined,
+    orderedCommands: commands,
+    prefixLength: options.padPrefix
+      ? commands.reduce((length, command) => {
+          const content = spawnApiPrefixContent(command, options);
+          return Math.max(length, content?.value.length ?? 0);
+        }, 0)
+      : 0,
+  };
+}
+
+function spawnApiOutputFormatter(command, options, output, outputState) {
+  const raw = typeof command.raw === "boolean" ? command.raw : Boolean(options.raw);
+  if (raw) {
+    return {
+      stdout(chunk) {
+        spawnApiWriteOutput(command, chunk, outputState, output, false);
+      },
+      stderr(chunk) {
+        if (apiCapturesOutput(options)) {
+          spawnApiWriteOutput(command, chunk, outputState, output, false);
+          return;
+        }
+        process.stderr.write(chunk);
+      },
+      event() {},
+      close() {},
+    };
+  }
+  const stdoutDecoder = new StringDecoder("utf8");
+  const stderrDecoder = new StringDecoder("utf8");
+  const writeText = (text) => {
+    if (text === "") {
+      return;
+    }
+    spawnApiLogCommandText(command, text, options, outputState, output);
+  };
+  return {
+    stdout(chunk) {
+      writeText(Buffer.isBuffer(chunk) ? stdoutDecoder.write(chunk) : String(chunk));
+    },
+    stderr(chunk) {
+      writeText(Buffer.isBuffer(chunk) ? stderrDecoder.write(chunk) : String(chunk));
+    },
+    event(text) {
+      writeText(text);
+    },
+    close(event) {
+      writeText(stdoutDecoder.end());
+      writeText(stderrDecoder.end());
+      const lineState = spawnApiLineState(command, outputState);
+      if (
+        lineState.lastWriteCommand === command &&
+        lineState.lastWriteChar !== "\n"
+      ) {
+        spawnApiWriteOutput(command, "\n", outputState, output);
+      }
+      const exitCode = event.exitCode ?? 1;
+      writeText(`${command.command} exited with code ${exitCode}\n`);
+    },
+  };
+}
+
+function spawnApiPrefix(command, options, outputState) {
+  if (options.prefix === "none") {
+    return "";
+  }
+  const content = spawnApiPrefixContent(command, options);
+  if (!content) {
+    return "";
+  }
+  if (options.padPrefix) {
+    outputState.prefixLength = Math.max(
+      outputState.prefixLength,
+      content.value.length
+    );
+  }
+  const value = options.padPrefix
+    ? content.value.padEnd(outputState.prefixLength, " ")
+    : content.value;
+  if (content.type === "template" && value === "") {
+    return "";
+  }
+  const bracketed = content.type === "template" ? value : `[${value}]`;
+  const colored = spawnApiColorizePrefix(bracketed, command, options, outputState);
+  return `${colored} `;
+}
+
+function spawnApiPrefixContent(command, options) {
+  const prefix = options.prefix;
+  if (prefix === undefined) {
+    return { type: "default", value: command.name || String(command.index) };
+  }
+  if (prefix === "index") {
+    return { type: "default", value: String(command.index) };
+  }
+  if (prefix === "name") {
+    return { type: "default", value: command.name || String(command.index) };
+  }
+  if (prefix === "command") {
+    return { type: "default", value: spawnApiShortenText(command.command, options) };
+  }
+  if (prefix === "pid") {
+    return {
+      type: "default",
+      value: command.pid === undefined ? "" : String(command.pid),
+    };
+  }
+  if (prefix === "time") {
+    return {
+      type: "default",
+      value: spawnApiFormatDate(new Date(), options.timestampFormat),
+    };
+  }
+  if (typeof prefix === "string") {
+    return {
+      type: "template",
+      value: spawnApiTemplatePrefix(command, options, prefix),
+    };
+  }
+  return { type: "default", value: command.name || String(command.index) };
+}
+
+function spawnApiTemplatePrefix(command, options, prefix) {
+  const replacements = {
+    "{index}": String(command.index),
+    "{name}": command.name,
+    "{command}": spawnApiShortenText(command.command, options),
+    "{pid}": command.pid === undefined ? "" : String(command.pid),
+    "{time}": spawnApiFormatDate(new Date(), options.timestampFormat),
+  };
+  return prefix.replace(
+    /\{(?:index|name|command|pid|time)\}/g,
+    (placeholder) => replacements[placeholder]
+  );
+}
+
+function spawnApiShortenText(text, options) {
+  let maxLength = Number(options.prefixLength ?? 10);
+  if (Number.isNaN(maxLength) || maxLength === 0) {
+    maxLength = 10;
+  }
+  if (!text || text.length <= maxLength) {
+    return text;
+  }
+  const contentLength = maxLength - 2;
+  const endLength = Math.floor(contentLength / 2);
+  const beginningLength = contentLength - endLength;
+  return `${spawnApiSlice(text, 0, beginningLength)}..${spawnApiSlice(
+    text,
+    text.length - endLength,
+    text.length
+  )}`;
+}
+
+function spawnApiSlice(text, start, end) {
+  return text.slice(spawnApiSliceIndex(text, start), spawnApiSliceIndex(text, end));
+}
+
+function spawnApiSliceIndex(text, index) {
+  const integer = Number.isFinite(index) ? Math.trunc(index) : index;
+  if (Number.isNaN(integer)) {
+    return 0;
+  }
+  if (integer < 0) {
+    return Math.max(text.length + integer, 0);
+  }
+  return Math.min(integer, text.length);
+}
+
+function spawnApiColorizePrefix(prefix, command, options, outputState) {
+  const colorLevel = spawnApiColorLevel(options);
+  if (colorLevel === 0 || options.prefixColors === false) {
+    return prefix;
+  }
+  const color = spawnApiPrefixColor(command, options, outputState);
+  const ansi = spawnApiAnsiColor(color, colorLevel);
+  return ansi ? `${ansi.open}${prefix}${ansi.close}` : prefix;
+}
+
+function spawnApiPrefixColor(command, options, outputState) {
+  if (options.prefixColors !== undefined) {
+    const colors = outputState?.prefixColors;
+    if (colors.length === 0) {
+      return undefined;
+    }
+    const colorPosition = outputState?.autoColorPositions?.get(command) ?? command.index;
+    return spawnApiResolvedPrefixColor(colors, colorPosition);
+  }
+  return command.prefixColor ?? "reset";
+}
+
+function spawnApiPrefixColorsForCommands(commands, prefixColors) {
+  if (prefixColors === undefined || prefixColors === false) {
+    return undefined;
+  }
+  const colors =
+    typeof prefixColors === "string"
+      ? prefixColors.split(",")
+      : arrayOption(prefixColors);
+  if (colors.length === 0) {
+    return [];
+  }
+  const fallback = colors[colors.length - 1];
+  return commands.map((command) => colors[command.index] ?? fallback);
+}
+
+function spawnApiResolvedPrefixColor(colors, index) {
+  const colorsWithoutAutos = colors.filter((color) => color !== "auto");
+  const availableAutoColors = AUTO_PREFIX_COLORS.filter(
+    (color) => !colorsWithoutAutos.includes(color.replace(/Bright$/, ""))
+  );
+  let lastColor;
+  for (let position = 0; position <= index; position += 1) {
+    const configured = colors[position] ?? colors[colors.length - 1];
+    if (configured !== "auto") {
+      lastColor = configured;
+      continue;
+    }
+    lastColor = spawnApiNextAutoPrefixColor(availableAutoColors, lastColor);
+  }
+  return lastColor;
+}
+
+function spawnApiNextAutoPrefixColor(availableAutoColors, lastColor) {
+  let nextColor = "auto";
+  while (nextColor === "auto" || nextColor === lastColor) {
+    if (availableAutoColors.length === 0) {
+      availableAutoColors.push(...AUTO_PREFIX_COLORS);
+    }
+    nextColor = String(availableAutoColors.shift());
+  }
+  return nextColor;
+}
+
+function spawnApiColorsEnabled(options) {
+  return spawnApiColorLevel(options) > 0;
+}
+
+function spawnApiColorLevel(options) {
+  if (process.env.FORCE_COLOR !== undefined) {
+    return forceColorLevel(process.env);
+  }
+  if (process.env.NO_COLOR !== undefined) {
+    return 0;
+  }
+  if (apiCapturesOutput(options) || process.stdout.isTTY !== true) {
+    return 0;
+  }
+  if (process.env.COLORTERM === "truecolor" || process.env.COLORTERM === "24bit") {
+    return 3;
+  }
+  if (String(process.env.TERM ?? "").includes("256color")) {
+    return 2;
+  }
+  return 1;
+}
+
+function spawnApiAnsiColor(color, colorLevel) {
+  const styles = String(color ?? "")
+    .split(".")
+    .map((style) => spawnApiAnsiStyle(style, colorLevel))
+    .filter(Boolean);
+  if (styles.length === 0) {
+    return undefined;
+  }
+  return {
+    open: styles.map((style) => style.open).join(""),
+    close: styles
+      .slice()
+      .reverse()
+      .map((style) => style.close)
+      .join(""),
+  };
+}
+
+function spawnApiAnsiStyle(color, colorLevel) {
+  const original = String(color ?? "").trim();
+  const normalized = original.toLowerCase();
+  if (normalized === "") {
+    return undefined;
+  }
+  if (normalized === "reset") {
+    return { open: "\u001b[0m", close: "\u001b[0m" };
+  }
+  const hex = spawnApiHexColor(original, colorLevel);
+  if (hex) {
+    return hex;
+  }
+  const key = normalized.replace(/[-_\s]/g, "");
+  const style = {
+    black: [30, 39],
+    red: [31, 39],
+    green: [32, 39],
+    yellow: [33, 39],
+    blue: [34, 39],
+    magenta: [35, 39],
+    cyan: [36, 39],
+    white: [37, 39],
+    gray: [90, 39],
+    grey: [90, 39],
+    blackbright: [90, 39],
+    redbright: [91, 39],
+    greenbright: [92, 39],
+    yellowbright: [93, 39],
+    bluebright: [94, 39],
+    magentabright: [95, 39],
+    cyanbright: [96, 39],
+    whitebright: [97, 39],
+    bgblack: [40, 49],
+    bgred: [41, 49],
+    bggreen: [42, 49],
+    bgyellow: [43, 49],
+    bgblue: [44, 49],
+    bgmagenta: [45, 49],
+    bgcyan: [46, 49],
+    bgwhite: [47, 49],
+    bggray: [100, 49],
+    bggrey: [100, 49],
+    bgblackbright: [100, 49],
+    bgredbright: [101, 49],
+    bggreenbright: [102, 49],
+    bgyellowbright: [103, 49],
+    bgbluebright: [104, 49],
+    bgmagentabright: [105, 49],
+    bgcyanbright: [106, 49],
+    bgwhitebright: [107, 49],
+    bold: [1, 22],
+    dim: [2, 22],
+    italic: [3, 23],
+    underline: [4, 24],
+    inverse: [7, 27],
+    hidden: [8, 28],
+    strikethrough: [9, 29],
+  }[key];
+  return style
+    ? { open: `\u001b[${style[0]}m`, close: `\u001b[${style[1]}m` }
+    : undefined;
+}
+
+function spawnApiHexColor(color, colorLevel) {
+  const match = /^#?([0-9a-fA-F]{6}|[0-9a-fA-F]{3})$/.exec(color);
+  if (!match) {
+    return undefined;
+  }
+  const hex =
+    match[1].length === 3
+      ? match[1].split("").map((char) => char + char).join("")
+      : match[1];
+  const red = Number.parseInt(hex.slice(0, 2), 16);
+  const green = Number.parseInt(hex.slice(2, 4), 16);
+  const blue = Number.parseInt(hex.slice(4, 6), 16);
+  if (colorLevel <= 1) {
+    return {
+      open: `\u001b[${spawnApiAnsi16Code(red, green, blue)}m`,
+      close: "\u001b[39m",
+    };
+  }
+  if (colorLevel === 2) {
+    return {
+      open: `\u001b[38;5;${spawnApiAnsi256Code(red, green, blue)}m`,
+      close: "\u001b[39m",
+    };
+  }
+  return {
+    open: `\u001b[38;2;${red};${green};${blue}m`,
+    close: "\u001b[39m",
+  };
+}
+
+function spawnApiAnsi16Code(red, green, blue) {
+  const code =
+    30 +
+    (Math.round(blue / 255) << 2) +
+    (Math.round(green / 255) << 1) +
+    Math.round(red / 255);
+  const value = Math.max(red, green, blue);
+  return value > 127 ? code + 60 : code;
+}
+
+function spawnApiAnsi256Code(red, green, blue) {
+  if (red === green && green === blue) {
+    if (red < 8) {
+      return 16;
+    }
+    if (red > 248) {
+      return 231;
+    }
+    return Math.round(((red - 8) / 247) * 24) + 232;
+  }
+  return (
+    16 +
+    36 * Math.round((red / 255) * 5) +
+    6 * Math.round((green / 255) * 5) +
+    Math.round((blue / 255) * 5)
+  );
+}
+
+function spawnApiFlushClosedGroups(command, outputState, output) {
+  const groupBuffers = outputState.groupBuffers;
+  if (!groupBuffers) {
+    return;
+  }
+  const position = outputState.groupPositions.get(command);
+  if (position !== outputState.activeGroupPosition) {
+    return;
+  }
+  for (
+    let nextPosition = position + 1;
+    nextPosition < outputState.orderedCommands.length;
+    nextPosition += 1
+  ) {
+    outputState.activeGroupPosition = nextPosition;
+    const nextCommand = outputState.orderedCommands[nextPosition];
+    spawnApiFlushGroupBuffer(nextCommand, outputState, output);
+    if (
+      nextCommand.state !== "exited" ||
+      outputState.pendingRestarts?.has(nextCommand)
+    ) {
+      break;
+    }
+  }
+}
+
+function spawnApiLogCommandText(command, text, options, outputState, output) {
+  const prefix = spawnApiPrefix(command, options, outputState);
+  const lineState = spawnApiLineState(command, outputState);
+  if (
+    lineState.lastWriteCommand !== undefined &&
+    lineState.lastWriteCommand !== command &&
+    lineState.lastWriteChar !== "\n"
+  ) {
+    spawnApiWriteOutput(lineState.lastWriteCommand, "\n", outputState, output);
+  }
+  if (
+    lineState.lastWriteChar === undefined ||
+    lineState.lastWriteChar === "\n"
+  ) {
+    spawnApiWriteOutput(command, prefix, outputState, output);
+  }
+  const textWithPrefixes = text.replaceAll("\n", (lineFeed, offset) =>
+    text[offset + 1] ? lineFeed + prefix : lineFeed
+  );
+  spawnApiWriteOutput(command, textWithPrefixes, outputState, output);
+}
+
+function spawnApiLineState(command, outputState) {
+  if (!spawnApiBuffersCommand(command, outputState)) {
+    return outputState;
+  }
+  let lineState = outputState.groupLineStates.get(command);
+  if (!lineState) {
+    lineState = { lastWriteChar: undefined, lastWriteCommand: undefined };
+    outputState.groupLineStates.set(command, lineState);
+  }
+  return lineState;
+}
+
+function spawnApiBuffersCommand(command, outputState) {
+  const groupBuffers = outputState.groupBuffers;
+  if (!groupBuffers) {
+    return false;
+  }
+  const position = outputState.groupPositions.get(command);
+  return position !== undefined && position > outputState.activeGroupPosition;
+}
+
+function spawnApiWriteOutput(command, chunk, outputState, output, trackLineState = true) {
+  if (chunk === "") {
+    return;
+  }
+  if (!spawnApiBuffersCommand(command, outputState)) {
+    spawnApiWriteVisibleOutput(command, chunk, outputState, output, trackLineState);
+    return;
+  }
+  outputState.groupBuffers.get(command).push({ chunk, trackLineState });
+  if (trackLineState) {
+    const lineState = spawnApiLineState(command, outputState);
+    lineState.lastWriteCommand = command;
+    lineState.lastWriteChar = String(chunk).slice(-1);
+  }
+}
+
+function spawnApiWriteVisibleOutput(command, chunk, outputState, output, trackLineState = true) {
+  output.write(chunk);
+  if (!trackLineState) {
+    return;
+  }
+  outputState.lastWriteCommand = command;
+  outputState.lastWriteChar = String(chunk).slice(-1);
+}
+
+function spawnApiFlushGroupedOutput(outputState, output) {
+  const groupBuffers = outputState.groupBuffers;
+  if (!groupBuffers) {
+    return;
+  }
+  for (const command of outputState.orderedCommands) {
+    spawnApiFlushGroupBuffer(command, outputState, output);
+  }
+}
+
+function spawnApiFlushGroupBuffer(command, outputState, output) {
+  const chunks = outputState.groupBuffers?.get(command) ?? [];
+  if (chunks.length === 0) {
+    return;
+  }
+  const tracksLineState = chunks.some((record) => record.trackLineState);
+  if (
+    tracksLineState &&
+    !outputState.raw &&
+    outputState.lastWriteCommand !== undefined &&
+    outputState.lastWriteCommand !== command &&
+    outputState.lastWriteChar !== "\n"
+  ) {
+    spawnApiWriteVisibleOutput(outputState.lastWriteCommand, "\n", outputState, output);
+  }
+  for (const record of chunks) {
+    spawnApiWriteVisibleOutput(
+      command,
+      record.chunk,
+      outputState,
+      output,
+      record.trackLineState
+    );
+  }
+  outputState.groupBuffers.set(command, []);
+}
+
+function spawnApiWriteTimings(events, options, output) {
+  if (!options.timings || options.raw) {
+    return;
+  }
+  output.write("--> Timings:\n");
+  spawnApiWriteTable(
+    [...events]
+      .sort(
+        (left, right) =>
+          right.timings.durationSeconds - left.timings.durationSeconds
+      )
+      .map((event) => ({
+        name: event.command.name,
+        duration: (
+          new Date(event.timings.endDate).getTime() -
+          new Date(event.timings.startDate).getTime()
+        ).toLocaleString(),
+        "exit code": event.exitCode,
+        killed: event.killed,
+        command: event.command.command,
+      })),
+    output
+  );
+}
+
+function spawnApiWriteTable(rows, output) {
+  if (rows.length === 0) {
+    return;
+  }
+  const columns = [];
+  const widths = new Map();
+  for (const row of rows) {
+    for (const key of Object.keys(row)) {
+      if (!widths.has(key)) {
+        columns.push(key);
+        widths.set(key, key.length);
+      }
+      widths.set(
+        key,
+        Math.max(widths.get(key), String(row[key] ?? "").length)
+      );
+    }
+  }
+  const cells = (row) =>
+    columns.map((column) =>
+      String(row[column] ?? "").padEnd(widths.get(column), " ")
+    );
+  const border = (left, separator, right) =>
+    `--> ${left}${columns
+      .map((column) => "─".repeat(widths.get(column) + 2))
+      .join(separator)}${right}\n`;
+  output.write(border("┌", "┬", "┐"));
+  output.write(
+    `--> │ ${cells(
+      Object.fromEntries(columns.map((column) => [column, column]))
+    ).join(" │ ")} │\n`
+  );
+  output.write(border("├", "┼", "┤"));
+  for (const row of rows) {
+    output.write(`--> │ ${cells(row).join(" │ ")} │\n`);
+  }
+  output.write(border("└", "┴", "┘"));
+}
+
+function spawnApiFormatDate(date, format = "yyyy-MM-dd HH:mm:ss.SSS") {
+  const parts = {
+    yyyy: String(date.getFullYear()),
+    yy: String(date.getFullYear()).slice(-2),
+    MM: spawnApiPad2(date.getMonth() + 1),
+    dd: spawnApiPad2(date.getDate()),
+    HH: spawnApiPad2(date.getHours()),
+    mm: spawnApiPad2(date.getMinutes()),
+    ss: spawnApiPad2(date.getSeconds()),
+    SSS: String(date.getMilliseconds()).padStart(3, "0"),
+  };
+  return String(format).replace(
+    /yyyy|SSS|yy|MM|dd|HH|mm|ss/g,
+    (token) => parts[token]
+  );
+}
+
+function spawnApiPad2(value) {
+  return String(value).padStart(2, "0");
+}
+
+function spawnApiAttachInput(commands, options, outputState, output) {
+  const inputStream =
+    options.inputStream ?? (options.handleInput ? process.stdin : undefined);
+  if (!inputStream) {
+    return {
+      finish() {},
+      flush() {},
+    };
+  }
+  const commandsByIndex = new Map();
+  const commandsByName = new Map();
+  for (const command of commands) {
+    commandsByIndex.set(String(command.index), command);
+    if (command.name !== "") {
+      commandsByName.set(command.name, command);
+    }
+  }
+  const hasExplicitInputTarget = (target) =>
+    commandsByIndex.has(target) || commandsByName.has(target);
+  const commandForExplicitInputTarget = (target) =>
+    commandsByIndex.get(target) ?? commandsByName.get(target);
+  const defaultInputTarget =
+    options.defaultInputTarget === undefined ? 0 : options.defaultInputTarget;
+  const defaultTarget = String(defaultInputTarget || 0);
+  const commandForDefaultInputTarget = (target) =>
+    typeof defaultInputTarget === "number"
+      ? commandsByIndex.get(target) ?? commandsByName.get(target)
+      : commandsByName.get(target) ?? commandsByIndex.get(target);
+  const explicitInputTargets = [
+    ...commandsByIndex.keys(),
+    ...commandsByName.keys(),
+  ];
+  const pendingInput = new Map();
+  let inputEnded = false;
+  const writeInput = (target, command, input) => {
+    if (!command) {
+      spawnApiLogGlobalEvent(
+        `Unable to find command "${target}", or it has no stdin open`,
+        options,
+        outputState,
+        output
+      );
+      return;
+    }
+    if (!command.stdin && command.state !== "stopped") {
+      spawnApiLogGlobalEvent(
+        `Unable to find command "${target}", or it has no stdin open`,
+        options,
+        outputState,
+        output
+      );
+      return;
+    }
+    if (command.stdin) {
+      if (!spawnApiWriteCommandInput(command, input)) {
+        spawnApiLogGlobalEvent(
+          `Unable to find command "${target}", or it has no stdin open`,
+          options,
+          outputState,
+          output
+        );
+      }
+      return;
+    }
+    const chunks = pendingInput.get(command) ?? [];
+    chunks.push(input);
+    pendingInput.set(command, chunks);
+  };
+  const endStartedInput = () => {
+    for (const command of commands) {
+      command.stdin?.end?.();
+    }
+  };
+  let inputCarry = "";
+  const routeInputRecord = (record) => {
+    const text = String(record);
+    const parts = text.split(/:(.+)/s);
+    let target = parts[0];
+    let command;
+    let input;
+    if (parts.length > 1 && hasExplicitInputTarget(target)) {
+      command = commandForExplicitInputTarget(target);
+      input = parts[1];
+    } else {
+      target = defaultTarget;
+      command = commandForDefaultInputTarget(target);
+      input = record;
+    }
+    writeInput(target, command, input);
+  };
+  const onData = (data) => {
+    const parsed = spawnApiInputRecords(
+      inputCarry,
+      data,
+      false,
+      explicitInputTargets
+    );
+    inputCarry = parsed.carry;
+    for (const record of parsed.records) {
+      routeInputRecord(record);
+    }
+  };
+  const onEnd = () => {
+    inputEnded = true;
+    const parsed = spawnApiInputRecords(
+      inputCarry,
+      "",
+      true,
+      explicitInputTargets
+    );
+    inputCarry = parsed.carry;
+    for (const record of parsed.records) {
+      routeInputRecord(record);
+    }
+    endStartedInput();
+  };
+  inputStream.on?.("data", onData);
+  inputStream.on?.("end", onEnd);
+  let finished = false;
+  return {
+    finish() {
+      if (finished) {
+        return;
+      }
+      finished = true;
+      inputStream.off?.("data", onData);
+      inputStream.off?.("end", onEnd);
+      inputCarry = "";
+      pendingInput.clear();
+      endStartedInput();
+      if (
+        options.pauseInputStreamOnFinish !== false &&
+        typeof inputStream.pause === "function"
+      ) {
+        inputStream.pause();
+      }
+    },
+    flush(command) {
+      const chunks = pendingInput.get(command) ?? [];
+      for (const chunk of chunks) {
+        spawnApiWriteCommandInput(command, chunk);
+      }
+      pendingInput.delete(command);
+      if (inputEnded) {
+        command.stdin?.end?.();
+      }
+    },
+  };
+}
+
+function spawnApiWriteCommandInput(command, input) {
+  const stdin = command?.stdin;
+  if (
+    !stdin ||
+    command.exited ||
+    command.spawnApiCompleted ||
+    stdin.destroyed ||
+    stdin.writable === false ||
+    stdin.writableEnded
+  ) {
+    return false;
+  }
+  try {
+    stdin.write(input, () => {});
+    return true;
+  } catch (_error) {
+    return false;
+  }
+}
+
+function spawnApiInputRecords(carry, data, end, explicitInputTargets = []) {
+  const text = carry + String(data);
+  if (text === "") {
+    return { records: [], carry: "" };
+  }
+  const records = text.match(/[^\n]*\n/g) ?? [];
+  const consumed = records.reduce((offset, record) => offset + record.length, 0);
+  const nextCarry = text.slice(consumed);
+  if (end && nextCarry !== "") {
+    records.push(nextCarry);
+    return { records, carry: "" };
+  }
+  if (
+    nextCarry !== "" &&
+    !spawnApiShouldCarryPartialInput(nextCarry, explicitInputTargets)
+  ) {
+    records.push(nextCarry);
+    return { records, carry: "" };
+  }
+  return { records, carry: nextCarry };
+}
+
+function spawnApiShouldCarryPartialInput(input, explicitInputTargets) {
+  const separator = input.indexOf(":");
+  return (
+    separator !== -1 &&
+    explicitInputTargets.includes(input.slice(0, separator))
+  );
+}
+
+function spawnApiErrorCloseEvent(command, error) {
+  const endDate = new Date();
+  const startDate = command.startedAt ?? endDate;
+  return {
+    command,
+    index: command.index,
+    exitCode: error && error.code !== undefined ? error.code : 1,
+    killed: command.killed,
+    timings: {
+      startDate,
+      endDate,
+      durationSeconds: (endDate.getTime() - startDate.getTime()) / 1000,
+    },
+  };
+}
+
+function spawnApiPublicCloseEvent(event) {
+  return {
+    command: commandInfo(event.command),
+    index: event.index,
+    exitCode: event.exitCode,
+    killed: event.killed,
+    timings: event.timings,
+  };
+}
+
+function spawnApiShouldKillOthers(event, options) {
+  const conditions = killOthersConditions(options);
+  return (
+    (event.exitCode === 0 && conditions.includes("success")) ||
+    (event.exitCode !== 0 && conditions.includes("failure"))
+  );
+}
+
+function spawnApiShouldRestart(
+  event,
+  command,
+  restartCounts,
+  restartLimit,
+  scheduler
+) {
+  if (
+    event.exitCode === 0 ||
+    (command.killed && spawnApiKilledCommandSuppressesRestart(scheduler)) ||
+    restartLimit === 0
+  ) {
+    return false;
+  }
+  const attempts = restartCounts.get(command) ?? 0;
+  const restartAttempts =
+    restartLimit === Number.POSITIVE_INFINITY
+      ? Number.POSITIVE_INFINITY
+      : Math.floor(restartLimit);
+  if (!(attempts < restartAttempts)) {
+    return false;
+  }
+  restartCounts.set(command, attempts + 1);
+  return true;
+}
+
+function spawnApiShouldPublishCloseEvent(
+  event,
+  command,
+  restartCounts,
+  restartLimit,
+  scheduler
+) {
+  if (event.exitCode === 0) {
+    return true;
+  }
+  if (command.killed && spawnApiKilledCommandSuppressesRestart(scheduler)) {
+    return true;
+  }
+  const attempts = restartCounts.get(command) ?? 0;
+  return attempts >= restartLimit;
+}
+
+function spawnApiKilledCommandSuppressesRestart(scheduler) {
+  return scheduler.caughtSignal === undefined || scheduler.caughtSignal === "SIGINT";
+}
+
+function spawnApiPendingRestartSuppressed(scheduler) {
+  return scheduler.caughtSignal === "SIGINT";
+}
+
+function spawnApiRestartCommand(command, state) {
+  const {
+    input,
+    options,
+    output,
+    outputState,
+    fail,
+    restartFormatter,
+    restartDelay,
+    running,
+    scheduler,
+    settle,
+    startNext,
+  } = state;
+  outputState.pendingRestarts?.add(command);
+  const timer = spawnApiSetTimer(scheduler, () => {
+    scheduler.restartTimers.delete(command);
+    if (scheduler.settled || spawnApiPendingRestartSuppressed(scheduler)) {
+      outputState.pendingRestarts?.delete(command);
+      running.delete(command);
+      startNext();
+      settle();
+      return;
+    }
+    outputState.pendingRestarts?.delete(command);
+    restartFormatter?.event(`${command.command} restarted\n`);
+    spawnApiResetCommand(command);
+    try {
+      command.start();
+      input.flush(command);
+    } catch (error) {
+      scheduler.stopStarting = true;
+      running.delete(command);
+      spawnApiCancelRestartTimers(scheduler, running);
+      try {
+        spawnApiKillOthers(running, options, scheduler);
+      } catch (killError) {
+        fail(killError);
+        return;
+      }
+      if (running.size !== 0) {
+        scheduler.pendingFailure = error;
+        return;
+      }
+      fail(error);
+    }
+  }, restartDelay(command));
+  scheduler.restartTimers.set(command, timer);
+}
+
+function spawnApiAttachSignals(commands, running, scheduler, options) {
+  const signalListener = (signal) => {
+    scheduler.caughtSignal = signal;
+    scheduler.stopStarting = true;
+    spawnApiCancelRestartTimers(scheduler, running);
+    try {
+      spawnApiKillOthers(running, options, scheduler, signal);
+    } catch (_error) {
+      for (const command of commands) {
+        if (running.has(command)) {
+          command.kill(signal);
+        }
+      }
+    }
+    scheduler.settle?.();
+  };
+  for (const signal of SIGNALS) {
+    process.on(signal, signalListener);
+  }
+  return {
+    finish() {
+      for (const signal of SIGNALS) {
+        process.off(signal, signalListener);
+      }
+    },
+  };
+}
+
+function spawnApiCancelRestartTimers(scheduler, running) {
+  for (const [command, timer] of scheduler.restartTimers) {
+    clearTimeout(timer);
+    scheduler.timers.delete(timer);
+    scheduler.restartTimers.delete(command);
+    running.delete(command);
+  }
+}
+
+function spawnApiResetCommand(command) {
+  command.exited = false;
+  command.killed = false;
+  command.killSignal = undefined;
+  command.killBeforePid = false;
+  command.pid = undefined;
+  command.process = undefined;
+  command.stdin = undefined;
+  command.spawnApiCompleted = false;
+  command.state = "stopped";
+}
+
+function spawnApiKillOthers(running, options, scheduler, signal, output, outputState) {
+  const killSignal = signal ?? options.killSignal ?? "SIGTERM";
+  const killableCommands = [...running];
+  const killTargets = killableCommands.map((command) => ({
+    command,
+    pid: command.pid,
+    runId: command.runId,
+  }));
+  if (output && killableCommands.length > 0) {
+    spawnApiLogGlobalEvent(
+      `Sending ${killSignal} to other processes..`,
+      options,
+      outputState,
+      output
+    );
+  }
+  for (const runningCommand of killableCommands) {
+    runningCommand.kill(killSignal);
+  }
+  const timeoutMs = Number(options.killTimeout);
+  if (!timeoutMs || killSignal === "SIGKILL") {
+    return;
+  }
+  const timer = spawnApiSetTimer(scheduler, () => {
+    const stillKillable = killTargets
+      .filter(
+        (target) =>
+          Number.isInteger(target.pid) &&
+          target.command.pid === target.pid &&
+          target.command.runId === target.runId &&
+          Command.canKill(target.command)
+      )
+      .map((target) => target.command);
+    if (output && stillKillable.length > 0) {
+      spawnApiLogGlobalEvent(
+        `Sending SIGKILL to ${stillKillable.length} processes..`,
+        options,
+        outputState,
+        output
+      );
+    }
+    for (const runningCommand of stillKillable) {
+      runningCommand.kill("SIGKILL");
+    }
+  }, timeoutMs);
+  scheduler.killTimers.add(timer);
+}
+
+function spawnApiLogGlobalEvent(message, options, outputState, output) {
+  if (options.raw) {
+    return;
+  }
+  let text;
+  if (options.prefixColors === false) {
+    text = `--> ${message}\n`;
+  } else {
+    const reset = spawnApiAnsiColor("reset", spawnApiColorLevel(options));
+    text = reset
+      ? `${reset.open}-->${reset.close} ${reset.open}${message}${reset.close}\n`
+      : `--> ${message}\n`;
+  }
+  if (
+    outputState.lastWriteChar !== undefined &&
+    outputState.lastWriteChar !== "\n"
+  ) {
+    output.write("\n");
+  }
+  output.write(text);
+  outputState.lastWriteCommand = undefined;
+  outputState.lastWriteChar = "\n";
+}
+
+function spawnApiSetTimer(scheduler, callback, delay) {
+  const timer = setTimeout(() => {
+    scheduler.timers.delete(timer);
+    callback();
+  }, delay);
+  scheduler.timers.add(timer);
+  return timer;
+}
+
+function spawnApiClearTimers(scheduler) {
+  for (const timer of scheduler.timers) {
+    clearTimeout(timer);
+  }
+  scheduler.timers.clear();
+  scheduler.killTimers.clear();
+  scheduler.restartTimers.clear();
+}
+
+function spawnApiOptions(command, options, hidden) {
+  const raw = typeof command.raw === "boolean" ? command.raw : Boolean(options.raw);
+  const stdin = spawnApiForwardsInput(options) ? "pipe" : "ignore";
+  const stdio = hidden
+    ? [stdin, "ignore", "ignore"]
+    : raw && !apiCapturesOutput(options)
+      ? [stdin, "inherit", "inherit"]
+      : [stdin, "pipe", "pipe"];
+  return {
+    cwd: commandCwd(command) ?? invocationCwd(options),
+    env: {
+      ...process.env,
+      ...normalizeEnv(options.env),
+      ...normalizeEnv(command.env),
+    },
+    shell: true,
+    stdio,
+  };
+}
+
+function spawnApiForwardsInput(options) {
+  return Boolean(options.inputStream || options.handleInput);
+}
+
+function spawnApiKillProcess(command, options, signal) {
+  if (options.kill !== undefined) {
+    options.kill(command.pid, signal);
+    return true;
+  }
+  if (!Number.isInteger(command.pid)) {
+    return false;
+  }
+  spawnApiKillTree(command.pid, signal);
+  return true;
+}
+
+function spawnApiKillTree(pid, signal) {
+  const killSignal = signal ?? "SIGTERM";
+  if (process.platform === "win32") {
+    const args = ["/pid", String(pid), "/T"];
+    if (killSignal === "SIGKILL") {
+      args.push("/F");
+    }
+    const child = spawnChildProcess("taskkill", args, {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    child.on("error", () => {});
+    return;
+  }
+  for (const childPid of spawnApiDescendantPids(pid)) {
+    spawnApiKillPid(childPid, killSignal);
+  }
+  spawnApiKillPid(pid, killSignal);
+}
+
+function spawnApiKillPid(pid, signal) {
+  try {
+    process.kill(pid, signal);
+  } catch (error) {
+    if (error?.code !== "ESRCH") {
+      throw error;
+    }
+  }
+}
+
+function spawnApiDescendantPids(pid) {
+  const childrenByParent = spawnApiChildrenByParentPid();
+  const descendants = [];
+  const visited = new Set([pid]);
+  const stack = [pid];
+  while (stack.length > 0) {
+    const parentPid = stack.pop();
+    for (const childPid of childrenByParent.get(parentPid) ?? []) {
+      if (visited.has(childPid)) {
+        continue;
+      }
+      visited.add(childPid);
+      descendants.push(childPid);
+      stack.push(childPid);
+    }
+  }
+
+  return descendants.reverse();
+}
+
+function spawnApiChildrenByParentPid() {
+  const childrenByParent = new Map();
+  const table = spawnApiPsProcessTable();
+  for (const line of table.split(/\r?\n/)) {
+    const [pidText, parentPidText] = line.trim().split(/\s+/);
+    const pid = Number(pidText);
+    const parentPid = Number(parentPidText);
+    if (!Number.isInteger(pid) || !Number.isInteger(parentPid)) {
+      continue;
+    }
+    const children = childrenByParent.get(parentPid) ?? [];
+    children.push(pid);
+    childrenByParent.set(parentPid, children);
+  }
+
+  return childrenByParent;
+}
+
+function spawnApiPsProcessTable() {
+  for (const command of ["/bin/ps", "/usr/bin/ps", "ps"]) {
+    const result = spawnSync(command, ["-eo", "pid=,ppid="], {
+      encoding: "utf8",
+    });
+    if (!result.error && result.status === 0) {
+      return result.stdout;
+    }
+    if (result.error?.code !== "ENOENT") {
+      return "";
+    }
+  }
+
+  return "";
+}
+
+function spawnApiMaxProcesses(maxProcesses, commandCount) {
+  if (maxProcesses === undefined || maxProcesses === null) {
+    return Number.POSITIVE_INFINITY;
+  }
+  if (typeof maxProcesses === "string" && maxProcesses.endsWith("%")) {
+    const percent = Number(maxProcesses.slice(0, -1));
+    if (Number.isNaN(percent) || percent === 0) {
+      return commandCount;
+    }
+    return Math.max(1, Math.round((cpus().length * percent) / 100));
+  }
+  const parsed = Number(maxProcesses);
+  if (Number.isNaN(parsed) || parsed === 0) {
+    return commandCount;
+  }
+  if (parsed < 0) {
+    return 1;
+  }
+  return Math.max(1, Math.ceil(parsed));
+}
+
+function spawnApiRestartLimit(restartTries) {
+  if (restartTries === undefined || restartTries === null) {
+    return 0;
+  }
+  const parsed = Number(restartTries);
+  if (parsed < 0) {
+    return Number.POSITIVE_INFINITY;
+  }
+  return parsed;
+}
+
+function spawnApiRestartDelay(restartDelay, nextAttempt = 1) {
+  if (restartDelay === undefined || restartDelay === null) {
+    return 0;
+  }
+  if (restartDelay === "exponential") {
+    return Math.pow(2, nextAttempt - 1) * 1000;
+  }
+  const parsed = Number(restartDelay);
+  return Number.isNaN(parsed) ? 0 : parsed;
 }
 
 function observerSubscriber(observer) {
@@ -1294,9 +2929,7 @@ function closeEventsSucceeded(events, successCondition = "all") {
   }
   const negated = match[1] === "!";
   const selector = match[2];
-  const targetEvents = events.filter((event) =>
-    event.command.name === selector || event.index === Number(selector)
-  );
+  const targetEvents = closeEventsForSelector(events, selector);
   if (negated) {
     return events.every(
       (event) => targetEvents.includes(event) || event.exitCode === 0
@@ -1362,8 +2995,26 @@ function remapPrefixColors(commands, colors) {
 }
 
 function forceColorEnabled(env) {
+  return forceColorLevel(env) > 0;
+}
+
+function forceColorLevel(env) {
   const value = env.FORCE_COLOR;
-  return value !== undefined && value !== "0" && value !== "false";
+  if (value === undefined) {
+    return 0;
+  }
+  const normalized = String(value).trim().toLowerCase();
+  if (normalized === "false" || normalized === "0") {
+    return 0;
+  }
+  if (normalized === "" || normalized === "true") {
+    return 1;
+  }
+  const level = Number.parseInt(normalized, 10);
+  if (Number.isNaN(level) || level <= 0) {
+    return 0;
+  }
+  return Math.min(level, 3);
 }
 
 function hiddenCommands(commands, options) {
@@ -1395,7 +3046,7 @@ function hideIdentifiers(commands, identifier) {
 }
 
 function nativeKillPolicyMayStopCommands(options) {
-  return arrayOption(options.killOthersOn ?? options.killOthers).length > 0;
+  return killOthersConditions(options).length > 0;
 }
 
 function shouldDetachWrappedCommand(options) {
@@ -1406,7 +3057,7 @@ function shouldDetachWrappedCommand(options) {
 }
 
 function applyKillOthers(args, options) {
-  const conditions = arrayOption(options.killOthersOn ?? options.killOthers);
+  const conditions = killOthersConditions(options);
   if (conditions.length === 0) {
     return;
   }
@@ -1421,70 +3072,20 @@ function applyKillOthers(args, options) {
   }
 }
 
+function killOthersConditions(options) {
+  return arrayOption(options.killOthersOn ?? options.killOthers);
+}
+
 function attachStreams(child, options) {
   const outputSink = apiOutputSink(options);
   if (!outputSink) {
     return () => Promise.resolve();
   }
-  let pendingWrites = 0;
-  let outputError;
-  const waiters = [];
-  const settleWaiters = () => {
-    if (pendingWrites !== 0) {
-      return;
-    }
-    while (waiters.length > 0) {
-      const waiter = waiters.shift();
-      if (outputError) {
-        waiter.reject(outputError);
-      } else {
-        waiter.resolve();
-      }
-    }
-  };
-  const write = (chunk) => {
-    pendingWrites += 1;
-    try {
-      outputSink.write(chunk, (error) => {
-        if (error && !outputError) {
-          outputError = error;
-        }
-        pendingWrites -= 1;
-        settleWaiters();
-      });
-    } catch (error) {
-      if (!outputError) {
-        outputError = error;
-      }
-      pendingWrites -= 1;
-      settleWaiters();
-    }
-  };
+  const output = outputWriter(outputSink);
+  const write = (chunk) => output.write(chunk);
   child.stdout?.on("data", write);
   child.stderr?.on("data", write);
-  let outputSinkEnded = false;
-  const endOutputSink = () => {
-    if (outputSinkEnded) {
-      return;
-    }
-    outputSinkEnded = true;
-    try {
-      outputSink.end?.();
-    } catch (error) {
-      if (!outputError) {
-        outputError = error;
-      }
-    }
-  };
-  return () => {
-    endOutputSink();
-    if (pendingWrites === 0) {
-      return outputError ? Promise.reject(outputError) : Promise.resolve();
-    }
-    return new Promise((resolve, reject) => {
-      waiters.push({ resolve, reject });
-    });
-  };
+  return () => output.finish();
 }
 
 function attachInput(child, options) {
@@ -1698,6 +3299,16 @@ function normalizeEnv(env) {
     Object.entries(env ?? {})
       .filter(([_key, value]) => value !== undefined)
       .map(([key, value]) => [key, String(value)])
+  );
+}
+
+function closeEventsForSelector(events, selector) {
+  const selectedIndex = Number(selector);
+  if (Number.isNaN(selectedIndex)) {
+    return events.filter((event) => event.command.name === selector);
+  }
+  return events.filter(
+    (event) => event.command.name === selector || event.index === selectedIndex
   );
 }
 

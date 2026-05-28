@@ -112,11 +112,12 @@ native-backed command list, receive close, timer, and state-change events from
 the facade, and kill returned commands through native per-command control files
 or an `options.kill` callback after the child PID is known. Standalone
 `new Command` instances support custom `spawn` and IPC for controller-style
-library code.
-JavaScript hooks that require replacing native orchestration for a high-level
-run, such as `options.spawn`, command-level `ipc`, and `options.kill` combined
-with native kill policies, fail explicitly instead of routing to upstream
-JavaScript.
+library code. High-level runs with `options.spawn` use the package-owned
+JavaScript scheduler so callers can replace command creation without routing to
+upstream JavaScript. Hooks that still require native orchestration features that
+cannot be represented in that scheduler, such as command-level `ipc`,
+`options.teardown` with `options.spawn`, and `options.kill` combined with native
+kill policies, fail explicitly.
 
 ## Implemented CLI Surface
 

@@ -1177,7 +1177,7 @@ const posixCases = [
       "bogus",
       "exit 1",
     ],
-    normalizeStderr: normalizeNodeTimerWarningPid,
+    normalizeStderr: normalizeNodeTimerWarningAndShellDiagnosticStderr,
   },
   {
     name: "restart after invalid warning is emitted in raw mode",
@@ -2063,6 +2063,7 @@ async function runNativeApiSmoke() {
   await runNativeApiControllerTemplateIndexAndStringColorSmoke();
   await runNativeApiControllerIpcRejectSmoke();
   await runNativeApiGlobalRawCommandFalseSmoke();
+  await runNativeApiCustomSpawnSmoke();
   await runNativeApiNumericNameSuccessSelectorSmoke();
   await runNativeApiNumericNameDefaultInputTargetSmoke();
 }
@@ -2437,6 +2438,2492 @@ async function runNativeApiGlobalRawCommandFalseSmoke() {
     );
   }
   console.log("compat ok: native JS API global raw command false formats output");
+}
+
+async function runNativeApiCustomSpawnSmoke() {
+  const api = require(resolve("index.js"));
+  let output = "";
+  const calls = [];
+  const sink = new Writable({
+    write(chunk, _encoding, callback) {
+      output += chunk.toString();
+      callback();
+    },
+  });
+  const run = api.concurrently(
+    [
+      {
+        command:
+          "node -e \"process.stdout.write(process.env.CONCURRENTLY_ML_SPAWN_SMOKE)\"",
+        env: { CONCURRENTLY_ML_SPAWN_SMOKE: "spawn-ok" },
+      },
+    ],
+    {
+      outputStream: sink,
+      env: { CONCURRENTLY_ML_PRIVATE_ENV: "spawn-secret-do-not-leak" },
+      spawn(command, options) {
+        calls.push({ command, options });
+        return spawn(command, [], options);
+      },
+    }
+  );
+  const events = await run.result;
+
+  assertEqual(calls.length, 1, "native JS API custom spawn call count");
+  assertEqual(calls[0].options.shell, true, "native JS API custom spawn shell");
+  assertEqual(
+    calls[0].options.env.CONCURRENTLY_ML_SPAWN_SMOKE,
+    "spawn-ok",
+    "native JS API custom spawn env"
+  );
+  assertEqual(events.length, 1, "native JS API custom spawn event count");
+  assertEqual(events[0].exitCode, 0, "native JS API custom spawn exit code");
+  assertEqual(
+    events[0].command.spawnOpts,
+    undefined,
+    "native JS API custom spawn public close event shape"
+  );
+  if (JSON.stringify(events).includes("spawn-secret-do-not-leak")) {
+    throw new Error("native JS API custom spawn leaked spawn options in close event");
+  }
+  if (!output.includes("spawn-ok")) {
+    throw new Error(
+      `native JS API custom spawn did not route output: ${JSON.stringify(output)}`
+    );
+  }
+  if (!output.includes("[0] spawn-ok")) {
+    throw new Error(
+      `native JS API custom spawn did not format output: ${JSON.stringify(output)}`
+    );
+  }
+
+  let defaultOutput = "";
+  const originalStdoutWrite = process.stdout.write;
+  process.stdout.write = function writeStdout(chunk, encoding, callback) {
+    defaultOutput += Buffer.isBuffer(chunk) ? chunk.toString() : String(chunk);
+    const done = typeof encoding === "function" ? encoding : callback;
+    if (done) {
+      done();
+    }
+    return true;
+  };
+  try {
+    await api.concurrently(["node -e \"process.stdout.write('default-output')\""], {
+      spawn(command, options) {
+        return spawn(command, [], options);
+      },
+    }).result;
+  } finally {
+    process.stdout.write = originalStdoutWrite;
+  }
+  if (!defaultOutput.includes("[0] default-output")) {
+    throw new Error(
+      `native JS API custom spawn dropped default output: ${JSON.stringify(defaultOutput)}`
+    );
+  }
+
+  let indexPrefixOutput = "";
+  const indexPrefixSink = new Writable({
+    write(chunk, _encoding, callback) {
+      indexPrefixOutput += chunk.toString();
+      callback();
+    },
+  });
+  await api.concurrently(
+    [{ name: "named", command: "node -e \"process.stdout.write('index-prefix')\"" }],
+    {
+      outputStream: indexPrefixSink,
+      prefix: "index",
+      spawn(command, options) {
+        return spawn(command, [], options);
+      },
+    }
+  ).result;
+  if (!indexPrefixOutput.includes("[0] index-prefix")) {
+    throw new Error(
+      `native JS API custom spawn ignored index prefix: ${JSON.stringify(indexPrefixOutput)}`
+    );
+  }
+
+  let literalTemplatePrefixOutput = "";
+  const literalTemplatePrefixSink = new Writable({
+    write(chunk, _encoding, callback) {
+      literalTemplatePrefixOutput += chunk.toString();
+      callback();
+    },
+  });
+  await api.concurrently(
+    [
+      {
+        name: "foo$&bar",
+        command: "node -e \"process.stdout.write('template-prefix')\"",
+      },
+    ],
+    {
+      outputStream: literalTemplatePrefixSink,
+      prefix: "{name}",
+      spawn(command, options) {
+        return spawn(command, [], options);
+      },
+    }
+  ).result;
+  if (!literalTemplatePrefixOutput.includes("foo$&bar template-prefix")) {
+    throw new Error(
+      `native JS API custom spawn template prefix was not literal: ${JSON.stringify(literalTemplatePrefixOutput)}`
+    );
+  }
+
+  let rawGroupedOutput = "";
+  const rawGroupedSink = new Writable({
+    write(chunk, _encoding, callback) {
+      rawGroupedOutput += chunk.toString();
+      callback();
+    },
+  });
+  await api.concurrently(
+    [
+      "node -e \"process.stdout.write('a');setTimeout(()=>process.exit(0),100)\"",
+      "node -e \"process.stdout.write('b')\"",
+    ],
+    {
+      group: true,
+      outputStream: rawGroupedSink,
+      raw: true,
+      spawn(command, options) {
+        return spawn(command, [], options);
+      },
+    }
+  ).result;
+  assertEqual(
+    rawGroupedOutput,
+    "ab",
+    "native JS API custom spawn raw grouped output"
+  );
+
+  let mixedRawOutput = "";
+  const mixedRawSink = new Writable({
+    write(chunk, _encoding, callback) {
+      mixedRawOutput += chunk.toString();
+      callback();
+    },
+  });
+  await api.concurrently(
+    [
+      { command: "node -e \"process.stdout.write('a');setTimeout(()=>process.exit(0),200)\"", raw: true },
+      { command: "node -e \"setTimeout(()=>{process.stdout.write('b');process.exit(0)},50)\"", raw: false },
+    ],
+    {
+      outputStream: mixedRawSink,
+      prefixColors: false,
+      spawn(command, options) {
+        return spawn(command, [], options);
+      },
+    }
+  ).result;
+  if (!mixedRawOutput.startsWith("a[1] b")) {
+    throw new Error(
+      `native JS API custom spawn command-level raw changed line state: ${JSON.stringify(mixedRawOutput)}`
+    );
+  }
+
+  let globalPartialOutput = "";
+  const globalPartialInput = new PassThrough();
+  const globalPartialSink = new Writable({
+    write(chunk, _encoding, callback) {
+      globalPartialOutput += chunk.toString();
+      callback();
+    },
+  });
+  const globalPartialRun = api.concurrently(
+    ["node -e \"process.stdout.write('partial');setTimeout(()=>process.exit(0),250)\""],
+    {
+      defaultInputTarget: "missing",
+      inputStream: globalPartialInput,
+      outputStream: globalPartialSink,
+      prefixColors: false,
+      spawn(command, options) {
+        return spawn(command, [], options);
+      },
+    }
+  );
+  await waitFor(
+    () => globalPartialOutput.includes("[0] partial"),
+    1000,
+    "native JS API custom spawn partial output did not arrive"
+  );
+  globalPartialInput.end("hello");
+  await globalPartialRun.result;
+  if (
+    globalPartialOutput.includes("partial-->") ||
+    !globalPartialOutput.includes(
+      "[0] partial\n--> Unable to find command \"missing\", or it has no stdin open\n"
+    )
+  ) {
+    throw new Error(
+      `native JS API custom spawn global event reused partial line: ${JSON.stringify(globalPartialOutput)}`
+    );
+  }
+
+  let colorPrefixOutput = "";
+  const colorPrefixSink = new Writable({
+    write(chunk, _encoding, callback) {
+      colorPrefixOutput += chunk.toString();
+      callback();
+    },
+  });
+  const previousForceColor = process.env.FORCE_COLOR;
+  const previousNoColor = process.env.NO_COLOR;
+  process.env.FORCE_COLOR = "1";
+  delete process.env.NO_COLOR;
+  try {
+    await api.concurrently(["node -e \"process.stdout.write('color-prefix')\""], {
+      outputStream: colorPrefixSink,
+      prefixColors: ["red"],
+      spawn(command, options) {
+        return spawn(command, [], options);
+      },
+    }).result;
+  } finally {
+    if (previousForceColor === undefined) {
+      delete process.env.FORCE_COLOR;
+    } else {
+      process.env.FORCE_COLOR = previousForceColor;
+    }
+    if (previousNoColor === undefined) {
+      delete process.env.NO_COLOR;
+    } else {
+      process.env.NO_COLOR = previousNoColor;
+    }
+  }
+  if (!colorPrefixOutput.includes("\u001b[31m[0]\u001b[39m color-prefix")) {
+    throw new Error(
+      `native JS API custom spawn ignored prefix colors: ${JSON.stringify(colorPrefixOutput)}`
+    );
+  }
+
+  let noColorGlobalOutput = "";
+  const noColorGlobalInput = new PassThrough();
+  const noColorGlobalSink = new Writable({
+    write(chunk, _encoding, callback) {
+      noColorGlobalOutput += chunk.toString();
+      callback();
+    },
+  });
+  process.env.FORCE_COLOR = "1";
+  delete process.env.NO_COLOR;
+  try {
+    const noColorGlobalRun = api.concurrently(
+      ["node -e \"setTimeout(()=>process.exit(0),50)\""],
+      {
+        defaultInputTarget: "missing",
+        inputStream: noColorGlobalInput,
+        outputStream: noColorGlobalSink,
+        prefixColors: false,
+        spawn(command, options) {
+          return spawn(command, [], options);
+        },
+      }
+    );
+    noColorGlobalInput.end("hello");
+    await noColorGlobalRun.result;
+  } finally {
+    if (previousForceColor === undefined) {
+      delete process.env.FORCE_COLOR;
+    } else {
+      process.env.FORCE_COLOR = previousForceColor;
+    }
+    if (previousNoColor === undefined) {
+      delete process.env.NO_COLOR;
+    } else {
+      process.env.NO_COLOR = previousNoColor;
+    }
+  }
+  if (noColorGlobalOutput.includes("\u001b[")) {
+    throw new Error(
+      `native JS API custom spawn no-color global output contained ANSI: ${JSON.stringify(noColorGlobalOutput)}`
+    );
+  }
+
+  let autoColorPrefixOutput = "";
+  const autoColorPrefixSink = new Writable({
+    write(chunk, _encoding, callback) {
+      autoColorPrefixOutput += chunk.toString();
+      callback();
+    },
+  });
+  process.env.FORCE_COLOR = "1";
+  delete process.env.NO_COLOR;
+  try {
+    await api.concurrently(["node -e \"process.stdout.write('auto-color-prefix')\""], {
+      outputStream: autoColorPrefixSink,
+      prefixColors: ["auto"],
+      spawn(command, options) {
+        return spawn(command, [], options);
+      },
+    }).result;
+  } finally {
+    if (previousForceColor === undefined) {
+      delete process.env.FORCE_COLOR;
+    } else {
+      process.env.FORCE_COLOR = previousForceColor;
+    }
+    if (previousNoColor === undefined) {
+      delete process.env.NO_COLOR;
+    } else {
+      process.env.NO_COLOR = previousNoColor;
+    }
+  }
+  if (!autoColorPrefixOutput.includes("\u001b[36m[0]\u001b[39m auto-color-prefix")) {
+    throw new Error(
+      `native JS API custom spawn did not resolve auto prefix color: ${JSON.stringify(autoColorPrefixOutput)}`
+    );
+  }
+
+  let autoColorControllerOutput = "";
+  const autoColorControllerSink = new Writable({
+    write(chunk, _encoding, callback) {
+      autoColorControllerOutput += chunk.toString();
+      callback();
+    },
+  });
+  process.env.FORCE_COLOR = "1";
+  delete process.env.NO_COLOR;
+  try {
+    await api.concurrently(
+      [
+        "node -e \"process.stdout.write('first')\"",
+        "node -e \"process.stdout.write('second')\"",
+      ],
+      {
+        controllers: [
+          {
+            handle(commands) {
+              return { commands: [commands[1]] };
+            },
+          },
+        ],
+        outputStream: autoColorControllerSink,
+        prefixColors: ["auto"],
+        spawn(command, options) {
+          return spawn(command, [], options);
+        },
+      }
+    ).result;
+  } finally {
+    if (previousForceColor === undefined) {
+      delete process.env.FORCE_COLOR;
+    } else {
+      process.env.FORCE_COLOR = previousForceColor;
+    }
+    if (previousNoColor === undefined) {
+      delete process.env.NO_COLOR;
+    } else {
+      process.env.NO_COLOR = previousNoColor;
+    }
+  }
+  if (!autoColorControllerOutput.includes("\u001b[36m[1]\u001b[39m second")) {
+    throw new Error(
+      `native JS API custom spawn did not remap auto colors after controllers: ${JSON.stringify(autoColorControllerOutput)}`
+    );
+  }
+
+  let explicitColorControllerOutput = "";
+  const explicitColorControllerSink = new Writable({
+    write(chunk, _encoding, callback) {
+      explicitColorControllerOutput += chunk.toString();
+      callback();
+    },
+  });
+  process.env.FORCE_COLOR = "1";
+  delete process.env.NO_COLOR;
+  try {
+    await api.concurrently(
+      [
+        "node -e \"process.stdout.write('first')\"",
+        "node -e \"process.stdout.write('second')\"",
+      ],
+      {
+        controllers: [
+          {
+            handle(commands) {
+              return { commands: [commands[1]] };
+            },
+          },
+        ],
+        outputStream: explicitColorControllerSink,
+        prefixColors: ["red", "blue"],
+        spawn(command, options) {
+          return spawn(command, [], options);
+        },
+      }
+    ).result;
+  } finally {
+    if (previousForceColor === undefined) {
+      delete process.env.FORCE_COLOR;
+    } else {
+      process.env.FORCE_COLOR = previousForceColor;
+    }
+    if (previousNoColor === undefined) {
+      delete process.env.NO_COLOR;
+    } else {
+      process.env.NO_COLOR = previousNoColor;
+    }
+  }
+  if (!explicitColorControllerOutput.includes("\u001b[34m[1]\u001b[39m second")) {
+    throw new Error(
+      `native JS API custom spawn did not preserve explicit color after controllers: ${JSON.stringify(explicitColorControllerOutput)}`
+    );
+  }
+
+  for (const [prefix, expectedLabel] of [
+    ["", "empty-template-prefix"],
+    ["{name}", "empty-name-template-prefix"],
+  ]) {
+    let emptyPrefixOutput = "";
+    const emptyPrefixSink = new Writable({
+      write(chunk, _encoding, callback) {
+        emptyPrefixOutput += chunk.toString();
+        callback();
+      },
+    });
+    await api.concurrently(
+      [`node -e "process.stdout.write('${expectedLabel}')" `],
+      {
+        outputStream: emptyPrefixSink,
+        prefix,
+        spawn(command, options) {
+          return spawn(command, [], options);
+        },
+      }
+    ).result;
+    if (!emptyPrefixOutput.startsWith(expectedLabel)) {
+      throw new Error(
+        `native JS API custom spawn emitted an empty-prefix separator: ${JSON.stringify(emptyPrefixOutput)}`
+      );
+    }
+  }
+
+  for (const [prefixColors, expectedLabel] of [
+    [undefined, "default-reset-prefix"],
+    [["reset"], "explicit-reset-prefix"],
+  ]) {
+    let resetPrefixOutput = "";
+    const resetPrefixSink = new Writable({
+      write(chunk, _encoding, callback) {
+        resetPrefixOutput += chunk.toString();
+        callback();
+      },
+    });
+    process.env.FORCE_COLOR = "1";
+    delete process.env.NO_COLOR;
+    try {
+      await api.concurrently(
+        [`node -e "process.stdout.write('${expectedLabel}')" `],
+        {
+          outputStream: resetPrefixSink,
+          ...(prefixColors === undefined ? {} : { prefixColors }),
+          spawn(command, options) {
+            return spawn(command, [], options);
+          },
+        }
+      ).result;
+    } finally {
+      if (previousForceColor === undefined) {
+        delete process.env.FORCE_COLOR;
+      } else {
+        process.env.FORCE_COLOR = previousForceColor;
+      }
+      if (previousNoColor === undefined) {
+        delete process.env.NO_COLOR;
+      } else {
+        process.env.NO_COLOR = previousNoColor;
+      }
+    }
+    if (!resetPrefixOutput.includes(`\u001b[0m[0]\u001b[0m ${expectedLabel}`)) {
+      throw new Error(
+        `native JS API custom spawn reset prefix mismatch: ${JSON.stringify(resetPrefixOutput)}`
+      );
+    }
+  }
+  for (const [forceColor, expectedPrefix] of [
+    ["1", "\u001b[92m[0]\u001b[39m hex-color-prefix"],
+    ["2", "\u001b[38;5;77m[0]\u001b[39m hex-color-prefix"],
+  ]) {
+    let hexColorPrefixOutput = "";
+    const hexColorPrefixSink = new Writable({
+      write(chunk, _encoding, callback) {
+        hexColorPrefixOutput += chunk.toString();
+        callback();
+      },
+    });
+    process.env.FORCE_COLOR = forceColor;
+    delete process.env.NO_COLOR;
+    try {
+      await api.concurrently(["node -e \"process.stdout.write('hex-color-prefix')\""], {
+        outputStream: hexColorPrefixSink,
+        prefixColors: ["#23de43"],
+        spawn(command, options) {
+          return spawn(command, [], options);
+        },
+      }).result;
+    } finally {
+      if (previousForceColor === undefined) {
+        delete process.env.FORCE_COLOR;
+      } else {
+        process.env.FORCE_COLOR = previousForceColor;
+      }
+      if (previousNoColor === undefined) {
+        delete process.env.NO_COLOR;
+      } else {
+        process.env.NO_COLOR = previousNoColor;
+      }
+    }
+    if (!hexColorPrefixOutput.includes(expectedPrefix)) {
+      throw new Error(
+        `native JS API custom spawn hex color level ${forceColor} mismatch: ${JSON.stringify(hexColorPrefixOutput)}`
+      );
+    }
+  }
+
+  let capturedColorOutput = "";
+  const capturedColorSink = new Writable({
+    write(chunk, _encoding, callback) {
+      capturedColorOutput += chunk.toString();
+      callback();
+    },
+  });
+  const stdoutTtyDescriptor = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+  Object.defineProperty(process.stdout, "isTTY", {
+    configurable: true,
+    value: true,
+  });
+  delete process.env.FORCE_COLOR;
+  delete process.env.NO_COLOR;
+  try {
+    await api.concurrently(["node -e \"process.stdout.write('captured-color')\""], {
+      outputStream: capturedColorSink,
+      prefixColors: ["red"],
+      spawn(command, options) {
+        return spawn(command, [], options);
+      },
+    }).result;
+  } finally {
+    if (stdoutTtyDescriptor) {
+      Object.defineProperty(process.stdout, "isTTY", stdoutTtyDescriptor);
+    } else {
+      delete process.stdout.isTTY;
+    }
+    if (previousForceColor === undefined) {
+      delete process.env.FORCE_COLOR;
+    } else {
+      process.env.FORCE_COLOR = previousForceColor;
+    }
+    if (previousNoColor === undefined) {
+      delete process.env.NO_COLOR;
+    } else {
+      process.env.NO_COLOR = previousNoColor;
+    }
+  }
+  if (capturedColorOutput.includes("\u001b[")) {
+    throw new Error(
+      `native JS API custom spawn colored captured output: ${JSON.stringify(capturedColorOutput)}`
+    );
+  }
+
+  let templatePrefixOutput = "";
+  const templatePrefixSink = new Writable({
+    write(chunk, _encoding, callback) {
+      templatePrefixOutput += chunk.toString();
+      callback();
+    },
+  });
+  await api.concurrently(
+    [
+      {
+        name: "api",
+        command: "node -e \"process.stdout.write('template-prefix')\"",
+      },
+    ],
+    {
+      outputStream: templatePrefixSink,
+      prefix: "{name}:",
+      spawn(command, options) {
+        return spawn(command, [], options);
+      },
+    }
+  ).result;
+  if (!templatePrefixOutput.includes("api: template-prefix")) {
+    throw new Error(
+      `native JS API custom spawn bracketed template prefix: ${JSON.stringify(templatePrefixOutput)}`
+    );
+  }
+  let unnamedTemplatePrefixOutput = "";
+  const unnamedTemplatePrefixSink = new Writable({
+    write(chunk, _encoding, callback) {
+      unnamedTemplatePrefixOutput += chunk.toString();
+      callback();
+    },
+  });
+  await api.concurrently(["node -e \"process.stdout.write('unnamed-template')\""], {
+    outputStream: unnamedTemplatePrefixSink,
+    prefix: "{name}:",
+    spawn(command, options) {
+      return spawn(command, [], options);
+    },
+  }).result;
+  if (
+    !unnamedTemplatePrefixOutput.includes(": unnamed-template") ||
+    unnamedTemplatePrefixOutput.includes("0: unnamed-template")
+  ) {
+    throw new Error(
+      `native JS API custom spawn filled unnamed template prefix: ${JSON.stringify(unnamedTemplatePrefixOutput)}`
+    );
+  }
+
+  let staticPrefixOutput = "";
+  const staticPrefixSink = new Writable({
+    write(chunk, _encoding, callback) {
+      staticPrefixOutput += chunk.toString();
+      callback();
+    },
+  });
+  await api.concurrently(
+    ["node -e \"process.stdout.write('static-prefix')\""],
+    {
+      outputStream: staticPrefixSink,
+      prefix: "static",
+      spawn(command, options) {
+        return spawn(command, [], options);
+      },
+    }
+  ).result;
+  if (!staticPrefixOutput.includes("static static-prefix")) {
+    throw new Error(
+      `native JS API custom spawn ignored static prefix: ${JSON.stringify(staticPrefixOutput)}`
+    );
+  }
+
+  let timePrefixOutput = "";
+  const timePrefixSink = new Writable({
+    write(chunk, _encoding, callback) {
+      timePrefixOutput += chunk.toString();
+      callback();
+    },
+  });
+  await api.concurrently(
+    ["node -e \"process.stdout.write('time-prefix')\""],
+    {
+      outputStream: timePrefixSink,
+      prefix: "time",
+      timestampFormat: "SSS",
+      spawn(command, options) {
+        return spawn(command, [], options);
+      },
+    }
+  ).result;
+  if (!/\[\d{3}\] time-prefix/.test(timePrefixOutput)) {
+    throw new Error(
+      `native JS API custom spawn ignored time prefix: ${JSON.stringify(timePrefixOutput)}`
+    );
+  }
+
+  let commandPrefixOutput = "";
+  const commandPrefixSink = new Writable({
+    write(chunk, _encoding, callback) {
+      commandPrefixOutput += chunk.toString();
+      callback();
+    },
+  });
+  await api.concurrently(["node -e \"process.stdout.write('command-prefix')\""], {
+    outputStream: commandPrefixSink,
+    prefix: "command",
+    prefixLength: 6,
+    spawn(command, options) {
+      return spawn(command, [], options);
+    },
+  }).result;
+  if (!commandPrefixOutput.includes('[no..)"')) {
+    throw new Error(
+      `native JS API custom spawn ignored command prefix length: ${JSON.stringify(commandPrefixOutput)}`
+    );
+  }
+
+  let shortCommandPrefixOutput = "";
+  const shortCommandPrefixSink = new Writable({
+    write(chunk, _encoding, callback) {
+      shortCommandPrefixOutput += chunk.toString();
+      callback();
+    },
+  });
+  await api.concurrently(["node -e \"process.stdout.write('short-command-prefix')\""], {
+    outputStream: shortCommandPrefixSink,
+    prefix: "command",
+    prefixLength: 1,
+    spawn(command, options) {
+      return spawn(command, [], options);
+    },
+  }).result;
+  if (!shortCommandPrefixOutput.includes("[..] short-command-prefix")) {
+    throw new Error(
+      `native JS API custom spawn command prefix length 1 differs: ${JSON.stringify(shortCommandPrefixOutput)}`
+    );
+  }
+
+  let paddedPrefixOutput = "";
+  const paddedPrefixSink = new Writable({
+    write(chunk, _encoding, callback) {
+      paddedPrefixOutput += chunk.toString();
+      callback();
+    },
+  });
+  await api.concurrently(
+    [
+      { name: "a", command: "node -e \"process.stdout.write('pad-a')\"" },
+      { name: "long", command: "node -e \"process.stdout.write('pad-b')\"" },
+    ],
+    {
+      outputStream: paddedPrefixSink,
+      padPrefix: true,
+      spawn(command, options) {
+        return spawn(command, [], options);
+      },
+    }
+  ).result;
+  if (!paddedPrefixOutput.includes("[a   ] pad-a")) {
+    throw new Error(
+      `native JS API custom spawn ignored padded prefix: ${JSON.stringify(paddedPrefixOutput)}`
+    );
+  }
+
+  let groupedOutput = "";
+  const groupedSink = new Writable({
+    write(chunk, _encoding, callback) {
+      groupedOutput += chunk.toString();
+      callback();
+    },
+  });
+  const groupedRun = api.concurrently(
+    [
+      "node -e \"process.stdout.write('grouped-slow');setTimeout(()=>process.exit(0),500)\"",
+      "node -e \"process.stdout.write('grouped-fast')\"",
+    ],
+    {
+      group: true,
+      outputStream: groupedSink,
+      spawn(command, options) {
+        return spawn(command, [], options);
+      },
+    }
+  );
+  await waitFor(
+    () => groupedOutput.includes("[0] grouped-slow"),
+    300,
+    `native JS API custom spawn did not stream active grouped output: ${JSON.stringify(groupedOutput)}`
+  );
+  await groupedRun.result;
+  const slowIndex = groupedOutput.indexOf("[0] grouped-slow");
+  const fastIndex = groupedOutput.indexOf("[1] grouped-fast");
+  if (slowIndex === -1 || fastIndex === -1 || slowIndex > fastIndex) {
+    throw new Error(
+      `native JS API custom spawn did not group by command index: ${JSON.stringify(groupedOutput)}`
+    );
+  }
+
+  let groupedPartialOutput = "";
+  const groupedPartialSink = new Writable({
+    write(chunk, _encoding, callback) {
+      groupedPartialOutput += chunk.toString();
+      callback();
+    },
+  });
+  await api.concurrently(
+    [
+      "node -e \"process.stdout.write('a');setTimeout(()=>{process.stdout.write('b');process.exit(0)},100)\"",
+      "node -e \"setTimeout(()=>{process.stdout.write('x');process.exit(0)},10)\"",
+    ],
+    {
+      group: true,
+      outputStream: groupedPartialSink,
+      spawn(command, options) {
+        return spawn(command, [], options);
+      },
+    }
+  ).result;
+  if (
+    !groupedPartialOutput.includes("[0] ab") ||
+    groupedPartialOutput.includes("[0] a\n[0] b")
+  ) {
+    throw new Error(
+      `native JS API custom spawn grouped buffering mutated line state: ${JSON.stringify(groupedPartialOutput)}`
+    );
+  }
+
+  const groupedRestartRoot = mkdtempSync(
+    resolve(tmpdir(), "concurrently-ml-spawn-group-restart-")
+  );
+  try {
+    const groupedRestartMarker = resolve(groupedRestartRoot, "marker");
+    let groupedRestartOutput = "";
+    const groupedRestartSink = new Writable({
+      write(chunk, _encoding, callback) {
+        groupedRestartOutput += chunk.toString();
+        callback();
+      },
+    });
+    await api.concurrently(
+      [
+        "node -e \"setTimeout(()=>{process.stdout.write('group-a');process.exit(0)},50)\"",
+        "node -e " +
+          JSON.stringify(
+            "const fs=require('node:fs');const f=process.env.CONCURRENTLY_ML_GROUP_RESTART_MARKER;if(!fs.existsSync(f)){fs.writeFileSync(f,'1');process.stdout.write('group-b1');process.exit(1)}process.stdout.write('group-b2');process.exit(0)"
+          ),
+        "node -e \"process.stdout.write('group-c');process.exit(0)\"",
+      ],
+      {
+        env: { CONCURRENTLY_ML_GROUP_RESTART_MARKER: groupedRestartMarker },
+        group: true,
+        outputStream: groupedRestartSink,
+        restartDelay: 100,
+        restartTries: 1,
+        spawn(command, options) {
+          return spawn(command, [], options);
+        },
+      }
+    ).result;
+    const groupB2Index = groupedRestartOutput.indexOf("group-b2");
+    const groupCIndex = groupedRestartOutput.indexOf("group-c");
+    if (groupB2Index === -1 || groupCIndex === -1 || groupCIndex < groupB2Index) {
+      throw new Error(
+        `native JS API custom spawn grouped restart output reordered: ${JSON.stringify(groupedRestartOutput)}`
+      );
+    }
+  } finally {
+    rmSync(groupedRestartRoot, { recursive: true, force: true });
+  }
+
+  let timingsOutput = "";
+  const timingsSink = new Writable({
+    write(chunk, _encoding, callback) {
+      timingsOutput += chunk.toString();
+      callback();
+    },
+  });
+  await api.concurrently(
+    ["node -e \"process.stdout.write('timings-prefix')\""],
+    {
+      outputStream: timingsSink,
+      timings: true,
+      timestampFormat: "SSS",
+      spawn(command, options) {
+        return spawn(command, [], options);
+      },
+    }
+  ).result;
+  if (
+    !timingsOutput.includes("started at ") ||
+    !timingsOutput.includes("stopped at ") ||
+    !timingsOutput.includes("--> Timings:")
+  ) {
+    throw new Error(
+      `native JS API custom spawn omitted timings: ${JSON.stringify(timingsOutput)}`
+    );
+  }
+
+  let rawTimingOutput = "";
+  const rawTimingSink = new Writable({
+    write(chunk, _encoding, callback) {
+      rawTimingOutput += chunk.toString();
+      callback();
+    },
+  });
+  await api.concurrently(["node -e \"process.stdout.write('raw-timing')\""], {
+    outputStream: rawTimingSink,
+    raw: true,
+    timings: true,
+    spawn(command, options) {
+      return spawn(command, [], options);
+    },
+  }).result;
+  assertEqual(rawTimingOutput, "raw-timing", "native JS API custom spawn raw timings");
+
+  let utf8Output = "";
+  const utf8Sink = new Writable({
+    write(chunk, _encoding, callback) {
+      utf8Output += chunk.toString();
+      callback();
+    },
+  });
+  await api.concurrently(
+    [
+      "node -e \"const b=Buffer.from('é');process.stdout.write(b.subarray(0,1));process.stderr.write('X');process.stdout.write(b.subarray(1))\"",
+    ],
+    {
+      outputStream: utf8Sink,
+      spawn(command, options) {
+        return spawn(command, [], options);
+      },
+    }
+  ).result;
+  if (!utf8Output.includes("é") || utf8Output.includes("�")) {
+    throw new Error(
+      `native JS API custom spawn corrupted split utf8 streams: ${JSON.stringify(utf8Output)}`
+    );
+  }
+
+  const rawStderrCode = `
+    const { spawn } = require("node:child_process");
+    const api = require(${JSON.stringify(resolve("index.js"))});
+    (async () => {
+      await api.concurrently([${JSON.stringify(nodeEvalCommand("process.stderr.write('raw-err')"))}], {
+        raw: true,
+        spawn(command, options) {
+          return spawn(command, [], options);
+        },
+      }).result.catch(() => {});
+    })().catch((error) => {
+      console.error(error && error.stack ? error.stack : error);
+      process.exit(1);
+    });
+  `;
+  const rawStderrRun = spawnSync(process.execPath, ["-e", rawStderrCode], {
+    cwd: resolve("."),
+    encoding: "utf8",
+  });
+  assertEqual(
+    rawStderrRun.status,
+    0,
+    `native JS API custom spawn raw stderr child exited with ${rawStderrRun.status}: ${rawStderrRun.stderr}`
+  );
+  assertEqual(rawStderrRun.stdout, "", "native JS API custom spawn raw stderr stdout");
+  assertEqual(rawStderrRun.stderr, "raw-err", "native JS API custom spawn raw stderr");
+
+  let partialLineOutput = "";
+  const partialLineSink = new Writable({
+    write(chunk, _encoding, callback) {
+      partialLineOutput += chunk.toString();
+      callback();
+    },
+  });
+  await api.concurrently(
+    [
+      "node -e \"process.stdout.write('partial-a');setTimeout(()=>process.exit(0),100)\"",
+      "node -e \"setTimeout(()=>{process.stdout.write('partial-b');process.exit(0)},10)\"",
+    ],
+    {
+      outputStream: partialLineSink,
+      spawn(command, options) {
+        return spawn(command, [], options);
+      },
+    }
+  ).result;
+  if (!partialLineOutput.includes("[0] partial-a\n[1] partial-b")) {
+    throw new Error(
+      `native JS API custom spawn did not separate partial lines: ${JSON.stringify(partialLineOutput)}`
+    );
+  }
+
+  const restartRoot = mkdtempSync(resolve(tmpdir(), "concurrently-ml-spawn-restart-"));
+  try {
+    const restartMarker = resolve(restartRoot, "marker");
+    let restartOutput = "";
+    const restartSink = new Writable({
+      write(chunk, _encoding, callback) {
+        restartOutput += chunk.toString();
+        callback();
+      },
+    });
+    let restartCalls = 0;
+    const restartRun = api.concurrently(
+      [
+        "node -e " +
+          JSON.stringify(
+            "const fs=require('node:fs');const f=process.env.CONCURRENTLY_ML_RESTART_MARKER;if(!fs.existsSync(f)){fs.writeFileSync(f,'1');process.exit(1)}process.exit(0)"
+          ),
+      ],
+      {
+        env: { CONCURRENTLY_ML_RESTART_MARKER: restartMarker },
+        outputStream: restartSink,
+        restartTries: 1,
+        spawn(command, options) {
+          restartCalls += 1;
+          return spawn(command, [], options);
+        },
+      }
+    );
+    const restartPublicCloses = [];
+    restartRun.commands[0].close.subscribe((event) => {
+      restartPublicCloses.push(event.exitCode);
+    });
+    const restartEvents = await restartRun.result;
+    assertEqual(restartCalls, 2, "native JS API custom spawn restart call count");
+    assertEqual(
+      JSON.stringify(restartPublicCloses),
+      JSON.stringify([0]),
+      "native JS API custom spawn restart public close stream"
+    );
+    assertEqual(
+      restartEvents[0].exitCode,
+      0,
+      "native JS API custom spawn restart final exit code"
+    );
+    if (!restartOutput.includes("restarted")) {
+      throw new Error(
+        `native JS API custom spawn did not log restart: ${JSON.stringify(restartOutput)}`
+      );
+    }
+  } finally {
+    rmSync(restartRoot, { recursive: true, force: true });
+  }
+  const exponentialStartedAt = Date.now();
+  let exponentialCalls = 0;
+  const exponentialEvents = await api.concurrently(
+    ["node -e \"process.exit(1)\""],
+    {
+      outputStream: sink,
+      restartTries: 1,
+      restartDelay: "exponential",
+      spawn(command, options) {
+        exponentialCalls += 1;
+        return spawn(command, [], options);
+      },
+    }
+  ).result.catch((events) => events);
+  assertEqual(
+    exponentialCalls,
+    2,
+    "native JS API custom spawn exponential restart call count"
+  );
+  assertEqual(
+    exponentialEvents[0].exitCode,
+    1,
+    "native JS API custom spawn exponential restart final exit code"
+  );
+  if (Date.now() - exponentialStartedAt < 900) {
+    throw new Error("native JS API custom spawn exponential restart did not delay");
+  }
+
+  let restartThrowPid;
+  let restartThrowCalls = 0;
+  const restartThrowRun = api.concurrently(
+    [
+      "node -e \"process.exit(1)\"",
+      "node -e \"setInterval(()=>{},1000)\"",
+    ],
+    {
+      maxProcesses: 2,
+      outputStream: sink,
+      restartTries: 1,
+      spawn(command, options) {
+        restartThrowCalls += 1;
+        if (restartThrowCalls === 3) {
+          throw new Error("restart-spawn-boom");
+        }
+        const child = spawn(command, [], options);
+        if (command.includes("setInterval")) {
+          restartThrowPid = child.pid;
+        }
+        return child;
+      },
+    }
+  );
+  try {
+    const restartThrowError = await restartThrowRun.result.catch((error) => error);
+    assertEqual(
+      restartThrowError.message,
+      "restart-spawn-boom",
+      "native JS API custom spawn restart throw error"
+    );
+    await waitFor(
+      () => !processRunning(restartThrowPid),
+      5000,
+      "native JS API custom spawn restart throw left sibling process running"
+    );
+  } finally {
+    if (processRunning(restartThrowPid)) {
+      process.kill(restartThrowPid, "SIGKILL");
+    }
+  }
+
+  const startupThrowRoot = mkdtempSync(
+    resolve(tmpdir(), "concurrently-ml-spawn-startup-throw-")
+  );
+  let startupThrowPid;
+  try {
+    const startupThrowReady = resolve(startupThrowRoot, "ready");
+    const startupThrowRun = api.concurrently(
+      [
+        "node -e " +
+          JSON.stringify(
+            `process.on('SIGTERM',()=>{}); require('node:fs').writeFileSync(${JSON.stringify(
+              startupThrowReady
+            )}, '1'); setInterval(()=>{},1000)`
+          ),
+        "throw-on-start",
+      ],
+      {
+        killTimeout: 100,
+        maxProcesses: 2,
+        outputStream: sink,
+        spawn(command, options) {
+          if (command === "throw-on-start") {
+            throw new Error("startup-spawn-boom");
+          }
+          const child = spawn(command, [], options);
+          startupThrowPid = child.pid;
+          const startedAt = Date.now();
+          while (!existsSync(startupThrowReady) && Date.now() - startedAt < 1000) {
+          }
+          return child;
+        },
+      }
+    );
+    const startupThrowError = await startupThrowRun.result.catch((error) => error);
+    assertEqual(
+      startupThrowError.message,
+      "startup-spawn-boom",
+      "native JS API custom spawn startup throw error"
+    );
+    await waitFor(
+      () => !processRunning(startupThrowPid),
+      5000,
+      "native JS API custom spawn startup throw cleared killTimeout before SIGKILL"
+    );
+  } finally {
+    if (processRunning(startupThrowPid)) {
+      process.kill(startupThrowPid, "SIGKILL");
+    }
+    rmSync(startupThrowRoot, { recursive: true, force: true });
+  }
+
+  const killCalls = [];
+  const killRun = api.concurrently(
+    ["node -e \"setTimeout(()=>{}, 1000)\""],
+    {
+      outputStream: sink,
+      spawn(command, options) {
+        return spawn(command, [], options);
+      },
+      kill(pid, signal) {
+        killCalls.push({ pid, signal });
+        process.kill(pid, signal);
+      },
+    }
+  );
+  setTimeout(() => killRun.commands[0].kill("SIGTERM"), 25);
+  await killRun.result.catch((events) => events);
+  assertEqual(killCalls.length, 1, "native JS API custom spawn kill call count");
+  assertEqual(
+    Number.isInteger(killCalls[0].pid),
+    true,
+    "native JS API custom spawn kill pid"
+  );
+  assertEqual(killCalls[0].signal, "SIGTERM", "native JS API custom spawn kill signal");
+
+  const killedRestartRun = api.concurrently(
+    ["node -e \"setTimeout(()=>{}, 1000)\""],
+    {
+      outputStream: sink,
+      restartTries: 1,
+      spawn(command, options) {
+        return spawn(command, [], options);
+      },
+    }
+  );
+  await waitFor(
+    () => api.Command.canKill(killedRestartRun.commands[0]),
+    1000,
+    "native JS API custom spawn restart kill command did not become killable"
+  );
+  killedRestartRun.commands[0].kill("SIGTERM");
+  const killedRestartEvents = await killedRestartRun.result.catch((events) => events);
+  assertEqual(
+    killedRestartEvents.length,
+    1,
+    "native JS API custom spawn killed restart event count"
+  );
+  assertEqual(
+    killedRestartEvents[0].killed,
+    true,
+    "native JS API custom spawn killed restart event flag"
+  );
+
+  let invalidKillSignalPid;
+  const invalidKillSignalRun = api.concurrently(
+    [
+      "node -e \"process.exit(1)\"",
+      "node -e \"setInterval(()=>{}, 1000)\"",
+    ],
+    {
+      killOthersOn: ["failure"],
+      killSignal: "TERM",
+      outputStream: sink,
+      spawn(command, options) {
+        const child = spawn(command, [], options);
+        if (command.includes("setInterval")) {
+          invalidKillSignalPid = child.pid;
+        }
+        return child;
+      },
+    }
+  );
+  try {
+    const invalidKillSignalResult = await Promise.race([
+      invalidKillSignalRun.result.catch((error) => error),
+      new Promise((resolveTimeout) => {
+        setTimeout(() => resolveTimeout("timeout"), 1000);
+      }),
+    ]);
+    if (invalidKillSignalResult === "timeout") {
+      throw new Error("native JS API custom spawn invalid kill signal hung");
+    }
+    assertEqual(
+      invalidKillSignalResult.code,
+      "ERR_UNKNOWN_SIGNAL",
+      "native JS API custom spawn invalid kill signal error"
+    );
+  } finally {
+    if (processRunning(invalidKillSignalPid)) {
+      process.kill(invalidKillSignalPid, "SIGKILL");
+    }
+  }
+
+  const spawnErrorEvents = await api.concurrently(["ignored"], {
+    raw: true,
+    outputStream: sink,
+    spawn() {
+      return spawn("definitely-not-a-real-binary-concurrently-ml", [], {
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+    },
+  }).result.catch((events) => events);
+  await new Promise((resolveDelay) => setTimeout(resolveDelay, 50));
+  assertEqual(
+    spawnErrorEvents.length,
+    1,
+    "native JS API custom spawn error event count"
+  );
+
+  let staleCloseCalls = 0;
+  let staleCloseOutput = "";
+  const staleCloseSink = new Writable({
+    write(chunk, _encoding, callback) {
+      staleCloseOutput += chunk.toString();
+      callback();
+    },
+  });
+  const staleCloseEvents = await api.concurrently(["stale-close"], {
+    outputStream: staleCloseSink,
+    restartDelay: 0,
+    restartTries: 1,
+    spawn() {
+      staleCloseCalls += 1;
+      const child = new EventEmitter();
+      child.pid = 80000 + staleCloseCalls;
+      child.stdout = new PassThrough();
+      child.stderr = new PassThrough();
+      child.stdin = new PassThrough();
+      child.kill = () => true;
+      if (staleCloseCalls === 1) {
+        setTimeout(() => child.emit("error", new Error("stale-close-boom")), 0);
+        setTimeout(() => child.emit("close", 1, null), 30);
+      } else {
+        setTimeout(() => {
+          child.stdout.write("ok");
+          child.emit("close", 0, null);
+        }, 80);
+      }
+      return child;
+    },
+  }).result;
+  assertEqual(
+    staleCloseCalls,
+    2,
+    "native JS API custom spawn stale close restart call count"
+  );
+  assertEqual(
+    staleCloseEvents[0].exitCode,
+    0,
+    "native JS API custom spawn stale close final exit code"
+  );
+  if (!staleCloseOutput.includes("ok")) {
+    throw new Error(
+      `native JS API custom spawn stale close lost replacement output: ${JSON.stringify(staleCloseOutput)}`
+    );
+  }
+
+  let staleErrorCalls = 0;
+  let staleErrorOutput = "";
+  const staleErrorSink = new Writable({
+    write(chunk, _encoding, callback) {
+      staleErrorOutput += chunk.toString();
+      callback();
+    },
+  });
+  const staleErrorEvents = await api.concurrently(["stale-error"], {
+    outputStream: staleErrorSink,
+    restartDelay: 0,
+    restartTries: 1,
+    spawn() {
+      staleErrorCalls += 1;
+      const child = new EventEmitter();
+      child.pid = 81000 + staleErrorCalls;
+      child.stdout = new PassThrough();
+      child.stderr = new PassThrough();
+      child.stdin = new PassThrough();
+      child.kill = () => true;
+      if (staleErrorCalls === 1) {
+        setTimeout(() => child.emit("close", 1, null), 0);
+        setTimeout(() => child.emit("error", new Error("stale-error-boom")), 30);
+      } else {
+        setTimeout(() => {
+          child.stdout.write("ok");
+          child.emit("close", 0, null);
+        }, 80);
+      }
+      return child;
+    },
+  }).result;
+  assertEqual(
+    staleErrorCalls,
+    2,
+    "native JS API custom spawn stale error restart call count"
+  );
+  assertEqual(
+    staleErrorEvents[0].exitCode,
+    0,
+    "native JS API custom spawn stale error final exit code"
+  );
+  if (!staleErrorOutput.includes("ok")) {
+    throw new Error(
+      `native JS API custom spawn stale error lost replacement output: ${JSON.stringify(staleErrorOutput)}`
+    );
+  }
+
+  let throwingSpawnPid;
+  let throwingSpawnCalls = 0;
+  const throwingSpawnRun = api.concurrently(
+    [
+      "node -e \"setInterval(()=>{}, 1000)\"",
+      "node -e \"process.exit(0)\"",
+    ],
+    {
+      maxProcesses: 2,
+      outputStream: sink,
+      spawn(command, options) {
+        throwingSpawnCalls += 1;
+        if (throwingSpawnCalls === 2) {
+          throw new Error("spawn-boom");
+        }
+        const child = spawn(command, [], options);
+        throwingSpawnPid = child.pid;
+        return child;
+      },
+    }
+  );
+  try {
+    const spawnError = await throwingSpawnRun.result.catch((error) => error);
+    assertEqual(
+      spawnError.message,
+      "spawn-boom",
+      "native JS API custom spawn throw error"
+    );
+    await waitFor(
+      () => !processRunning(throwingSpawnPid),
+      5000,
+      "native JS API custom spawn throw left previous process running"
+    );
+  } finally {
+    if (processRunning(throwingSpawnPid)) {
+      process.kill(throwingSpawnPid, "SIGKILL");
+    }
+  }
+
+  if (process.platform !== "win32") {
+    const killTreeRoot = mkdtempSync(resolve(tmpdir(), "concurrently-ml-spawn-kill-tree-"));
+    const killTreePidFile = resolve(killTreeRoot, "grandchild.pid");
+    const killTreeCommand = nodeEvalCommand(
+      "const cp=require('node:child_process');" +
+        "const fs=require('node:fs');" +
+        "const child=cp.spawn('sleep',['30'],{stdio:'ignore'});" +
+        `fs.writeFileSync('${jsSingleQuoted(killTreePidFile)}',String(child.pid));` +
+        "setInterval(function(){},1000)"
+    );
+    const killTreeRun = api.concurrently(
+      [killTreeCommand],
+      {
+        outputStream: sink,
+        spawn(command, options) {
+          return spawn(command, [], options);
+        },
+      }
+    );
+    try {
+      await waitFor(
+        () => existsSync(killTreePidFile) && api.Command.canKill(killTreeRun.commands[0]),
+        10000,
+        "native JS API custom spawn kill-tree command did not become killable"
+      );
+      const grandchildPid = Number(readFileSync(killTreePidFile, "utf8"));
+      killTreeRun.commands[0].kill("SIGTERM");
+      await killTreeRun.result.catch((events) => events);
+      await waitFor(
+        () => !processRunning(grandchildPid),
+        10000,
+        "native JS API custom spawn default kill left descendant running"
+      );
+    } finally {
+      const grandchildPid = existsSync(killTreePidFile)
+        ? Number(readFileSync(killTreePidFile, "utf8"))
+        : undefined;
+      if (processRunning(grandchildPid)) {
+        process.kill(grandchildPid, "SIGKILL");
+      }
+      rmSync(killTreeRoot, { recursive: true, force: true });
+    }
+
+    const killTreeNoPathRoot = mkdtempSync(
+      resolve(tmpdir(), "concurrently-ml-spawn-kill-tree-no-path-")
+    );
+    const killTreeNoPathPidFile = resolve(killTreeNoPathRoot, "grandchild.pid");
+    const absoluteNodeCommand =
+      JSON.stringify(process.execPath) +
+      " -e " +
+      JSON.stringify(
+        "const cp=require('node:child_process');" +
+          "const fs=require('node:fs');" +
+          "const child=cp.spawn('/bin/sleep',['30'],{stdio:'ignore'});" +
+          `fs.writeFileSync('${jsSingleQuoted(killTreeNoPathPidFile)}',String(child.pid));` +
+          "setInterval(function(){},1000)"
+      );
+    const killTreeNoPathRun = api.concurrently([absoluteNodeCommand], {
+      outputStream: sink,
+      spawn(command, options) {
+        return spawn(command, [], options);
+      },
+    });
+    const originalPath = process.env.PATH;
+    try {
+      await waitFor(
+        () =>
+          existsSync(killTreeNoPathPidFile) &&
+          api.Command.canKill(killTreeNoPathRun.commands[0]),
+        10000,
+        "native JS API custom spawn kill-tree no-PATH command did not become killable"
+      );
+      const grandchildPid = Number(readFileSync(killTreeNoPathPidFile, "utf8"));
+      process.env.PATH = "";
+      killTreeNoPathRun.commands[0].kill("SIGTERM");
+      process.env.PATH = originalPath;
+      await killTreeNoPathRun.result.catch((events) => events);
+      await waitFor(
+        () => !processRunning(grandchildPid),
+        10000,
+        "native JS API custom spawn default kill depended on pgrep PATH lookup"
+      );
+    } finally {
+      process.env.PATH = originalPath;
+      const grandchildPid = existsSync(killTreeNoPathPidFile)
+        ? Number(readFileSync(killTreeNoPathPidFile, "utf8"))
+        : undefined;
+      if (processRunning(grandchildPid)) {
+        process.kill(grandchildPid, "SIGKILL");
+      }
+      rmSync(killTreeNoPathRoot, { recursive: true, force: true });
+    }
+  }
+
+  let stdinEofOutput = "";
+  const stdinEofSink = new Writable({
+    write(chunk, _encoding, callback) {
+      stdinEofOutput += chunk.toString();
+      callback();
+    },
+  });
+  await api.concurrently(
+    [
+      "node -e \"process.stdin.on('end',()=>{process.stdout.write('eof');process.exit(0)});process.stdin.resume();setTimeout(()=>process.exit(7),500)\"",
+    ],
+    {
+      outputStream: stdinEofSink,
+      spawn(command, options) {
+        return spawn(command, [], options);
+      },
+    }
+  ).result;
+  if (!stdinEofOutput.includes("eof")) {
+    throw new Error(
+      `native JS API custom spawn left stdin open without input forwarding: ${JSON.stringify(stdinEofOutput)}`
+    );
+  }
+
+  let inputOutput = "";
+  const input = new PassThrough();
+  const inputSink = new Writable({
+    write(chunk, _encoding, callback) {
+      inputOutput += chunk.toString();
+      callback();
+    },
+  });
+  const inputRun = api.concurrently(
+    [
+      {
+        name: "target",
+        command:
+          "node -e \"process.stdin.once('data',d=>{process.stdout.write('input:'+d);process.exit(0)});setTimeout(()=>process.exit(3),1000)\"",
+      },
+    ],
+    {
+      defaultInputTarget: "target",
+      inputStream: input,
+      outputStream: inputSink,
+      spawn(command, options) {
+        return spawn(command, [], options);
+      },
+    }
+  );
+  input.end("hello");
+  await inputRun.result;
+  if (!inputOutput.includes("input:hello")) {
+    throw new Error(
+      `native JS API custom spawn did not route input: ${JSON.stringify(inputOutput)}`
+    );
+  }
+
+  let inputChunkOutput = "";
+  const inputChunk = new PassThrough();
+  const inputChunkSink = new Writable({
+    write(chunk, _encoding, callback) {
+      inputChunkOutput += chunk.toString();
+      callback();
+    },
+  });
+  const inputChunkRun = api.concurrently(
+    [
+      {
+        name: "target",
+        command:
+          "node -e \"process.stdin.once('data',d=>{process.stdout.write('chunk:'+d);process.exit(0)});setTimeout(()=>process.exit(3),1000)\"",
+      },
+    ],
+    {
+      defaultInputTarget: "target",
+      inputStream: inputChunk,
+      outputStream: inputChunkSink,
+      spawn(command, options) {
+        return spawn(command, [], options);
+      },
+    }
+  );
+  inputChunk.write("hello");
+  await inputChunkRun.result;
+  if (!inputChunkOutput.includes("chunk:hello")) {
+    throw new Error(
+      `native JS API custom spawn buffered plain input chunk: ${JSON.stringify(inputChunkOutput)}`
+    );
+  }
+
+  let numericNameInputOutput = "";
+  const numericNameInput = new PassThrough();
+  const numericNameInputSink = new Writable({
+    write(chunk, _encoding, callback) {
+      numericNameInputOutput += chunk.toString();
+      callback();
+    },
+  });
+  const numericNameInputRun = api.concurrently(
+    [
+      {
+        name: "1",
+        command:
+          "node -e \"process.stdin.once('data',d=>{process.stdout.write('named:'+d);process.exit(0)});setTimeout(()=>process.exit(0),300)\"",
+      },
+      "node -e \"process.stdin.once('data',d=>{process.stdout.write('indexed:'+d);process.exit(0)});setTimeout(()=>process.exit(0),300)\"",
+    ],
+    {
+      defaultInputTarget: "1",
+      inputStream: numericNameInput,
+      outputStream: numericNameInputSink,
+      spawn(command, options) {
+        return spawn(command, [], options);
+      },
+    }
+  );
+  numericNameInput.end("1:hello");
+  await numericNameInputRun.result;
+  if (
+    !numericNameInputOutput.includes("indexed:hello") ||
+    numericNameInputOutput.includes("named:hello")
+  ) {
+    throw new Error(
+      `native JS API custom spawn routed numeric target to name: ${JSON.stringify(numericNameInputOutput)}`
+    );
+  }
+
+  let multilineInputOutput = "";
+  const multilineInput = new PassThrough();
+  const multilineInputSink = new Writable({
+    write(chunk, _encoding, callback) {
+      multilineInputOutput += chunk.toString();
+      callback();
+    },
+  });
+  const multilineInputRun = api.concurrently(
+    [
+      "node -e \"let s='';process.stdin.on('data',d=>s+=d);process.stdin.on('end',()=>{process.stdout.write('zero:'+s);process.exit(0)});setTimeout(()=>process.exit(9),1000)\"",
+      "node -e \"let s='';process.stdin.on('data',d=>s+=d);process.stdin.on('end',()=>{process.stdout.write('one:'+s);process.exit(0)});setTimeout(()=>process.exit(9),1000)\"",
+    ],
+    {
+      inputStream: multilineInput,
+      outputStream: multilineInputSink,
+      spawn(command, options) {
+        return spawn(command, [], options);
+      },
+    }
+  );
+  multilineInput.end("1:hello\n0:world\n");
+  await multilineInputRun.result;
+  if (
+    !multilineInputOutput.includes("one:hello") ||
+    !multilineInputOutput.includes("zero:world")
+  ) {
+    throw new Error(
+      `native JS API custom spawn did not route multiline input records: ${JSON.stringify(multilineInputOutput)}`
+    );
+  }
+
+  let splitInputOutput = "";
+  const splitInput = new PassThrough();
+  const splitInputSink = new Writable({
+    write(chunk, _encoding, callback) {
+      splitInputOutput += chunk.toString();
+      callback();
+    },
+  });
+  const splitInputRun = api.concurrently(
+    [
+      "node -e \"let s='';process.stdin.on('data',d=>s+=d);process.stdin.on('end',()=>{process.stdout.write('zero:'+s);process.exit(0)});setTimeout(()=>process.exit(9),1000)\"",
+      "node -e \"let s='';process.stdin.on('data',d=>s+=d);process.stdin.on('end',()=>{process.stdout.write('one:'+s);process.exit(0)});setTimeout(()=>process.exit(9),1000)\"",
+    ],
+    {
+      inputStream: splitInput,
+      outputStream: splitInputSink,
+      spawn(command, options) {
+        return spawn(command, [], options);
+      },
+    }
+  );
+  splitInput.write("1:hel");
+  splitInput.end("lo\n0:world\n");
+  await splitInputRun.result;
+  if (
+    !splitInputOutput.includes("one:hello") ||
+    !splitInputOutput.includes("zero:world")
+  ) {
+    throw new Error(
+      `native JS API custom spawn routed partial input record early: ${JSON.stringify(splitInputOutput)}`
+    );
+  }
+
+  let inputEofOutput = "";
+  const inputEof = new PassThrough();
+  const inputEofSink = new Writable({
+    write(chunk, _encoding, callback) {
+      inputEofOutput += chunk.toString();
+      callback();
+    },
+  });
+  const inputEofRun = api.concurrently(
+    [
+      "node -e \"let s='';process.stdin.on('data',d=>s+=d);process.stdin.on('end',()=>{process.stdout.write('eof:'+s);process.exit(0)});setTimeout(()=>process.exit(7),1000)\"",
+    ],
+    {
+      inputStream: inputEof,
+      outputStream: inputEofSink,
+      spawn(command, options) {
+        return spawn(command, [], options);
+      },
+    }
+  );
+  inputEof.end("hello");
+  await inputEofRun.result;
+  if (!inputEofOutput.includes("eof:hello")) {
+    throw new Error(
+      `native JS API custom spawn did not close input: ${JSON.stringify(inputEofOutput)}`
+    );
+  }
+
+  let blankTargetInputOutput = "";
+  const blankTargetInput = new PassThrough();
+  const blankTargetInputSink = new Writable({
+    write(chunk, _encoding, callback) {
+      blankTargetInputOutput += chunk.toString();
+      callback();
+    },
+  });
+  const blankTargetInputRun = api.concurrently(
+    [
+      "node -e \"process.stdin.once('data',d=>{process.stdout.write('blank:'+d);process.exit(0)});setTimeout(()=>process.exit(3),1000)\"",
+    ],
+    {
+      defaultInputTarget: "",
+      inputStream: blankTargetInput,
+      outputStream: blankTargetInputSink,
+      spawn(command, options) {
+        return spawn(command, [], options);
+      },
+    }
+  );
+  setTimeout(() => blankTargetInput.end("target"), 25);
+  await blankTargetInputRun.result;
+  if (!blankTargetInputOutput.includes("blank:target")) {
+    throw new Error(
+      `native JS API custom spawn did not coerce blank input target: ${JSON.stringify(blankTargetInputOutput)}`
+    );
+  }
+
+  let missingInputTargetOutput = "";
+  const missingInputTarget = new PassThrough();
+  const missingInputTargetSink = new Writable({
+    write(chunk, _encoding, callback) {
+      missingInputTargetOutput += chunk.toString();
+      callback();
+    },
+  });
+  const missingInputTargetRun = api.concurrently(
+    ["node -e \"setTimeout(()=>process.exit(0),50)\""],
+    {
+      defaultInputTarget: "missing",
+      inputStream: missingInputTarget,
+      outputStream: missingInputTargetSink,
+      spawn(command, options) {
+        return spawn(command, [], options);
+      },
+    }
+  );
+  missingInputTarget.end("hello");
+  await missingInputTargetRun.result;
+  const plainMissingInputTargetOutput = missingInputTargetOutput.replace(
+    /\u001b\[[0-9;]*m/g,
+    ""
+  );
+  if (
+    !plainMissingInputTargetOutput.includes(
+      '--> Unable to find command "missing", or it has no stdin open'
+    )
+  ) {
+    throw new Error(
+      `native JS API custom spawn missing input target was silent: ${JSON.stringify(missingInputTargetOutput)}`
+    );
+  }
+
+  let numericInputOutput = "";
+  const numericInput = new PassThrough();
+  const numericInputSink = new Writable({
+    write(chunk, _encoding, callback) {
+      numericInputOutput += chunk.toString();
+      callback();
+    },
+  });
+  const numericInputRun = api.concurrently(
+    [
+      "node -e \"setTimeout(()=>process.exit(0),300)\"",
+      "node -e \"process.stdin.once('data',d=>{process.stdout.write('indexed:'+d);process.exit(0)});setTimeout(()=>process.exit(0),1000)\"",
+      {
+        name: "1",
+        command:
+          "node -e \"process.stdin.once('data',d=>{process.stdout.write('named:'+d);process.exit(0)});setTimeout(()=>process.exit(0),1000)\"",
+      },
+    ],
+    {
+      controllers: [
+        {
+          handle(commands) {
+            return { commands: [commands[1], commands[2], commands[0]] };
+          },
+        },
+      ],
+      inputStream: numericInput,
+      outputStream: numericInputSink,
+      spawn(command, options) {
+        return spawn(command, [], options);
+      },
+    }
+  );
+  numericInput.end("1:hello");
+  await numericInputRun.result;
+  if (!numericInputOutput.includes("indexed:hello")) {
+    throw new Error(
+      `native JS API custom spawn numeric input prefix missed public index: ${JSON.stringify(numericInputOutput)}`
+    );
+  }
+  if (numericInputOutput.includes("named:hello")) {
+    throw new Error(
+      `native JS API custom spawn numeric input prefix used name: ${JSON.stringify(numericInputOutput)}`
+    );
+  }
+
+  let numericDefaultInputOutput = "";
+  const numericDefaultInput = new PassThrough();
+  const numericDefaultInputSink = new Writable({
+    write(chunk, _encoding, callback) {
+      numericDefaultInputOutput += chunk.toString();
+      callback();
+    },
+  });
+  const numericDefaultInputRun = api.concurrently(
+    [
+      "node -e \"setTimeout(()=>process.exit(0),300)\"",
+      "node -e \"process.stdin.once('data',d=>{process.stdout.write('indexed:'+d);process.exit(0)});setTimeout(()=>process.exit(0),1000)\"",
+      {
+        name: "1",
+        command:
+          "node -e \"process.stdin.once('data',d=>{process.stdout.write('named:'+d);process.exit(0)});setTimeout(()=>process.exit(0),1000)\"",
+      },
+    ],
+    {
+      controllers: [
+        {
+          handle(commands) {
+            return { commands: [commands[1], commands[2], commands[0]] };
+          },
+        },
+      ],
+      defaultInputTarget: "1",
+      inputStream: numericDefaultInput,
+      outputStream: numericDefaultInputSink,
+      spawn(command, options) {
+        return spawn(command, [], options);
+      },
+    }
+  );
+  numericDefaultInput.end("hello");
+  await numericDefaultInputRun.result;
+  if (!numericDefaultInputOutput.includes("named:hello")) {
+    throw new Error(
+      `native JS API custom spawn numeric default target missed name: ${JSON.stringify(numericDefaultInputOutput)}`
+    );
+  }
+  if (numericDefaultInputOutput.includes("indexed:hello")) {
+    throw new Error(
+      `native JS API custom spawn numeric default target used public index: ${JSON.stringify(numericDefaultInputOutput)}`
+    );
+  }
+
+  const numericSuccessEvents = await api.concurrently(
+    [
+      { name: "1", command: "node -e \"process.exit(0)\"" },
+      "node -e \"process.exit(7)\"",
+    ],
+    {
+      outputStream: sink,
+      successCondition: "command-1",
+      spawn(command, options) {
+        return spawn(command, [], options);
+      },
+    }
+  ).result.then(
+    () => {
+      throw new Error("native JS API custom spawn numeric success selector resolved");
+    },
+    (events) => events
+  );
+  assertEqual(
+    numericSuccessEvents.length,
+    2,
+    "native JS API custom spawn numeric success event count"
+  );
+
+  let fractionalRestartRuns = 0;
+  const fractionalRestartEvents = await api.concurrently(
+    ["node -e \"process.exit(1)\""],
+    {
+      outputStream: sink,
+      restartTries: 1.5,
+      spawn(command, options) {
+        fractionalRestartRuns += 1;
+        return spawn(command, [], options);
+      },
+    }
+  ).result;
+  assertEqual(
+    fractionalRestartRuns,
+    2,
+    "native JS API custom spawn fractional restart run count"
+  );
+  assertEqual(
+    fractionalRestartEvents.length,
+    0,
+    "native JS API custom spawn fractional restart event count"
+  );
+
+  const closedStdinCode = `
+    const { spawn } = require("node:child_process");
+    const { PassThrough, Writable } = require("node:stream");
+    const api = require(${JSON.stringify(resolve("index.js"))});
+    const input = new PassThrough();
+    const sink = new Writable({ write(_chunk, _encoding, callback) { callback(); } });
+    const run = api.concurrently([
+      { name: "fast", command: ${JSON.stringify("node -e \"process.exit(0)\"")} },
+      { name: "slow", command: ${JSON.stringify("node -e \"setTimeout(()=>process.exit(0),800)\"")} },
+    ], {
+      inputStream: input,
+      outputStream: sink,
+      spawn(command, options) {
+        return spawn(command, [], options);
+      },
+    });
+    run.result.then(
+      () => process.stdout.write("done"),
+      (error) => {
+        process.stderr.write(String(error && error.stack ? error.stack : error));
+        process.exit(1);
+      }
+    );
+    let writes = 0;
+    const timer = setInterval(() => {
+      writes += 1;
+      input.write("fast:" + "x".repeat(100000) + "\\n");
+      if (writes === 20) {
+        clearInterval(timer);
+        input.end();
+      }
+    }, 25);
+  `;
+  const closedStdinRun = spawnSync(process.execPath, ["-e", closedStdinCode], {
+    cwd: resolve("."),
+    encoding: "utf8",
+    timeout: 2500,
+  });
+  assertEqual(
+    closedStdinRun.status,
+    0,
+    `native JS API custom spawn closed stdin crashed: ${closedStdinRun.stderr || closedStdinRun.error}`
+  );
+  assertEqual(
+    closedStdinRun.stdout,
+    "done",
+    "native JS API custom spawn closed stdin completion"
+  );
+
+  let pendingWrites = 0;
+  let flushedOutput = "";
+  const flushingSink = new Writable({
+    write(chunk, _encoding, callback) {
+      pendingWrites += 1;
+      setTimeout(() => {
+        flushedOutput += chunk.toString();
+        pendingWrites -= 1;
+        callback();
+      }, 10);
+    },
+  });
+  await api.concurrently(["node -e \"process.stdout.write('flush-ok')\""], {
+    outputStream: flushingSink,
+    spawn(command, options) {
+      return spawn(command, [], options);
+    },
+  }).result;
+  assertEqual(pendingWrites, 0, "native JS API custom spawn pending output writes");
+  if (!flushedOutput.includes("flush-ok")) {
+    throw new Error(
+      `native JS API custom spawn did not flush output: ${JSON.stringify(flushedOutput)}`
+    );
+  }
+
+  const percentCalls = [];
+  const percentRun = api.concurrently(
+    [
+      "node -e \"setTimeout(()=>process.exit(0), 150)\"",
+      "node -e \"setTimeout(()=>process.exit(0), 150)\"",
+    ],
+    {
+      maxProcesses: "1%",
+      outputStream: sink,
+      spawn(command, options) {
+        percentCalls.push(command);
+        return spawn(command, [], options);
+      },
+    }
+  );
+  await new Promise((resolveDelay) => setTimeout(resolveDelay, 50));
+  assertEqual(
+    percentCalls.length,
+    1,
+    "native JS API custom spawn percent maxProcesses initial call count"
+  );
+  await percentRun.result;
+
+  const queuedCalls = [];
+  const queuedRun = api.concurrently(
+    [
+      "node -e \"setTimeout(()=>process.exit(1), 10)\"",
+      "node -e \"setTimeout(()=>{}, 1000)\"",
+      "node -e \"process.stdout.write('should-not-start')\"",
+    ],
+    {
+      maxProcesses: 2,
+      killOthersOn: ["failure"],
+      outputStream: sink,
+      spawn(command, options) {
+        queuedCalls.push(command);
+        return spawn(command, [], options);
+      },
+    }
+  );
+  const queuedEvents = await queuedRun.result.catch((events) => events);
+  assertEqual(queuedCalls.length, 2, "native JS API custom spawn queued call count");
+  assertEqual(queuedEvents.length, 2, "native JS API custom spawn queued event count");
+
+  const killOthersRestartRoot = mkdtempSync(
+    resolve(tmpdir(), "concurrently-ml-spawn-kill-others-restart-")
+  );
+  try {
+    const killOthersRestartMarker = resolve(killOthersRestartRoot, "marker");
+    let killOthersRestartOutput = "";
+    const killOthersRestartSink = new Writable({
+      write(chunk, _encoding, callback) {
+        killOthersRestartOutput += chunk.toString();
+        callback();
+      },
+    });
+    let killOthersRestartCalls = 0;
+    const killOthersRestartRun = api.concurrently(
+      [
+        "node -e " +
+          JSON.stringify(
+            "const fs=require('node:fs');const f=process.env.CONCURRENTLY_ML_KILL_OTHERS_RESTART_MARKER;if(!fs.existsSync(f)){fs.writeFileSync(f,'1');setTimeout(()=>process.exit(1),5)}else{process.exit(0)}"
+          ),
+        "node -e \"setTimeout(()=>process.exit(0),20)\"",
+      ],
+      {
+        env: { CONCURRENTLY_ML_KILL_OTHERS_RESTART_MARKER: killOthersRestartMarker },
+        killOthersOn: ["success"],
+        maxProcesses: 2,
+        outputStream: killOthersRestartSink,
+        restartDelay: 100,
+        restartTries: 1,
+        spawn(command, options) {
+          if (command.includes("KILL_OTHERS_RESTART")) {
+            killOthersRestartCalls += 1;
+          }
+          return spawn(command, [], options);
+        },
+      }
+    );
+    const killOthersRestartEvents = await killOthersRestartRun.result;
+    assertEqual(
+      killOthersRestartCalls,
+      2,
+      "native JS API custom spawn kill-others pending restart call count"
+    );
+    assertEqual(
+      killOthersRestartEvents.length,
+      2,
+      "native JS API custom spawn kill-others pending restart event count"
+    );
+    if (killOthersRestartEvents.some((event) => event.exitCode !== 0)) {
+      throw new Error(
+        `native JS API custom spawn skipped pending restart after kill-others: ${JSON.stringify(killOthersRestartEvents)}`
+      );
+    }
+    const plainKillOthersRestartOutput = killOthersRestartOutput.replace(
+      /\u001b\[[0-9;]*m/g,
+      ""
+    );
+    if (!plainKillOthersRestartOutput.includes("--> Sending SIGTERM to other processes..")) {
+      throw new Error(
+        `native JS API custom spawn did not log kill-others cancellation: ${JSON.stringify(killOthersRestartOutput)}`
+      );
+    }
+  } finally {
+    rmSync(killOthersRestartRoot, { recursive: true, force: true });
+  }
+
+  const killTimeoutRun = api.concurrently(
+    [
+      "node -e \"process.on('SIGTERM',()=>{});setInterval(()=>{},1000)\"",
+      "node -e \"setTimeout(()=>process.exit(1),20)\"",
+    ],
+    {
+      killOthersOn: ["failure"],
+      killTimeout: 25,
+      maxProcesses: 2,
+      outputStream: sink,
+      spawn(command, options) {
+        return spawn(command, [], options);
+      },
+    }
+  );
+  const killTimeoutEvents = await killTimeoutRun.result.catch((events) => events);
+  if (!killTimeoutEvents.some((event) => event.exitCode === "SIGKILL")) {
+    throw new Error(
+      `native JS API custom spawn did not force kill after timeout: ${JSON.stringify(killTimeoutEvents)}`
+    );
+  }
+
+  const killTimeoutBackstopCode = `
+    const { Writable } = require("node:stream");
+    const { spawn } = require("node:child_process");
+    const api = require(${JSON.stringify(resolve("index.js"))});
+    const sink = new Writable({ write(_chunk, _encoding, callback) { callback(); } });
+    api.concurrently([
+      ${JSON.stringify("node -e \"setInterval(()=>{},1000)\"")},
+      ${JSON.stringify("node -e \"setTimeout(()=>process.exit(1),20)\"")},
+    ], {
+      killOthersOn: ["failure"],
+      killTimeout: 2000,
+      maxProcesses: 2,
+      outputStream: sink,
+      spawn(command, options) {
+        return spawn(command, [], options);
+      },
+    }).result.catch(() => {}).then(() => process.stdout.write("done"));
+  `;
+  const killTimeoutBackstopRun = spawnSync(
+    process.execPath,
+    ["-e", killTimeoutBackstopCode],
+    { cwd: resolve("."), encoding: "utf8", timeout: 1200 }
+  );
+  assertEqual(
+    killTimeoutBackstopRun.status,
+    0,
+    `native JS API custom spawn killTimeout timer kept process alive: ${killTimeoutBackstopRun.stderr || killTimeoutBackstopRun.error}`
+  );
+
+  const signalKillTimeoutCode = `
+    const { Writable } = require("node:stream");
+    const { spawn } = require("node:child_process");
+    const api = require(${JSON.stringify(resolve("index.js"))});
+    const sink = new Writable({ write(_chunk, _encoding, callback) { callback(); } });
+    api.concurrently([${JSON.stringify("node -e \"process.on('SIGTERM',()=>{});setInterval(()=>{},1000)\"")}], {
+      killTimeout: 100,
+      outputStream: sink,
+      spawn(command, options) {
+        return spawn(command, [], options);
+      },
+    }).result.catch(() => {}).then(() => process.stdout.write("done"));
+    setTimeout(() => process.kill(process.pid, "SIGTERM"), 100);
+  `;
+  const signalKillTimeout = spawnSync(
+    process.execPath,
+    ["-e", signalKillTimeoutCode],
+    { cwd: resolve("."), encoding: "utf8", timeout: 1200 }
+  );
+  assertEqual(
+    signalKillTimeout.status,
+    0,
+    `native JS API custom spawn signal killTimeout hung: ${signalKillTimeout.stderr || signalKillTimeout.error}`
+  );
+  assertEqual(
+    signalKillTimeout.stdout,
+    "done",
+    "native JS API custom spawn signal killTimeout completion"
+  );
+
+  const signalRestartRoot = mkdtempSync(
+    resolve(tmpdir(), "concurrently-ml-spawn-signal-restart-")
+  );
+  try {
+    const signalRestartMarker = resolve(signalRestartRoot, "marker");
+    const signalRestartCode = `
+      const { Writable } = require("node:stream");
+      const { spawn } = require("node:child_process");
+      const api = require(${JSON.stringify(resolve("index.js"))});
+      const marker = ${JSON.stringify(signalRestartMarker)};
+      const command = "node -e " + ${JSON.stringify(
+        JSON.stringify(
+          "const fs=require('node:fs');const f=process.env.CONCURRENTLY_ML_SIGNAL_RESTART_MARKER;if(!fs.existsSync(f)){fs.writeFileSync(f,'1');process.once('SIGTERM',()=>process.exit(1));setInterval(()=>{},1000)}else{process.exit(0)}"
+        )
+      )};
+      const sink = new Writable({ write(_chunk, _encoding, callback) { callback(); } });
+      let calls = 0;
+      api.concurrently([command], {
+        env: { CONCURRENTLY_ML_SIGNAL_RESTART_MARKER: marker },
+        outputStream: sink,
+        restartDelay: 0,
+        restartTries: 1,
+        spawn(commandText, options) {
+          calls += 1;
+          return spawn(commandText, [], options);
+        },
+      }).result.then(
+        () => process.stdout.write("done:" + calls),
+        (error) => {
+          process.stderr.write(JSON.stringify(error));
+          process.exit(1);
+        }
+      );
+      setTimeout(() => process.kill(process.pid, "SIGTERM"), 100);
+    `;
+    const signalRestart = spawnSync(process.execPath, ["-e", signalRestartCode], {
+      cwd: resolve("."),
+      encoding: "utf8",
+      timeout: 5000,
+    });
+    assertEqual(
+      signalRestart.status,
+      0,
+      `native JS API custom spawn non-SIGINT restart failed: ${signalRestart.stderr || signalRestart.error}`
+    );
+    assertEqual(
+      signalRestart.stdout,
+      "done:2",
+      "native JS API custom spawn non-SIGINT restart call count"
+    );
+  } finally {
+    rmSync(signalRestartRoot, { recursive: true, force: true });
+  }
+
+  const signalKillTimeoutRoot = mkdtempSync(
+    resolve(tmpdir(), "concurrently-ml-spawn-signal-kill-timeout-")
+  );
+  try {
+    const signalKillTimeoutMarker = resolve(signalKillTimeoutRoot, "marker");
+    const signalKillTimeoutCommand =
+      "node -e " +
+      JSON.stringify(
+        `const fs=require('node:fs'); const marker=${JSON.stringify(
+          signalKillTimeoutMarker
+        )}; if(!fs.existsSync(marker)){fs.writeFileSync(marker,'1'); process.once('SIGTERM',()=>process.exit(1)); setInterval(()=>{},1000)} else {process.stdout.write('restarted'); setTimeout(()=>process.exit(0),300)}`
+      );
+    const signalKillTimeoutCode = `
+      const api = require(${JSON.stringify(resolve("index.js"))});
+      const { spawn } = require("node:child_process");
+      const { Writable } = require("node:stream");
+      const sink = new Writable({ write(_chunk, _encoding, callback) { callback(); } });
+      let calls = 0;
+      api.concurrently([${JSON.stringify(signalKillTimeoutCommand)}], {
+        killTimeout: 100,
+        outputStream: sink,
+        restartDelay: 0,
+        restartTries: 1,
+        spawn(command, options) {
+          calls += 1;
+          return spawn(command, [], options);
+        },
+      }).result.then(
+        () => process.stdout.write("done:" + calls),
+        (error) => {
+          process.stderr.write(JSON.stringify(error));
+          process.exit(1);
+        }
+      );
+      const signalWhenReady = () => {
+        if (require("node:fs").existsSync(${JSON.stringify(signalKillTimeoutMarker)})) {
+          process.kill(process.pid, "SIGTERM");
+          return;
+        }
+        setTimeout(signalWhenReady, 25);
+      };
+      signalWhenReady();
+    `;
+    const signalKillTimeout = spawnSync(
+      process.execPath,
+      ["-e", signalKillTimeoutCode],
+      { cwd: resolve("."), encoding: "utf8", timeout: 2500 }
+    );
+    assertEqual(
+      signalKillTimeout.status,
+      0,
+      `native JS API custom spawn signal killTimeout restart failed: ${signalKillTimeout.stderr || signalKillTimeout.error}`
+    );
+    assertEqual(
+      signalKillTimeout.stdout,
+      "done:2",
+      "native JS API custom spawn signal killTimeout restart call count"
+    );
+  } finally {
+    rmSync(signalKillTimeoutRoot, { recursive: true, force: true });
+  }
+
+  const signalChildRoot = mkdtempSync(
+    resolve(tmpdir(), "concurrently-ml-spawn-signal-")
+  );
+  try {
+    const signalChildPidFile = resolve(signalChildRoot, "child.pid");
+    const signalChildCommand =
+      "node -e " +
+      JSON.stringify(
+        `require('node:fs').writeFileSync(${JSON.stringify(
+          signalChildPidFile
+        )}, String(process.pid)); setInterval(()=>{},1000)`
+      );
+    const signalChildCode = `
+      const api = require(${JSON.stringify(resolve("index.js"))});
+      const { spawn } = require("node:child_process");
+      const { existsSync, readFileSync } = require("node:fs");
+      const { Writable } = require("node:stream");
+      const pidFile = ${JSON.stringify(signalChildPidFile)};
+      const sink = new Writable({ write(_chunk, _encoding, callback) { callback(); } });
+      const run = api.concurrently([${JSON.stringify(signalChildCommand)}], {
+        outputStream: sink,
+        spawn(command, options) {
+          return spawn(command, [], options);
+        },
+      });
+      run.result.catch(() => {});
+      const isRunning = (pid) => {
+        try {
+          process.kill(pid, 0);
+          return true;
+        } catch (_error) {
+          return false;
+        }
+      };
+      const signalWhenReady = () => {
+        if (existsSync(pidFile)) {
+          process.kill(process.pid, "SIGTERM");
+          return;
+        }
+        setTimeout(signalWhenReady, 25);
+      };
+      signalWhenReady();
+      setTimeout(() => {
+        if (!existsSync(pidFile)) {
+          process.exit(2);
+        }
+        const childPid = Number(readFileSync(pidFile, "utf8"));
+        const childRunning = isRunning(childPid);
+        if (childRunning) {
+          try {
+            process.kill(childPid, "SIGKILL");
+          } catch (_error) {
+          }
+        }
+        process.exit(childRunning ? 1 : 0);
+      }, 1200);
+    `;
+    const signalChild = spawnSync(process.execPath, ["-e", signalChildCode], {
+      cwd: resolve("."),
+      encoding: "utf8",
+      timeout: 2500,
+    });
+    assertEqual(
+      signalChild.status,
+      0,
+      `native JS API custom spawn signal cleanup failed: ${signalChild.stderr || signalChild.stdout || signalChild.error}`
+    );
+  } finally {
+    rmSync(signalChildRoot, { recursive: true, force: true });
+  }
+
+  const signalPendingRestartCode = `
+    const { Writable } = require("node:stream");
+    const { spawn } = require("node:child_process");
+    const api = require(${JSON.stringify(resolve("index.js"))});
+    const sink = new Writable({ write(_chunk, _encoding, callback) { callback(); } });
+    api.concurrently([${JSON.stringify("node -e \"process.exit(1)\"")}], {
+      outputStream: sink,
+      restartDelay: 5000,
+      restartTries: 1,
+      spawn(command, options) {
+        return spawn(command, [], options);
+      },
+    }).result.catch(() => {}).then(() => process.stdout.write("done"));
+    setTimeout(() => process.kill(process.pid, "SIGTERM"), 100);
+  `;
+  const signalPendingRestart = spawnSync(
+    process.execPath,
+    ["-e", signalPendingRestartCode],
+    { cwd: resolve("."), encoding: "utf8", timeout: 1200 }
+  );
+  assertEqual(
+    signalPendingRestart.status,
+    0,
+    `native JS API custom spawn signal left pending restart timer: ${signalPendingRestart.stderr || signalPendingRestart.error}`
+  );
+  assertEqual(
+    signalPendingRestart.stdout,
+    "done",
+    "native JS API custom spawn signal pending restart completion"
+  );
+
+  const restartTimerBackstopCode = `
+    const { Writable } = require("node:stream");
+    const { spawn } = require("node:child_process");
+    const api = require(${JSON.stringify(resolve("index.js"))});
+    const sink = new Writable({ write(_chunk, _encoding, callback) { callback(); } });
+    let calls = 0;
+    api.concurrently([
+      ${JSON.stringify("node -e \"process.exit(1)\"")},
+      ${JSON.stringify("node -e \"setTimeout(()=>process.exit(0),50)\"")},
+      "throw-on-start",
+    ], {
+      maxProcesses: 2,
+      outputStream: sink,
+      restartDelay: 2000,
+      restartTries: 1,
+      spawn(command, options) {
+        calls += 1;
+        if (command === "throw-on-start") {
+          throw new Error("queued-spawn-boom");
+        }
+        return spawn(command, [], options);
+      },
+    }).result.catch(() => process.stdout.write("done"));
+  `;
+  const restartTimerBackstopRun = spawnSync(
+    process.execPath,
+    ["-e", restartTimerBackstopCode],
+    { cwd: resolve("."), encoding: "utf8", timeout: 1200 }
+  );
+  assertEqual(
+    restartTimerBackstopRun.status,
+    0,
+    `native JS API custom spawn restart timer kept process alive: ${restartTimerBackstopRun.stderr || restartTimerBackstopRun.error}`
+  );
+  assertEqual(
+    restartTimerBackstopRun.stdout,
+    "done",
+    "native JS API custom spawn restart timer completion"
+  );
+
+  let hiddenOutput = "";
+  const hiddenSink = new Writable({
+    write(chunk, _encoding, callback) {
+      hiddenOutput += chunk.toString();
+      callback();
+    },
+  });
+  await api.concurrently(
+    [{ command: "node -e \"process.stdout.write('hidden-secret')\"", hidden: true }],
+    {
+      outputStream: hiddenSink,
+      spawn(command, options) {
+        return spawn(command, [], options);
+      },
+    }
+  ).result;
+  assertEqual(hiddenOutput, "", "native JS API custom spawn hidden output");
+
+  const hiddenRawChildCode = `
+    const { spawn } = require("node:child_process");
+    const api = require(${JSON.stringify(resolve("index.js"))});
+    api.concurrently(
+      [{ command: ${JSON.stringify("node -e \"process.stdout.write('hidden-raw-secret')\"")}, hidden: true }],
+      {
+        raw: true,
+        spawn(command, options) {
+          return spawn(command, [], options);
+        },
+      }
+    ).result.then(() => {});
+  `;
+  const hiddenRawChild = spawnSync(process.execPath, ["-e", hiddenRawChildCode], {
+    cwd: resolve("."),
+    encoding: "utf8",
+  });
+  assertEqual(
+    hiddenRawChild.status,
+    0,
+    `native JS API custom spawn hidden raw child exited with ${hiddenRawChild.status}: ${hiddenRawChild.stderr}`
+  );
+  assertEqual(
+    hiddenRawChild.stdout,
+    "",
+    "native JS API custom spawn hidden raw stdout"
+  );
+  console.log("compat ok: native JS API custom spawn");
 }
 
 async function runNativeApiNumericNameSuccessSelectorSmoke() {
@@ -3387,6 +5874,13 @@ function normalizePidStdout(stdout) {
 
 function normalizeNodeTimerWarningPid(stderr) {
   return stderr.replace(/^\(node:\d+\)/gm, "(node:<pid>)");
+}
+
+function normalizeNodeTimerWarningAndShellDiagnosticStderr(stderr) {
+  return normalizeNodeTimerWarningPid(stderr).replace(
+    /^sh: line \d+:\s+\d+ Killed: 9\s+sleep 0\.01\n/gm,
+    ""
+  );
 }
 
 function normalizeInvalidWildcardOmissionStderr(stderr) {
