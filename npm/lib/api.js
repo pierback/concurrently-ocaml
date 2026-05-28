@@ -20,7 +20,7 @@ const { runNative } = require("./native");
 const SHORTCUT_RUNNERS = new Set(["npm", "yarn", "pnpm", "bun", "node", "deno"]);
 const SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"];
 const SIGNAL_VALIDATION_PID = 2147483647;
-const KILLED_COMMAND_CLEANUP_RETRY_DELAYS_MS = [25, 100];
+const KILLED_COMMAND_CLEANUP_RETRY_DELAYS_MS = [25, 100, 500, 1000, 2500];
 const AUTO_PREFIX_COLORS = [
   "cyan",
   "yellow",
@@ -2005,7 +2005,7 @@ function spawnApiCleanupKilledCommand(command) {
   ) {
     return;
   }
-  spawnApiKillTree(
+  const killed = spawnApiKillTree(
     command.pid,
     "SIGKILL",
     true,
@@ -2013,18 +2013,20 @@ function spawnApiCleanupKilledCommand(command) {
     command.processGroupId,
     command.killTreeProcessGroupIds
   );
+  command.killTreePids = killed.pids;
+  command.killTreeProcessGroupIds = killed.processGroupIds;
   spawnApiScheduleKilledCommandCleanup(command);
 }
 
 function spawnApiScheduleKilledCommandCleanup(command) {
   const pid = command.pid;
   const processGroupId = command.processGroupId;
-  const killTreePids = command.killTreePids;
-  const killTreeProcessGroupIds = command.killTreeProcessGroupIds;
+  let killTreePids = [...command.killTreePids];
+  let killTreeProcessGroupIds = [...command.killTreeProcessGroupIds];
   for (const delayMs of KILLED_COMMAND_CLEANUP_RETRY_DELAYS_MS) {
     const cleanupTimer = setTimeout(() => {
       try {
-        spawnApiKillTree(
+        const killed = spawnApiKillTree(
           pid,
           "SIGKILL",
           true,
@@ -2032,6 +2034,8 @@ function spawnApiScheduleKilledCommandCleanup(command) {
           processGroupId,
           killTreeProcessGroupIds
         );
+        killTreePids = killed.pids;
+        killTreeProcessGroupIds = killed.processGroupIds;
       } catch (_error) {
         // Cleanup retries run after the public close path; they must not crash the host.
       }

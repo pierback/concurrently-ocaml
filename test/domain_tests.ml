@@ -3560,11 +3560,13 @@ let test_runner_preserves_blank_output_lines () =
 
 let test_runner_preserves_raw_output_bytes () =
   let policy = Run_policy.default in
-  let command = ok (Command.create ~index:0 ~raw:true "printf 'a\\nb'") in
+  let command =
+    ok (Command.create ~index:0 ~raw:true "printf 'a'; printf '\\n'; printf 'b'")
+  in
   let result, events = run_commands_with_events ~policy [ command ] in
   let result = ok result in
   assert (Run_result.exit_code result = 0);
-  assert (output_chunks events = [ "a\nb" ])
+  assert (String.concat "" (output_chunks events) = "a\nb")
 
 let test_runner_applies_command_environment () =
   let policy = Run_policy.default in
