@@ -5231,6 +5231,14 @@ function processRunning(pid) {
   if (!Number.isInteger(pid)) {
     return false;
   }
+  if (process.platform === "win32") {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (_error) {
+      return false;
+    }
+  }
   const result = spawnSync("ps", ["-p", String(pid), "-o", "stat="], {
     encoding: "utf8",
   });
