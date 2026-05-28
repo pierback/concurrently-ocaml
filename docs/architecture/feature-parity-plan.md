@@ -91,9 +91,12 @@ Win32 process creation, stdio handle inheritance, and job-object teardown.
   audits the packed root package's `bin` aliases, `exports` condition shape,
   and runtime export keys against pinned `concurrently@9.2.1`, and runs
   `conc`/`concurrently` from that install. Windows package jobs also run the
-  pinned compatibility harness with Windows-specific command fixtures and a
-  native smoke that checks cwd/env propagation, stdout/stderr capture, stdin
-  forwarding, exit-code mapping, and job-object cleanup of a spawned
+  pinned compatibility harness with Windows-specific command fixtures covering
+  CLI aliases, help/default-help behavior, grouped output, hidden selectors,
+  prefix padding, template prefixes, passthrough placeholders, quoted `.cmd`
+  script paths with spaced arguments, cwd/env propagation, teardown, input
+  routing, kill policies, and a native smoke that checks stdout/stderr capture,
+  stdin forwarding, exit-code mapping, and job-object cleanup of a spawned
   descendant.
 - `npm run perf:concurrently` provides repeatable native-vs-pinned-npm timing
   evidence for startup/version output, many short commands, and streaming
@@ -469,11 +472,12 @@ As of May 28, 2026, commit `7715f4c` on
    POSIX backend conformance tests now directly exercise the backend contract
    below the Runner. Runner backend-boundary tests now prove spawn exceptions
    become close events, retry through the same close-event path, and teardown
-   spawn failures remain isolated from main command exit projection. Additional
-   backend evidence can still be added for platform-specific signal labels; the
-   remaining implementation gap is the deferred Windows backend. POSIX-specific
-   code now lives in the `concurrentlyocaml_posix` backend library, so the
-   OS-neutral core no longer links `eio_posix` or POSIX C stubs.
+   spawn failures remain isolated from main command exit projection. Windows
+   backend evidence is provided by the Windows CI package job, the
+   Windows-selected compatibility harness, and `npm run smoke:windows-native`.
+   POSIX-specific code now lives in the `concurrentlyocaml_posix` backend
+   library, so the OS-neutral core no longer links `eio_posix` or POSIX C
+   stubs.
 
 5. Output formatter parity
 
@@ -628,7 +632,9 @@ As of May 28, 2026, commit `7715f4c` on
    executes both `conc` and `concurrently` through the installed npm bin shims,
    audits the packed npm API surface against pinned `concurrently@9.2.1`, and
    publishes packages on version tags with npm provenance. Windows jobs also
-   run `npm run compat:concurrently` with Windows command fixtures and
+   run `npm run compat:concurrently` with Windows command fixtures for aliases,
+   help, formatting, passthrough, quoted `.cmd` shell execution, cwd/env,
+   teardown, input routing, and kill policies, plus
    `npm run smoke:windows-native` against the local binary before packaging.
    Windows ARM64 is intentionally not advertised until OCaml/opam provisioning
    exists for `windows/arm64` on the runner.
@@ -702,5 +708,6 @@ reported ratios on the target build hosts. Recorded sample runs live in
 
 ## Open Questions
 
-- Which additional Windows-only command parsing and console-control cases need
-  targeted parity fixtures after the first CI run?
+- No current Windows backend question is untracked in the harness. New
+  Windows-only console-control or command-parsing reports should become
+  failing compatibility fixtures before backend changes.
