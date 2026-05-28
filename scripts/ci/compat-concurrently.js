@@ -2136,7 +2136,7 @@ async function runNativeApiSmoke() {
   await runNativeApiClosedIpcSendSmoke();
   await runNativeApiControllerIndexLabelSmoke();
   await runNativeApiControllerTemplateIndexAndStringColorSmoke();
-  await runNativeApiControllerIpcRejectSmoke();
+  await runNativeApiControllerIpcSmoke();
   await runNativeApiGlobalRawCommandFalseSmoke();
   await runNativeApiCustomSpawnWithTimeout();
   await runNativeApiNumericNameSuccessSelectorSmoke();
@@ -2479,42 +2479,47 @@ async function runNativeApiControllerTemplateIndexAndStringColorSmoke() {
   console.log("compat ok: native JS API template index and string prefix colors");
 }
 
-async function runNativeApiControllerIpcRejectSmoke() {
+async function runNativeApiControllerIpcSmoke() {
   const api = require(resolve("index.js"));
   const sink = new Writable({
     write(_chunk, _encoding, callback) {
       callback();
     },
   });
+  const childSource =
+    'process.on("message",(message)=>{process.send({pong:message.ping});});setTimeout(()=>process.exit(0),100);';
   const ipcCommand = new api.Command({
     index: 0,
     name: "ipc",
-    command: nodeExitCommand(0),
+    command: `${process.execPath} -e ${JSON.stringify(childSource)}`,
     ipc: 3,
   });
 
-  try {
-    api.concurrently([nodeExitCommand(0)], {
-      raw: true,
-      outputStream: sink,
-      controllers: [
-        {
-          handle() {
-            return { commands: [ipcCommand] };
-          },
+  const run = api.concurrently([nodeExitCommand(0)], {
+    raw: true,
+    outputStream: sink,
+    controllers: [
+      {
+        handle() {
+          return { commands: [ipcCommand] };
         },
-      ],
-    });
-  } catch (error) {
-    assertEqual(error.name, "NativeApiUnsupportedError", "native JS API controller IPC error name");
-    if (!error.message.includes("command.ipc")) {
-      throw new Error(`native JS API controller IPC error message: ${error.message}`);
-    }
-    console.log("compat ok: native JS API controller IPC is rejected");
-    return;
+      },
+    ],
+  });
+  const incoming = [];
+  run.commands[0].messages.incoming.subscribe({
+    next(event) {
+      incoming.push(event.message);
+    },
+  });
+  await run.commands[0].send({ ping: 9 });
+  const events = await run.result;
+  assertEqual(events.length, 1, "native JS API controller IPC close event count");
+  assertEqual(events[0].exitCode, 0, "native JS API controller IPC exit code");
+  if (!incoming.some((message) => message && message.pong === 9)) {
+    throw new Error(`native JS API controller IPC missing response: ${JSON.stringify(incoming)}`);
   }
-
-  throw new Error("native JS API controller IPC command was accepted");
+  console.log("compat ok: native JS API controller IPC");
 }
 
 async function runNativeApiGlobalRawCommandFalseSmoke() {
