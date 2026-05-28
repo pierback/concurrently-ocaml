@@ -64,16 +64,26 @@ let parse_force_color_int value =
     in
     parse_digits digit_start 0 false
 
-let color_mode_of_force_color = function
+let github_actions_color_cap () =
+  match (Sys.getenv_opt "CI", Sys.getenv_opt "GITHUB_ACTIONS", Sys.getenv_opt "TERM") with
+  | Some _, Some _, Some "dumb" -> None
+  | Some _, Some _, _ -> Some Output_formatter.Ansi16
+  | _ -> None
+
+let color_mode_of_force_color value =
+  let ci_color_cap = github_actions_color_cap () in
+  match value with
   | "false" | "0" -> Output_formatter.Never
-  | "true" | "" -> Output_formatter.Ansi16
+  | "true" | "" -> Option.value ~default:Output_formatter.Ansi16 ci_color_cap
   | value -> (
       match parse_force_color_int value with
-      | Some level when level <= 0 -> Output_formatter.Never
-      | Some 1 -> Output_formatter.Ansi16
-      | Some 2 -> Output_formatter.Ansi256
-      | Some _ -> Output_formatter.Truecolor
-      | None -> Output_formatter.Never)
+      | Some level when level < 0 ->
+          Option.value ~default:Output_formatter.Never ci_color_cap
+      | Some 0 -> Output_formatter.Never
+      | Some 1 -> Option.value ~default:Output_formatter.Ansi16 ci_color_cap
+      | Some 2 -> Option.value ~default:Output_formatter.Ansi256 ci_color_cap
+      | Some _ -> Option.value ~default:Output_formatter.Truecolor ci_color_cap
+      | None -> Option.value ~default:Output_formatter.Never ci_color_cap)
 
 let stdout_is_tty () =
   try Unix.isatty Unix.stdout with _ -> false
