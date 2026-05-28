@@ -2139,6 +2139,7 @@ async function runNativeApiSmoke() {
   await runNativeApiControllerTemplateIndexAndStringColorSmoke();
   await runNativeApiControllerIpcSmoke();
   await runNativeApiGlobalRawCommandFalseSmoke();
+  await runNativeApiCommandAwareLoggerSmoke();
   await runNativeApiCustomSpawnWithTimeout();
   await runNativeApiTeardownCustomSpawnSmoke();
   await runNativeApiNumericNameSuccessSelectorSmoke();
@@ -2596,6 +2597,70 @@ async function runNativeApiGlobalRawCommandFalseSmoke() {
     );
   }
   console.log("compat ok: native JS API global raw command false formats output");
+}
+
+async function runNativeApiCommandAwareLoggerSmoke() {
+  const api = require(resolve("index.js"));
+  const textLoggerRecords = [];
+  const textLogger = {
+    logCommandText(text, command) {
+      textLoggerRecords.push({
+        text,
+        index: command?.index,
+        name: command?.name,
+        command: command?.command,
+      });
+    },
+  };
+
+  await api.concurrently([{ name: "api", command: nodePrintCommand("log-text") }], {
+    logger: textLogger,
+    raw: true,
+    prefixColors: false,
+  }).result;
+  if (
+    !textLoggerRecords.some(
+      (record) =>
+        record.text.includes("log-text") &&
+        record.index === 0 &&
+        record.name === "api" &&
+        record.command.includes("log-text")
+    )
+  ) {
+    throw new Error(
+      `native JS API command-aware logCommandText missing command: ${JSON.stringify(textLoggerRecords)}`
+    );
+  }
+
+  const logRecords = [];
+  const logger = new api.Logger();
+  logger.log = function log(prefix, text, command) {
+    logRecords.push({
+      prefix,
+      text,
+      index: command?.index,
+      name: command?.name,
+      command: command?.command,
+    });
+  };
+  await api.concurrently([{ name: "web", command: nodePrintCommand("log-method") }], {
+    logger,
+    prefixColors: false,
+  }).result;
+  if (
+    !logRecords.some(
+      (record) =>
+        record.text.includes("log-method") &&
+        record.index === 0 &&
+        record.name === "web" &&
+        record.command.includes("log-method")
+    )
+  ) {
+    throw new Error(
+      `native JS API command-aware logger.log missing command: ${JSON.stringify(logRecords)}`
+    );
+  }
+  console.log("compat ok: native JS API command-aware logger callbacks");
 }
 
 async function runNativeApiCustomSpawnSmoke() {
