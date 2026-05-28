@@ -387,28 +387,28 @@ Known divergences and deferred scope:
 
 ## Current Verification Snapshot
 
-As of May 26, 2026, commit `54a33c9` on
+As of May 28, 2026, commit `7715f4c` on
 `feat/windows-native-validation` has the following proof:
 
-- `opam exec -- dune build @install @runtest` passes against the repo-local
-  OCaml 5.4.1 opam switch.
-- `npm run compat:concurrently` passes against pinned `concurrently@9.2.1`.
+- `opam exec -- dune build @install @runtest`, `npm run audit:npm-api`, and
+  `npm run compat:concurrently` pass in GitHub Actions build run
+  `26604935141` against OCaml 5.4.1 and pinned `concurrently@9.2.1`.
 - `npm run smoke:npm-install:host` passes on the host macOS arm64 target,
   packing the root npm package plus the native platform package, verifying the
   native package checksum manifest, and executing both npm-installed bin shims.
 - Root npm package contents remain constrained to launcher/package metadata,
-  README, and LICENSE; OCaml source, tests, Dune files, and development scripts
-  stay outside the root package surface.
-- GitHub Actions run `26466437946` passed the Windows x64 native package gate
-  for commit `54a33c9`. Job `77927884402` builds `bin/main.exe`, audits the
-  npm API surface, runs pinned `concurrently@9.2.1` compatibility on Windows
+  JavaScript API entrypoints, TypeScript declarations, README, and LICENSE;
+  OCaml source, tests, Dune files, and development scripts stay outside the
+  root package surface.
+- GitHub Actions run `26604935141` passes native package gates for Linux GNU
+  x64/arm64, Linux musl x64/arm64, macOS x64/arm64, and Windows x64. Each
+  package job builds the native binary, creates the platform npm package,
+  smoke-installs the packed package, verifies installed bin shims, and uploads
+  the package artifact.
+- The Windows x64 package gate in run `26604935141` builds `bin/main.exe`,
+  audits the npm API surface, runs the pinned compatibility harness on Windows
   command fixtures, runs the Windows-native process smoke, creates the
-  `win32-x64` package, smoke-installs the packed npm package, and uploads the
-  package artifact.
-- The same GitHub Actions run passed both Linux musl native package gates.
-  Job `77927884396` builds and smoke-installs the `linux-x64-musl` package on
-  Alpine, and job `77927884470` builds and smoke-installs the
-  `linux-arm64-musl` package on Alpine.
+  `win32-x64` package, and smoke-installs the packed npm package.
 
 ## Implementation Slices
 
