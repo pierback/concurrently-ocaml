@@ -35,16 +35,27 @@ const signalTrappedSuccessCommand =
 const delayedOkCommand = "sh -c 'sleep 0.05; printf ok'";
 const delayedOneCommand =
   "node -e \"setTimeout(()=>process.stdout.write('one'),1200)\"";
-const forceNoColorEnv = { COLORTERM: null, NO_COLOR: null, TERM: "dumb", FORCE_COLOR: "0" };
-const forceFalseColorEnv = { COLORTERM: null, NO_COLOR: null, TERM: "dumb", FORCE_COLOR: "false" };
-const forceBasicColorEnv = { COLORTERM: null, NO_COLOR: null, TERM: "dumb", FORCE_COLOR: "1" };
-const forceAnsi256ColorEnv = { COLORTERM: null, NO_COLOR: null, TERM: "xterm-256color", FORCE_COLOR: "2" };
-const forceAnsi256SuffixColorEnv = { COLORTERM: null, NO_COLOR: null, TERM: "xterm-256color", FORCE_COLOR: "2foo" };
-const forceTruecolorEnv = { COLORTERM: "truecolor", NO_COLOR: null, TERM: "xterm-256color", FORCE_COLOR: "3" };
+const forceColorBaseEnv = {
+  CI: null,
+  GITHUB_ACTIONS: null,
+  COLORTERM: null,
+  NO_COLOR: null,
+};
+const forceNoColorEnv = { ...forceColorBaseEnv, TERM: "dumb", FORCE_COLOR: "0" };
+const forceFalseColorEnv = { ...forceColorBaseEnv, TERM: "dumb", FORCE_COLOR: "false" };
+const forceBasicColorEnv = { ...forceColorBaseEnv, TERM: "dumb", FORCE_COLOR: "1" };
+const forceAnsi256ColorEnv = { ...forceColorBaseEnv, TERM: "xterm-256color", FORCE_COLOR: "2" };
+const forceAnsi256SuffixColorEnv = { ...forceColorBaseEnv, TERM: "xterm-256color", FORCE_COLOR: "2foo" };
+const forceTruecolorEnv = {
+  ...forceColorBaseEnv,
+  COLORTERM: "truecolor",
+  TERM: "xterm-256color",
+  FORCE_COLOR: "3",
+};
 const forceGithubActionsColorEnv = { ...forceTruecolorEnv, CI: "true", GITHUB_ACTIONS: "true" };
 const forceGithubActionsDumbColorEnv = { ...forceTruecolorEnv, TERM: "dumb", CI: "true", GITHUB_ACTIONS: "true" };
-const forceSpacedZeroColorEnv = { COLORTERM: null, NO_COLOR: null, TERM: "dumb", FORCE_COLOR: " 0" };
-const forceNanColorEnv = { COLORTERM: null, NO_COLOR: null, TERM: "dumb", FORCE_COLOR: "NaN" };
+const forceSpacedZeroColorEnv = { ...forceColorBaseEnv, TERM: "dumb", FORCE_COLOR: " 0" };
+const forceNanColorEnv = { ...forceColorBaseEnv, TERM: "dumb", FORCE_COLOR: "NaN" };
 const forceGithubActionsNanColorEnv = { ...forceNanColorEnv, TERM: "xterm-256color", CI: "true", GITHUB_ACTIONS: "true" };
 const forceGithubActionsNegativeColorEnv = { ...forceNanColorEnv, TERM: "xterm-256color", FORCE_COLOR: "-1", CI: "true", GITHUB_ACTIONS: "true" };
 const shortcutFixture = createShortcutFixture();
