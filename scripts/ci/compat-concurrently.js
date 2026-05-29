@@ -4825,7 +4825,7 @@ async function runNativeApiCustomSpawnSmoke() {
       [
         "node -e " +
           JSON.stringify(
-            "const fs=require('node:fs');const f=process.env.CONCURRENTLY_ML_KILL_OTHERS_RESTART_MARKER;if(!fs.existsSync(f)){fs.writeFileSync(f,'1');setTimeout(()=>process.exit(1),5)}else{process.exit(0)}"
+            "const fs=require('node:fs');const f=process.env.CONCURRENTLY_ML_KILL_OTHERS_RESTART_MARKER;if(!fs.existsSync(f)){fs.writeFileSync(f,'1');process.exit(1)}else{process.exit(0)}"
           ),
         "node -e \"setTimeout(()=>process.exit(0),20)\"",
       ],
