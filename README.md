@@ -111,13 +111,12 @@ events. Custom controllers can inspect or replace the native-backed command
 list, receive close, timer, and state-change events from the facade, and kill
 returned commands through native per-command control files or an `options.kill`
 callback after the child PID is known. Standalone `new Command` instances
-support custom `spawn` and IPC for controller-style library code. High-level
-runs with `options.spawn`, command-level `ipc`, and command-aware logger
-callbacks use the package-owned JavaScript scheduler so callers get per-command
-Node child-process context without routing to upstream JavaScript. Hooks that
-still require native orchestration features that cannot be represented in that
-scheduler, such as `options.teardown` with `options.spawn` and `options.kill`
-combined with native kill policies, fail explicitly.
+support custom `spawn` and IPC for controller-style library code. The command,
+logger, and IPC observable surfaces are backed by `rxjs` subjects to preserve
+the upstream JavaScript API shape. High-level runs with `options.spawn`,
+command-level `ipc`, command-aware logger callbacks, custom kill callbacks,
+and teardown commands use the package-owned JavaScript scheduler so callers get
+per-command Node child-process context without routing to upstream JavaScript.
 
 ## Implemented CLI Surface
 

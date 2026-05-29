@@ -30,3 +30,4 @@ compile_commands.json
 _opam/
 concurrently-ml
 dist/
+node_modules/

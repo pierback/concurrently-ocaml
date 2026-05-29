@@ -77,9 +77,12 @@ Win32 process creation, stdio handle inheritance, and job-object teardown.
   prefers optional native platform packages from installed package roots. The
   root npm package exposes npm-compatible `concurrently` and `conc` binary
   aliases plus the project-specific `concml` alias, and the package import
-  entrypoints use a repo-owned native-backed JavaScript facade. Windows
-  npm-script execution no longer routes to the pinned upstream CLI; it uses the
-  native Windows runner backend.
+  entrypoints use a repo-owned native-backed JavaScript facade. The facade uses
+  `rxjs` `Subject`/`ReplaySubject` values for command, logger, and IPC
+  observables so TypeScript and runtime consumers see the upstream observable
+  shape without routing through upstream JavaScript. Windows npm-script
+  execution no longer routes to the pinned upstream CLI; it uses the native
+  Windows runner backend.
 - GitHub Actions now includes native package jobs for Linux GNU x64/arm64,
   Linux musl x64/arm64, macOS x64/arm64, and Windows x64. Each native
   package job now packs the platform package and root package into a clean npm
@@ -394,7 +397,7 @@ As of May 29, 2026, `feat/windows-native-validation` has the following proof:
 
 - `opam exec -- dune build @install @runtest`, `npm run audit:npm-api`, and
   `npm run compat:concurrently` pass in GitHub Actions build run
-  `26612332069` at commit `f9254ae` against OCaml 5.4.1 and pinned
+  `26613803254` at commit `916d610` against OCaml 5.4.1 and pinned
   `concurrently@9.2.1`.
 - `npm run smoke:npm-install:host` passes on the host macOS arm64 target,
   packing the root npm package plus the native platform package, verifying the
@@ -403,18 +406,19 @@ As of May 29, 2026, `feat/windows-native-validation` has the following proof:
   JavaScript API entrypoints, TypeScript declarations, README, and LICENSE;
   OCaml source, tests, Dune files, and development scripts stay outside the
   root package surface.
-- GitHub Actions run `26612332069` passes native package gates for Linux GNU
+- GitHub Actions run `26613803254` passes native package gates for Linux GNU
   x64/arm64, Linux musl x64/arm64, macOS x64/arm64, and Windows x64. Each
   package job builds the native binary, creates the platform npm package,
   smoke-installs the packed package, verifies installed bin shims, and uploads
   the package artifact.
-- The Windows x64 package gate in run `26612332069` builds `bin/main.exe`,
+- The Windows x64 package gate in run `26613803254` builds `bin/main.exe`,
   audits the npm API surface, runs the pinned compatibility harness on Windows
   command fixtures, runs the Windows-native process smoke, creates the
   `win32-x64` package, and smoke-installs the packed npm package.
 - On May 29, 2026, the local `npm run audit:npm-api` gate passes with
-  explicit runtime IPC and `Logger.output` checks against the packed local
-  `concurrently` package and pinned `concurrently@9.2.1`.
+  explicit runtime IPC, `Logger.output`, observable subject shape, and
+  TypeScript assignability checks against the packed local `concurrently`
+  package and pinned `concurrently@9.2.1`.
 
 ## Implementation Slices
 

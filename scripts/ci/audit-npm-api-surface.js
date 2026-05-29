@@ -265,6 +265,74 @@ concurrently(["echo original"], controllerOptions);
 `
   );
   writeFileSync(
+    join(projectDir, "types-parity.mts"),
+    `
+import type * as local from "concurrently";
+import type * as upstream from "upstream-concurrently";
+import type {
+  CloseEvent as LocalCloseEvent,
+  Command as LocalCommand,
+  CommandIdentifier as LocalCommandIdentifier,
+  ConcurrentlyCommandInput as LocalCommandInput,
+  ConcurrentlyOptions as LocalOptions,
+  ConcurrentlyResult as LocalResult,
+  FlowController as LocalFlowController,
+  Logger as LocalLogger,
+  TimerEvent as LocalTimerEvent,
+} from "concurrently";
+import type {
+  CloseEvent as UpstreamCloseEvent,
+  Command as UpstreamCommand,
+  CommandIdentifier as UpstreamCommandIdentifier,
+  ConcurrentlyCommandInput as UpstreamCommandInput,
+  ConcurrentlyOptions as UpstreamOptions,
+  ConcurrentlyResult as UpstreamResult,
+  FlowController as UpstreamFlowController,
+  Logger as UpstreamLogger,
+  TimerEvent as UpstreamTimerEvent,
+} from "upstream-concurrently";
+
+type Assert<T extends true> = T;
+type IsAssignable<From, To> = [From] extends [To] ? true : false;
+type MissingKeys<Expected, Actual> = Exclude<keyof Expected, keyof Actual>;
+type Public<T> = Pick<T, keyof T>;
+type PublicResult<T extends { commands: unknown[] }> = Omit<T, "commands"> & {
+  commands: Public<T["commands"][number]>[];
+};
+
+type _moduleHasUpstreamKeys = Assert<
+  MissingKeys<typeof upstream, typeof local> extends never ? true : false
+>;
+type _optionsHasUpstreamKeys = Assert<
+  MissingKeys<UpstreamOptions, LocalOptions> extends never ? true : false
+>;
+type _commandInputAcceptsUpstream = Assert<
+  IsAssignable<UpstreamCommandInput, LocalCommandInput>
+>;
+type _resultMatchesUpstream = Assert<
+  IsAssignable<PublicResult<LocalResult>, PublicResult<UpstreamResult>>
+>;
+type _closeEventMatchesUpstream = Assert<
+  IsAssignable<LocalCloseEvent, UpstreamCloseEvent>
+>;
+type _commandIdentifierMatchesUpstream = Assert<
+  IsAssignable<LocalCommandIdentifier, UpstreamCommandIdentifier>
+>;
+type _timerEventMatchesUpstream = Assert<
+  IsAssignable<LocalTimerEvent, UpstreamTimerEvent>
+>;
+type _flowControllerHasUpstreamShape = Assert<
+  MissingKeys<Public<UpstreamFlowController>, Public<LocalFlowController>> extends never ? true : false
+>;
+type _commandInstanceHasUpstreamShape = Assert<
+  IsAssignable<Public<LocalCommand>, Public<UpstreamCommand>>
+>;
+type _loggerInstanceHasUpstreamShape = Assert<
+  MissingKeys<Public<UpstreamLogger>, Public<LocalLogger>> extends never ? true : false
+>;
+`
+  );
+  writeFileSync(
     join(projectDir, "tsconfig.json"),
     `${JSON.stringify(
       {
@@ -277,7 +345,7 @@ concurrently(["echo original"], controllerOptions);
           types: ["node"],
           skipLibCheck: false,
         },
-        include: ["types-cjs.cts", "types-esm.mts"],
+        include: ["types-cjs.cts", "types-esm.mts", "types-parity.mts"],
       },
       null,
       2
