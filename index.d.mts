@@ -167,12 +167,14 @@ export declare class Command implements CommandInfo {
     killProcess: KillProcess
   );
   start(): void;
+  maybeSetupIPC(child: ChildProcess): { unsubscribe(): void }[];
   send(
     message: object,
     handle?: SendHandle,
     options?: MessageOptions
   ): Promise<void>;
   kill(code?: string): void;
+  cleanUp(): void;
   static canKill(command: Command): command is Command & {
     pid: number;
     process: ChildProcess;
@@ -191,6 +193,14 @@ export declare class Logger {
   });
   toggleColors(on: boolean): void;
   setPrefixLength(length: number): void;
+  shortenText(text: string): string;
+  getPrefixesFor(command: Command): {
+    pid: string;
+    index: string;
+    name: string;
+    command: string;
+    time: string;
+  };
   getPrefixContent(command: Command): { type: "default" | "template"; value: string } | undefined;
   getPrefix(command: Command): string;
   colorText(command: Command, text: string): string;
@@ -213,6 +223,7 @@ export declare class KillOnSignal implements FlowController {
 export declare class KillOthers implements FlowController {
   constructor(options: unknown);
   handle(commands: Command[]): { commands: Command[] };
+  maybeForceKill(commands: Command[]): void;
 }
 export declare class LogError implements FlowController {
   constructor(options: unknown);
@@ -229,6 +240,7 @@ export declare class LogOutput implements FlowController {
 export declare class LogTimings implements FlowController {
   constructor(options: unknown);
   handle(commands: Command[]): { commands: Command[] };
+  printExitInfoTimingTable(exitInfos: CloseEvent[]): CloseEvent[];
   static mapCloseEventToTimingInfo(event: CloseEvent): {
     name: string;
     duration: string;
