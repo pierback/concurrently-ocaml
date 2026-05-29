@@ -284,6 +284,32 @@ jobs:
           node-version: "24"
           registry-url: https://registry.npmjs.org
 
+      - name: Validate npm publish authentication
+        run: |
+          if [ -n "${NPM_TOKEN:-}" ]; then
+            exit 0
+          fi
+
+          cat >&2 <<'EOF'
+          NPM_TOKEN is not configured.
+
+          The first registry publish needs npm token auth because these native
+          platform packages do not exist on npm yet:
+            @pierback/concurrently-ml-darwin-arm64
+            @pierback/concurrently-ml-darwin-x64
+            @pierback/concurrently-ml-linux-arm64-gnu
+            @pierback/concurrently-ml-linux-arm64-musl
+            @pierback/concurrently-ml-linux-x64-gnu
+            @pierback/concurrently-ml-linux-x64-musl
+            @pierback/concurrently-ml-win32-x64
+
+          Configure a GitHub Actions secret named NPM_TOKEN with publish rights
+          for @pierback/*, then rerun the release workflow.
+          EOF
+          exit 1
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
       - name: Download npm package artifacts
         uses: actions/download-artifact@v6
         with:
@@ -296,26 +322,13 @@ jobs:
 
       - name: Publish platform packages
         run: |
-          if [ -n "${NPM_TOKEN:-}" ]; then
-            export NODE_AUTH_TOKEN="$NPM_TOKEN"
-          else
-            unset NODE_AUTH_TOKEN
-            export NPM_CONFIG_USERCONFIG=/dev/null
-          fi
           find dist/npm -mindepth 1 -maxdepth 1 -type d -print0 \
             | sort -z \
             | xargs -0 -I {} npm publish "{}" --access public --provenance
         env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish root package
-        run: |
-          if [ -n "${NPM_TOKEN:-}" ]; then
-            export NODE_AUTH_TOKEN="$NPM_TOKEN"
-          else
-            unset NODE_AUTH_TOKEN
-            export NPM_CONFIG_USERCONFIG=/dev/null
-          fi
-          npm publish --access public --provenance
+        run: npm publish --access public --provenance
         env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
