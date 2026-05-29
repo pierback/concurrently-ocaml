@@ -15,6 +15,7 @@ const {
   spawn: spawnChildProcess,
   spawnSync,
 } = require("node:child_process");
+const { ReplaySubject, Subject } = require("rxjs");
 const { runNative } = require("./native");
 
 const SHORTCUT_RUNNERS = new Set(["npm", "yarn", "pnpm", "bun", "node", "deno"]);
@@ -47,61 +48,6 @@ class NativeApiUnsupportedError extends Error {
   }
 }
 
-class SimpleSubject {
-  constructor() {
-    this.subscribers = new Set();
-  }
-
-  subscribe(observer) {
-    const subscriber = observerSubscriber(observer);
-    this.subscribers.add(subscriber);
-    return {
-      unsubscribe: () => {
-        this.subscribers.delete(subscriber);
-      },
-    };
-  }
-
-  next(value) {
-    let accepted = true;
-    for (const subscriber of [...this.subscribers]) {
-      if (subscriber(value) === false) {
-        accepted = false;
-      }
-    }
-    return accepted;
-  }
-
-  complete() {
-    this.subscribers.clear();
-  }
-
-  pipe() {
-    return this;
-  }
-}
-
-class SimpleReplaySubject extends SimpleSubject {
-  constructor() {
-    super();
-    this.values = [];
-  }
-
-  subscribe(observer) {
-    const subscription = super.subscribe(observer);
-    const subscriber = observerSubscriber(observer);
-    for (const value of this.values) {
-      subscriber(value);
-    }
-    return subscription;
-  }
-
-  next(value) {
-    this.values.push(value);
-    super.next(value);
-  }
-}
-
 class Command {
   constructor(info, spawnOpts, spawn, killProcess) {
     info = info ?? {};
@@ -127,15 +73,15 @@ class Command {
     this.killProcess = undefined;
     this.killBeforePid = false;
     this.startedAt = undefined;
-    this.close = new SimpleSubject();
-    this.error = new SimpleSubject();
-    this.stdout = new SimpleSubject();
-    this.stderr = new SimpleSubject();
-    this.timer = new SimpleSubject();
-    this.stateChange = new SimpleSubject();
+    this.close = new Subject();
+    this.error = new Subject();
+    this.stdout = new Subject();
+    this.stderr = new Subject();
+    this.timer = new Subject();
+    this.stateChange = new Subject();
     this.messages = {
-      incoming: new SimpleSubject(),
-      outgoing: new SimpleReplaySubject(),
+      incoming: new Subject(),
+      outgoing: new ReplaySubject(),
     };
     this.process = undefined;
     this.spawn = spawn;
@@ -284,7 +230,7 @@ class Command {
       subscription.unsubscribe();
     }
     this.subscriptions = [];
-    this.messages.outgoing = new SimpleReplaySubject();
+    this.messages.outgoing = new ReplaySubject();
     if (this.killed) {
       spawnApiDestroyChildStreams(child);
     }
@@ -324,7 +270,7 @@ class Logger {
     this.timestampFormat = options.timestampFormat || "yyyy-MM-dd HH:mm:ss.SSS";
     this.prefixLength = 0;
     this.lastWrite = undefined;
-    this.output = new SimpleSubject();
+    this.output = new Subject();
   }
 
   toggleColors() {}
@@ -934,7 +880,7 @@ function subscribeSpawnApiCommand(command, state) {
     options,
   } = state;
   const formatter = spawnApiOutputFormatter(command, options, output, outputState);
-  command.spawnApiClose = new SimpleSubject();
+  command.spawnApiClose = new Subject();
   if (!hidden) {
     command.stdout.subscribe((chunk) => formatter.stdout(chunk));
     command.stderr.subscribe((chunk) => formatter.stderr(chunk));
@@ -2669,16 +2615,6 @@ function spawnApiRestartDelay(restartDelay, nextAttempt = 1) {
   }
   const parsed = Number(restartDelay);
   return Number.isNaN(parsed) ? 0 : parsed;
-}
-
-function observerSubscriber(observer) {
-  if (typeof observer === "function") {
-    return observer;
-  }
-  if (observer && typeof observer.next === "function") {
-    return (value) => observer.next(value);
-  }
-  throw new Error("subject subscriber must be a function or observer");
 }
 
 function normalizeCommands(commandInputs) {

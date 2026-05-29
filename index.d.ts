@@ -6,6 +6,7 @@ import {
 } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { Readable, Writable } from "node:stream";
+import * as Rx from "rxjs";
 
 export type CommandIdentifier = string | number;
 export type ProcessCloseCondition = "failure" | "success";
@@ -54,12 +55,6 @@ export type SpawnCommand = (
   command: string,
   options: SpawnOptions
 ) => ChildProcess;
-
-export interface SubjectLike<T> {
-  subscribe(observer: ((value: T) => void) | { next(value: T): void }): {
-    unsubscribe(): void;
-  };
-}
 
 export interface LoggerOutputEvent {
   command: Command | undefined;
@@ -147,15 +142,15 @@ export declare class Command implements CommandInfo {
   killed: boolean;
   exited: boolean;
   state: "stopped" | "started" | "errored" | "exited";
-  readonly close: SubjectLike<CloseEvent>;
-  readonly error: SubjectLike<unknown>;
-  readonly stdout: SubjectLike<Buffer>;
-  readonly stderr: SubjectLike<Buffer>;
-  readonly timer: SubjectLike<TimerEvent>;
-  readonly stateChange: SubjectLike<"started" | "errored" | "exited">;
+  readonly close: Rx.Subject<CloseEvent>;
+  readonly error: Rx.Subject<unknown>;
+  readonly stdout: Rx.Subject<Buffer>;
+  readonly stderr: Rx.Subject<Buffer>;
+  readonly timer: Rx.Subject<TimerEvent>;
+  readonly stateChange: Rx.Subject<"started" | "errored" | "exited">;
   readonly messages: {
-    incoming: SubjectLike<MessageEvent>;
-    outgoing: SubjectLike<OutgoingMessageEvent>;
+    incoming: Rx.Subject<MessageEvent>;
+    outgoing: Rx.ReplaySubject<OutgoingMessageEvent>;
   };
   process?: ChildProcess;
   stdin?: Writable;
@@ -182,7 +177,7 @@ export declare class Command implements CommandInfo {
 }
 
 export declare class Logger {
-  readonly output: SubjectLike<LoggerOutputEvent>;
+  readonly output: Rx.Subject<LoggerOutputEvent>;
   constructor(options?: {
     hide?: CommandIdentifier[];
     raw?: boolean;
