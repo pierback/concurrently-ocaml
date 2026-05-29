@@ -3,7 +3,7 @@
 ## Target
 
 Build `concurrently-ocaml` as a feature-complete native OCaml CLI replacement
-for npm `concurrently`/`conc` v9.2.1 in package scripts, with a hard-cutover
+for npm `concurrently`/`conc` v10.0.0 in package scripts, with a hard-cutover
 OCaml 5.4.1 + Dune 3.23 + Eio architecture and reproducible native npm
 distribution.
 
@@ -92,7 +92,7 @@ Win32 process creation, stdio handle inheritance, and job-object teardown.
   against the installed native binary, installs the root tarball under the
   public `concurrently` alias, verifies CommonJS and ESM programmatic imports,
   audits the packed root package's `bin` aliases, `exports` condition shape,
-  and runtime export keys against pinned `concurrently@9.2.1`, and runs
+  and runtime export keys against pinned `concurrently@10.0.0`, and runs
   `conc`/`concurrently` from that install. Windows package jobs also run the
   pinned compatibility harness with Windows-specific command fixtures covering
   CLI aliases, help/default-help behavior, grouped output, hidden selectors,
@@ -204,7 +204,7 @@ Win32 process creation, stdio handle inheritance, and job-object teardown.
 | Hide selected command output | CLI config, Output formatter | Implemented for `--hide` by index, name, and comma-separated selectors |
 | Grouped output | CLI config, Output formatter | Implemented via `-g`/`--group`; non-raw command output is emitted on stdout and released in command index order |
 | Command close notifications | Runner, Output formatter, Run result | Implemented for default formatted output, grouped output, signal labels, cancellation status lines, raw/hidden suppression, and `-k` killed-sibling exit calculation like npm |
-| Cwd per run and per command | Run API, Runner, npm API facade | CLI `--cwd` is not exposed by pinned `concurrently@9.2.1`; structured OCaml `Run_api` commands and JavaScript API commands can provide command-local cwd values |
+| Cwd per run and per command | Run API, Runner, npm API facade | CLI `--cwd` is not exposed by pinned `concurrently@10.0.0`; structured OCaml `Run_api` commands and JavaScript API commands can provide command-local cwd values |
 | Env per command | Run API, Runner, npm API facade | Structured `Run_api` commands and JavaScript API commands support per-command env values merged with run-level env |
 | Kill others on success/failure | Run policy, Runner | Implemented for POSIX process groups |
 | Signal choice and kill timeout | Run policy, Runner | Implemented for OCaml/POSIX-supported signal names and aliases through `--kill-signal`, npm alias `--ks`, and `CONCURRENTLY_KILL_SIGNAL`/`CONCURRENTLY_KS`, including deterministic `SIGINT` and `SIGUSR1` sibling cancellation parity plus parent `SIGINT`/`SIGTERM`/`SIGHUP` forwarding and exit projection; `--kill-timeout` accepts npm-style numeric coercion for invalid, sub-millisecond fractional, fractional, and negative values, emits npm-compatible Node timer warning text for negative values when used, emits force-kill status after the timeout window, and force-kills still-running POSIX process groups with `SIGKILL` |
@@ -219,13 +219,13 @@ Win32 process creation, stdio handle inheritance, and job-object teardown.
 | Teardown commands | CLI config, Run policy, Runner | Implemented for sequential cleanup commands, empty teardown shell commands, raw output, and exit-code isolation |
 | `CONCURRENTLY_*` environment defaults and boolean coercion | CLI env options, CLI argv, CLI config | Implemented for pinned npm CLI flags and aliases through argv normalization; explicit CLI arguments override env defaults, and yargs-style boolean `--flag=true/false`, non-true inline false, `--no-flag` negation, known short boolean groups like `-kg`/`-rg`, and mixed unknown/known short groups like `-xg`/`-xr`/`-rx` are supported |
 | Timings output and close-event timings | Runner, Output formatter | Implemented for deterministic success, failure, restart, hidden, raw, named, grouped, custom timestamp, kill-on-fail, and kill-on-success cases; runtime timestamps, durations, and duration-derived row order are normalized in compatibility evidence because upstream sorts by measured duration |
-| Help and version flags | CLI argv, CLI config, npm distribution | Implemented for `--version`, `-v`, `-V`, `--help`, `-h`, yargs-style built-in aliases before separate option values, and no-command default help on stderr after npm-compatible unknown-option normalization; deterministic help output is pinned byte-for-byte against npm `concurrently@9.2.1`, and npm install smoke verifies matching `concurrently`/`conc` help aliases |
-| OCaml run API and JavaScript API facade | Run API, Runner, npm distribution | Structured OCaml callers use `Concurrentlyocaml.Run_api`; JavaScript callers receive a repo-owned CommonJS/ESM/type facade with top-level export names audited against pinned `concurrently@9.2.1` and execution backed by the native binary |
+| Help and version flags | CLI argv, CLI config, npm distribution | Implemented for `--version`, `-v`, `-V`, `--help`, `-h`, yargs-style built-in aliases before separate option values, and no-command default help on stderr after npm-compatible unknown-option normalization; deterministic help output is pinned byte-for-byte against npm `concurrently@10.0.0`, and npm install smoke verifies matching `concurrently`/`conc` help aliases |
+| OCaml run API and JavaScript API facade | Run API, Runner, npm distribution | Structured OCaml callers use `Concurrentlyocaml.Run_api`; JavaScript callers receive a repo-owned CommonJS/ESM/type facade with top-level export names audited against pinned `concurrently@10.0.0` and execution backed by the native binary |
 
 ## Compatibility Evidence And Divergence Ledger
 
 Pinned compatibility evidence lives in `scripts/ci/compat-concurrently.js`. The
-harness runs the local native binary and npm `concurrently@9.2.1` with the same
+harness runs the local native binary and npm `concurrently@10.0.0` with the same
 CLI arguments, then compares exit status, signal, stdout, and stderr
 byte-for-byte for deterministic cases. Each case names the upstream behavior
 spec or smoke area it mirrors.
@@ -397,8 +397,8 @@ As of May 29, 2026, `feat/windows-native-validation` has the following proof:
 
 - `opam exec -- dune build @install @runtest`, `npm run audit:npm-api`, and
   `npm run compat:concurrently` pass in GitHub Actions build run
-  `26613803254` at commit `916d610` against OCaml 5.4.1 and pinned
-  `concurrently@9.2.1`.
+  `26621379307` at commit `b4c071a` against OCaml 5.4.1 and pinned
+  `concurrently@10.0.0`.
 - `npm run smoke:npm-install:host` passes on the host macOS arm64 target,
   packing the root npm package plus the native platform package, verifying the
   native package checksum manifest, and executing both npm-installed bin shims.
@@ -406,19 +406,19 @@ As of May 29, 2026, `feat/windows-native-validation` has the following proof:
   JavaScript API entrypoints, TypeScript declarations, README, and LICENSE;
   OCaml source, tests, Dune files, and development scripts stay outside the
   root package surface.
-- GitHub Actions run `26613803254` passes native package gates for Linux GNU
+- GitHub Actions run `26621379307` passes native package gates for Linux GNU
   x64/arm64, Linux musl x64/arm64, macOS x64/arm64, and Windows x64. Each
   package job builds the native binary, creates the platform npm package,
   smoke-installs the packed package, verifies installed bin shims, and uploads
   the package artifact.
-- The Windows x64 package gate in run `26613803254` builds `bin/main.exe`,
+- The Windows x64 package gate in run `26621379307` builds `bin/main.exe`,
   audits the npm API surface, runs the pinned compatibility harness on Windows
   command fixtures, runs the Windows-native process smoke, creates the
   `win32-x64` package, and smoke-installs the packed npm package.
 - On May 29, 2026, the local `npm run audit:npm-api` gate passes with
   explicit runtime IPC, `Logger.output`, observable subject shape, and
   TypeScript assignability checks against the packed local `concurrently`
-  package and pinned `concurrently@9.2.1`.
+  package and pinned `concurrently@10.0.0`.
 
 ## Implementation Slices
 
@@ -553,12 +553,12 @@ As of May 29, 2026, `feat/windows-native-validation` has the following proof:
 8. Compatibility test suite
 
    Add process-level tests that compare key CLI behavior against npm
-   `concurrently` v9.2.1 where practical, plus unit tests for policy and
+   `concurrently` v10.0.0 where practical, plus unit tests for policy and
    formatting.
 
    Status: complete as the current pinned deterministic parity gate.
    `npm run compat:concurrently` now compares the
-   native binary against pinned `concurrently@9.2.1` for deterministic close
+   native binary against pinned `concurrently@10.0.0` for deterministic close
    notifications, failure status, raw/hidden suppression, name prefixes, command
    prefixes, template prefixes, no-prefix mode, prefix padding, grouped
    passthrough placeholders, disabled passthrough behavior, finite restart
@@ -634,7 +634,7 @@ As of May 29, 2026, `feat/windows-native-validation` has the following proof:
    surface, asserts that the installed launcher resolves the optional platform
    package's native binary, verifies the platform package checksum manifest,
    executes both `conc` and `concurrently` through the installed npm bin shims,
-   audits the packed npm API surface against pinned `concurrently@9.2.1`, and
+   audits the packed npm API surface against pinned `concurrently@10.0.0`, and
    publishes packages on version tags with npm provenance. Windows jobs also
    run `npm run compat:concurrently` with Windows command fixtures for aliases,
    help, formatting, passthrough, quoted `.cmd` shell execution, cwd/env,
@@ -694,7 +694,7 @@ routing must not accumulate unbounded pending writes to a dead command.
 
 `npm run perf:concurrently -- --iterations N --commands N --lines N` is the
 repeatable evidence harness for this sketch. It compares the local native binary
-against pinned `concurrently@9.2.1` on three bounded workloads:
+against pinned `concurrently@10.0.0` on three bounded workloads:
 
 - `--version`, which captures launcher/startup overhead without child process
   fan-out.
