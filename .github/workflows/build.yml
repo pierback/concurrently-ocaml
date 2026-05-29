@@ -26,7 +26,7 @@ jobs:
 
     steps:
       - name: Checkout tree
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set-up OCaml ${{ matrix.ocaml-compiler }}
         uses: ocaml/setup-ocaml@v3
@@ -34,7 +34,7 @@ jobs:
           ocaml-compiler: ${{ matrix.ocaml-compiler }}
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "24"
 
@@ -87,7 +87,7 @@ jobs:
 
     steps:
       - name: Checkout tree
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up OCaml 5.4.1
         uses: ocaml/setup-ocaml@v3
@@ -95,7 +95,7 @@ jobs:
           ocaml-compiler: "5.4.1"
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "24"
 
@@ -134,7 +134,7 @@ jobs:
             "${libc_args[@]}"
 
       - name: Upload npm package artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: npm-${{ matrix.target }}
           path: dist/npm/
@@ -155,7 +155,7 @@ jobs:
 
     steps:
       - name: Checkout tree
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Build and smoke musl package
         env:
@@ -197,7 +197,7 @@ jobs:
             '
 
       - name: Upload npm package artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: npm-${{ matrix.target }}
           path: dist/npm/
@@ -215,7 +215,7 @@ jobs:
 
     steps:
       - name: Checkout tree
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up OCaml 5.4.1
         uses: ocaml/setup-ocaml@v3
@@ -223,7 +223,7 @@ jobs:
           ocaml-compiler: "5.4.1"
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "24"
 
@@ -257,7 +257,7 @@ jobs:
           --arch ${{ matrix.npm_cpu }}
 
       - name: Upload npm package artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: npm-${{ matrix.target }}
           path: dist/npm/
@@ -276,16 +276,16 @@ jobs:
 
     steps:
       - name: Checkout tree
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "24"
           registry-url: https://registry.npmjs.org
 
       - name: Download npm package artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           pattern: npm-*
           path: dist/npm
@@ -296,13 +296,26 @@ jobs:
 
       - name: Publish platform packages
         run: |
+          if [ -n "${NPM_TOKEN:-}" ]; then
+            export NODE_AUTH_TOKEN="$NPM_TOKEN"
+          else
+            unset NODE_AUTH_TOKEN
+            export NPM_CONFIG_USERCONFIG=/dev/null
+          fi
           find dist/npm -mindepth 1 -maxdepth 1 -type d -print0 \
             | sort -z \
             | xargs -0 -I {} npm publish "{}" --access public --provenance
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish root package
-        run: npm publish --access public --provenance
+        run: |
+          if [ -n "${NPM_TOKEN:-}" ]; then
+            export NODE_AUTH_TOKEN="$NPM_TOKEN"
+          else
+            unset NODE_AUTH_TOKEN
+            export NPM_CONFIG_USERCONFIG=/dev/null
+          fi
+          npm publish --access public --provenance
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
