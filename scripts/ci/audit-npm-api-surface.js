@@ -59,6 +59,7 @@ try {
   assertRuntimeExports(projectDir, "commonjs");
   assertRuntimeExports(projectDir, "module");
   assertPrototypeSurface(projectDir);
+  assertInvalidInputRuntime(projectDir);
   assertLoggerOutputRuntime(projectDir);
   assertTypescriptConsumer(projectDir);
   assertIpcRuntime(projectDir);
@@ -184,6 +185,82 @@ function assertPrototypeSurface(projectDir) {
   if (result.status !== 0) {
     throw new Error(
       `prototype surface audit exited ${result.status}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`
+    );
+  }
+}
+
+function assertInvalidInputRuntime(projectDir) {
+  const result = spawnSync(
+    process.execPath,
+    [
+      "-e",
+      `
+      const local = require(${JSON.stringify(publicPackageName)});
+      const upstream = require(${JSON.stringify(upstreamPackageName)});
+      const cases = [
+        ["non-array commands", () => 42],
+        ["empty commands", () => []],
+        ["non-string command", () => [42]],
+        ["object without command", () => [{}]],
+        ["empty string command", () => [""]],
+        ["empty object command", () => [{ command: "" }]],
+      ];
+      function inspect(api, input) {
+        try {
+          api(input(), { raw: true });
+          return { ok: true };
+        } catch (error) {
+          return {
+            ok: false,
+            constructorName: error.constructor.name,
+            name: error.name,
+            code: error.code,
+            message: error.message,
+          };
+        }
+      }
+      for (const [name, input] of cases) {
+        const localResult = inspect(local, input);
+        const upstreamResult = inspect(upstream, input);
+        const localJson = JSON.stringify(localResult);
+        const upstreamJson = JSON.stringify(upstreamResult);
+        if (localJson !== upstreamJson) {
+          throw new Error(name + ": expected " + upstreamJson + ", got " + localJson);
+        }
+      }
+      const localStart = inspectStart(local);
+      const upstreamStart = inspectStart(upstream);
+      if (JSON.stringify(localStart) !== JSON.stringify(upstreamStart)) {
+        throw new Error(
+          "Command.start without spawn: expected " +
+            JSON.stringify(upstreamStart) +
+            ", got " +
+            JSON.stringify(localStart)
+        );
+      }
+      function inspectStart(api) {
+        try {
+          new api.Command({ index: 0, command: "echo ok" }).start();
+          return { ok: true };
+        } catch (error) {
+          return {
+            ok: false,
+            constructorName: error.constructor.name,
+            name: error.name,
+            message: error.message,
+          };
+        }
+      }
+      `,
+    ],
+    { cwd: projectDir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }
+  );
+  if (result.error) {
+    throw result.error;
+  }
+  if (result.status !== 0) {
+    throw new Error(
+      `invalid input runtime audit exited ${result.status}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`
     );
   }
 }
