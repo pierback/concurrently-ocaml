@@ -29,40 +29,9 @@ let posix_shell_quote argument =
     Buffer.add_char buffer '\'';
     Buffer.contents buffer
 
-let windows_shell_safe_char = function
-  | '%' -> false
-  | character -> is_safe_shell_char character
-
-let windows_shell_quote argument =
-  if argument = "" then "\"\""
-  else if String.for_all windows_shell_safe_char argument then argument
-  else
-    let buffer = Buffer.create (String.length argument + 2) in
-    Buffer.add_char buffer '"';
-    let backslashes = ref 0 in
-    String.iter
-      (fun character ->
-        match character with
-        | '\\' -> incr backslashes
-        | '"' ->
-            Buffer.add_string buffer (String.make (!backslashes * 2) '\\');
-            backslashes := 0;
-            Buffer.add_string buffer "\\\""
-        | '%' ->
-            Buffer.add_string buffer (String.make !backslashes '\\');
-            backslashes := 0;
-            Buffer.add_string buffer "^%"
-        | _ ->
-            Buffer.add_string buffer (String.make !backslashes '\\');
-            backslashes := 0;
-            Buffer.add_char buffer character)
-      argument;
-    Buffer.add_string buffer (String.make (!backslashes * 2) '\\');
-    Buffer.add_char buffer '"';
-    Buffer.contents buffer
-
-let shell_quote argument =
-  if Sys.win32 then windows_shell_quote argument else posix_shell_quote argument
+(* Passthrough placeholders intentionally use the npm package's shell-quote
+   behavior on every platform; Windows process-launch quoting is handled later. *)
+let shell_quote argument = posix_shell_quote argument
 
 let quote_arguments arguments =
   arguments |> List.map shell_quote |> String.concat " "
