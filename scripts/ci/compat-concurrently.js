@@ -5753,15 +5753,12 @@ function assertPinnedConcurrentlyVersion(binary) {
 
 function commandForConcurrentlyBinary(binary) {
   if (process.platform === "win32" && binary.toLowerCase().endsWith(".cmd")) {
-    const jsBinary = resolve(
-      dirname(binary),
-      "..",
-      "concurrently",
-      "dist",
-      "bin",
-      "concurrently.js"
-    );
-    if (existsSync(jsBinary)) {
+    const packageRoot = resolve(dirname(binary), "..", "concurrently");
+    const jsBinary = [
+      resolve(packageRoot, "dist", "bin", "index.js"),
+      resolve(packageRoot, "dist", "bin", "concurrently.js"),
+    ].find((candidate) => existsSync(candidate));
+    if (jsBinary) {
       return { command: process.execPath, args: [jsBinary] };
     }
   }
