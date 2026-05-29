@@ -59,6 +59,7 @@ val create :
 
 val create_with_display :
   cwd:string option ->
+  shell:string option ->
   passthrough_arguments:string list option ->
   teardown_texts:string list ->
   command_texts:string list ->

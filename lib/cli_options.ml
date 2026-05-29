@@ -87,9 +87,6 @@ let specs =
     value [ "-n"; "--names" ]
       ~env_names:[ "CONCURRENTLY_NAMES"; "CONCURRENTLY_N" ]
       ~env_order:2 ~emitted_option:"--names";
-    value [ "--name-separator" ]
-      ~env_names:[ "CONCURRENTLY_NAME_SEPARATOR" ]
-      ~env_order:3 ~emitted_option:"--name-separator";
     value [ "-s"; "--success" ]
       ~env_names:[ "CONCURRENTLY_SUCCESS"; "CONCURRENTLY_S" ]
       ~env_order:4 ~emitted_option:"--success";
@@ -131,6 +128,7 @@ let specs =
     boolean [ "--timings" ] ~env_names:[ "CONCURRENTLY_TIMINGS" ] ~env_order:9
       ~negated_names:[ "--no-timings" ] ~emitted_boolean_option:"--timings"
       ~boolean_order:10;
+    value [ "--shell" ] ~emitted_option:"--shell";
     boolean [ "--pad-prefix" ]
       ~env_names:[ "CONCURRENTLY_PAD_PREFIX" ]
       ~env_order:15 ~negated_names:[ "--no-pad-prefix" ]

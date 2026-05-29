@@ -5,6 +5,7 @@ type t =
   ; name : string option
   ; cwd : string option
   ; env : (string * string) list
+  ; shell : string option
   ; prefix_color : string option
   ; raw : bool
   ; hidden : bool
@@ -17,8 +18,9 @@ type create_error =
   | `Negative_index
   ]
 
-let create ?name ?cwd ?(env = []) ?prefix_color ?(raw = false) ?(hidden = false)
-    ?(ipc = false) ?display_text ?(allow_empty = false) ~index text =
+let create ?name ?cwd ?(env = []) ?shell ?prefix_color ?(raw = false)
+    ?(hidden = false) ?(ipc = false) ?display_text ?(allow_empty = false) ~index
+    text =
   if index < 0 then Error `Negative_index
   else if (not allow_empty) && String.equal text "" then Error `Empty_command
   else
@@ -32,6 +34,7 @@ let create ?name ?cwd ?(env = []) ?prefix_color ?(raw = false) ?(hidden = false)
          ; name
          ; cwd
          ; env
+         ; shell
          ; prefix_color
          ; raw
          ; hidden
@@ -44,6 +47,7 @@ let display_text t = t.display_text
 let name t = t.name
 let cwd t = t.cwd
 let env t = t.env
+let shell t = t.shell
 let prefix_color t = t.prefix_color
 let raw t = t.raw
 let hidden t = t.hidden
@@ -56,6 +60,7 @@ let equal left right =
   && left.name = right.name
   && left.cwd = right.cwd
   && left.env = right.env
+  && left.shell = right.shell
   && left.prefix_color = right.prefix_color
   && left.raw = right.raw
   && left.hidden = right.hidden

@@ -15,7 +15,7 @@ const { spawn, spawnSync } = require("node:child_process");
 const { EventEmitter } = require("node:events");
 const { PassThrough, Writable } = require("node:stream");
 
-const npmConcurrentlyVersion = "9.2.1";
+const npmConcurrentlyVersion = "10.0.0";
 const localBinary = resolve("_build", "default", "bin", "main.exe");
 const npmConcurrentlyCommand = resolveNpmConcurrentlyCommand();
 const inputEchoCommand =
@@ -102,6 +102,11 @@ const posixCases = [
     name: "help inline false does not request help",
     upstream: "yargs boolean inline value coercion",
     args: ["--no-color", "--help=false", "printf one"],
+  },
+  {
+    name: "custom posix shell runs command",
+    upstream: "bin/concurrently.spec.ts --shell",
+    args: ["--no-color", "--shell", "/bin/bash", "printf \"$0\""],
   },
   {
     name: "no commands prints help",
@@ -223,14 +228,16 @@ const posixCases = [
     args: ["--no-color", "sh -c 'exit 3'"],
   },
   {
-    name: "empty double quoted command is not stripped",
-    upstream: "dist/src/command-parser/strip-quotes.js requires quoted content",
+    name: "empty double quoted command strips then rejects",
+    upstream: "dist/src/command-parser/strip-quotes.js strips quoted content before command assertion",
     args: ["--no-color", "\"\""],
+    normalizeStderr: normalizeEmptyCommandAssertionStderr,
   },
   {
-    name: "empty single quoted command is not stripped",
-    upstream: "dist/src/command-parser/strip-quotes.js requires quoted content",
+    name: "empty single quoted command strips then rejects",
+    upstream: "dist/src/command-parser/strip-quotes.js strips quoted content before command assertion",
     args: ["--no-color", "''"],
+    normalizeStderr: normalizeEmptyCommandAssertionStderr,
   },
   {
     name: "whitespace command runs as shell no-op",
@@ -562,8 +569,8 @@ const posixCases = [
     normalizeStdout: normalizeSignalKilledDurationSortedTimingsStdout,
   },
   {
-    name: "colored default reset prefix",
-    upstream: "dist/src/defaults.js prefixColors reset",
+    name: "colored default auto prefix",
+    upstream: "dist/src/defaults.js prefixColors auto",
     args: ["printf one"],
     env: forceBasicColorEnv,
   },
@@ -712,14 +719,14 @@ const posixCases = [
     env: forceTruecolorEnv,
   },
   {
-    name: "colored function-style prefix falls back to reset",
-    upstream: "published concurrently@9.2.1 chalk path fallback",
+    name: "colored rgb function-style prefix",
+    upstream: "dist/src/logger.js getChalkPath rgb function call",
     args: ["-c", "rgb(1,2,3)", "printf one"],
     env: forceTruecolorEnv,
   },
   {
-    name: "colored ansi256-style prefix falls back to reset",
-    upstream: "published concurrently@9.2.1 chalk path fallback",
+    name: "colored ansi256 function-style prefix",
+    upstream: "dist/src/logger.js getChalkPath ansi256 function call",
     args: ["-c", "ansi256(123)", "printf one"],
     env: forceTruecolorEnv,
   },
@@ -6375,6 +6382,13 @@ function normalizeInvalidWildcardOmissionStderr(stderr) {
   }
   if (stderr.includes("invalid wildcard omission regular expression: [")) {
     return "<invalid wildcard omission>\n";
+  }
+  return stderr;
+}
+
+function normalizeEmptyCommandAssertionStderr(stderr) {
+  if (stderr.includes("[concurrently] command cannot be empty")) {
+    return "<empty command assertion>\n";
   }
   return stderr;
 }

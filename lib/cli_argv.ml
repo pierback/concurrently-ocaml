@@ -218,8 +218,8 @@ let drop_unknown_options_argv argv =
           if
             option_has_inline_value argument
             || index + 1 >= Array.length argv
-            || String.length argv.(index + 1) = 0
-            || argv.(index + 1).[0] = '-'
+            || (String.length argv.(index + 1) > 0
+               && argv.(index + 1).[0] = '-')
           then index + 1
           else index + 2
         in

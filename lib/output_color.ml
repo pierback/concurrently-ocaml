@@ -22,19 +22,25 @@ let round_positive value =
   assert (value >= 0.0);
   int_of_float (floor (value +. 0.5))
 
-let ansi16_code red green blue =
-  let value =
-    [ red; green; blue ] |> List.fold_left max 0 |> float_of_int
-    |> fun channel -> (channel /. 255.0) *. 100.0
-  in
-  let value = round_positive (value /. 50.0) in
-  if value = 0 then 30
+let rec ansi16_code red green blue =
+  let ansi256 = ansi256_code red green blue in
+  if ansi256 < 8 then 30 + ansi256
+  else if ansi256 < 16 then 90 + ansi256 - 8
+  else if ansi256 >= 232 then if ansi256 < 244 then 30 else 37
   else
-    let bit channel = round_positive (float_of_int channel /. 255.0) in
-    let code = 30 + ((bit blue lsl 2) lor (bit green lsl 1) lor bit red) in
-    if value = 2 then code + 60 else code
+    let value = ansi256 - 16 in
+    let red_level = value / 36 in
+    let green_level = value / 6 mod 6 in
+    let blue_level = value mod 6 in
+    let bit level = if level > 2 then 1 else 0 in
+    let code =
+      30
+      + ((bit blue_level lsl 2) lor (bit green_level lsl 1)
+        lor bit red_level)
+    in
+    if max red_level (max green_level blue_level) = 5 then code + 60 else code
 
-let ansi256_code red green blue =
+and ansi256_code red green blue =
   if red = green && green = blue then
     if red < 8 then 16
     else if red > 248 then 231
@@ -53,6 +59,46 @@ let foreground_color_codes ~color_level red green blue =
   | 2 -> [ 38; 5; ansi256_code red green blue ]
   | _ -> [ 38; 2; red; green; blue ]
 
+let bounded_int ~min_value ~max_value value =
+  match int_of_string_opt (String.trim value) with
+  | Some number when number >= min_value && number <= max_value -> Some number
+  | _ -> None
+
+let strip_call ~name value =
+  let prefix = name ^ "(" in
+  let prefix_length = String.length prefix in
+  let value_length = String.length value in
+  if
+    value_length > prefix_length
+    && String.sub value 0 prefix_length = prefix
+    && value.[value_length - 1] = ')'
+  then Some (String.sub value prefix_length (value_length - prefix_length - 1))
+  else None
+
+let rgb_function_codes ~color_level value =
+  match strip_call ~name:"rgb" value with
+  | None -> None
+  | Some arguments -> (
+      match String.split_on_char ',' arguments with
+      | [ red; green; blue ] -> (
+          match
+            ( bounded_int ~min_value:0 ~max_value:255 red,
+              bounded_int ~min_value:0 ~max_value:255 green,
+              bounded_int ~min_value:0 ~max_value:255 blue )
+          with
+          | Some red, Some green, Some blue ->
+              Some (foreground_color_codes ~color_level red green blue)
+          | _ -> None)
+      | _ -> None)
+
+let ansi256_function_codes value =
+  match strip_call ~name:"ansi256" value with
+  | None -> None
+  | Some argument -> (
+      match bounded_int ~min_value:0 ~max_value:255 argument with
+      | Some code -> Some [ 38; 5; code ]
+      | None -> None)
+
 let hex_color_codes ~color_level value =
   match String.length value with
   | 4 when value.[0] = '#' -> (
@@ -70,6 +116,11 @@ let hex_color_codes ~color_level value =
           Some (foreground_color_codes ~color_level red green blue)
       | _ -> None)
   | _ -> None
+
+let function_color_codes ~color_level value =
+  match rgb_function_codes ~color_level value with
+  | Some codes -> Some codes
+  | None -> ansi256_function_codes value
 
 let foreground_color_code = function
   | "black" -> Some [ 30 ]
@@ -125,7 +176,7 @@ let modifier_style = function
 
 let auto_color_code command_index =
   assert (command_index >= 0);
-  let palette = [| 36; 33; 92; 94; 95; 37; 90; 31 |] in
+  let palette = [| 36; 35; 32; 33; 34 |] in
   [ palette.(command_index mod Array.length palette) ]
 
 let foreground_style codes = { open_codes = codes; close_codes = [ 39 ] }
@@ -152,7 +203,10 @@ let prefix_part_styles ~color_level ~command_index part =
                 | None -> (
                     match hex_color_codes ~color_level part with
                     | Some codes -> Ok [ foreground_style codes ]
-                    | None -> Error part))))
+                    | None -> (
+                        match function_color_codes ~color_level part with
+                        | Some codes -> Ok [ foreground_style codes ]
+                        | None -> Error part)))))
 
 let prefix_styles ~color_level ~command_index prefix_color =
   assert (color_level >= 1);

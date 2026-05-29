@@ -155,10 +155,13 @@ let env_value name env =
       env_key key = name)
   |> Option.map (fun entry -> snd (split_env_entry entry))
 
-let shell_path env =
-  match env_value "ComSpec" env with
+let shell_path command env =
+  match Command.shell command with
   | Some path when String.trim path <> "" -> path
-  | Some _ | None -> "cmd.exe"
+  | Some _ | None -> (
+      match env_value "ComSpec" env with
+      | Some path when String.trim path <> "" -> path
+      | Some _ | None -> "cmd.exe")
 
 let close_process_handles native_process =
   close_handle native_process.process_handle;
@@ -166,7 +169,7 @@ let close_process_handles native_process =
 
 let spawn_native ~stdin_read ~stdout_write ~stderr_write command =
   let env = command_env command in
-  let shell_path = shell_path env in
+  let shell_path = shell_path command env in
   let command_line =
     Windows_command_line.shell_command_line ~shell_path
       ~command_text:(Command.text command)

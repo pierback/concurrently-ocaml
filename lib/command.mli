@@ -10,6 +10,7 @@ val create :
   ?name:string ->
   ?cwd:string ->
   ?env:(string * string) list ->
+  ?shell:string ->
   ?prefix_color:string ->
   ?raw:bool ->
   ?hidden:bool ->
@@ -26,6 +27,7 @@ val display_text : t -> string
 val name : t -> string option
 val cwd : t -> string option
 val env : t -> (string * string) list
+val shell : t -> string option
 val prefix_color : t -> string option
 val raw : t -> bool
 val hidden : t -> bool

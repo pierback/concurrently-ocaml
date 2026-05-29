@@ -47,7 +47,7 @@ let strip_quotes command_input =
   let command_text = command_input.command_text in
   let length = String.length command_text in
   if
-    length > 2
+    length >= 2
     && ((command_text.[0] = '"' && command_text.[length - 1] = '"')
        || (command_text.[0] = '\'' && command_text.[length - 1] = '\''))
   then

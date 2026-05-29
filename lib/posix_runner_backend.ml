@@ -24,7 +24,14 @@ module Pipe = struct
     }
 end
 
-let shell_args command = [ "/bin/sh"; "-c"; Command.text command ]
+let shell_path command =
+  match Command.shell command with
+  | Some shell when String.trim shell <> "" -> shell
+  | Some _ | None -> "/bin/sh"
+
+let shell_args command =
+  let shell = shell_path command in
+  [ shell; "-c"; Command.text command ]
 
 let close_status = function
   | Unix.WEXITED code -> Close_event.Exited code
@@ -77,11 +84,12 @@ let start_reaper ~pid resolve_exit_status =
        ())
 
 let spawn_native ~stdin_read ~stdout_write ~stderr_write command =
+  let shell = shell_path command in
   let argv = Array.of_list (shell_args command) in
   Eio_unix.Fd.use_exn "spawn stdin" stdin_read @@ fun stdin_fd ->
   Eio_unix.Fd.use_exn "spawn stdout" stdout_write @@ fun stdout_fd ->
   Eio_unix.Fd.use_exn "spawn stderr" stderr_write @@ fun stderr_fd ->
-  spawn_process_group "/bin/sh" argv (Command.cwd command) (command_env command)
+  spawn_process_group shell argv (Command.cwd command) (command_env command)
     stdin_fd stdout_fd stderr_fd
 
 let spawn ~sw ~command =

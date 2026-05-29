@@ -4,7 +4,7 @@ const { existsSync } = require("node:fs");
 const { resolve, sep } = require("node:path");
 const { spawnSync } = require("node:child_process");
 
-const npmConcurrentlyVersion = "9.2.1";
+const npmConcurrentlyVersion = "10.0.0";
 const localBinary = resolve("_build", "default", "bin", "main.exe");
 
 const options = parseOptions(process.argv.slice(2));

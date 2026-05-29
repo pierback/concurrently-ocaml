@@ -25,21 +25,10 @@ const SIGNAL_VALIDATION_PID = 2147483647;
 const KILLED_COMMAND_CLEANUP_RETRY_DELAYS_MS = [25, 100, 500, 1000, 2500];
 const AUTO_PREFIX_COLORS = [
   "cyan",
+  "magenta",
+  "green",
   "yellow",
-  "greenBright",
-  "blueBright",
-  "magentaBright",
-  "white",
-  "grey",
-  "red",
-  "bgCyan",
-  "bgYellow",
-  "bgGreenBright",
-  "bgBlueBright",
-  "bgMagenta",
-  "bgWhiteBright",
-  "bgGrey",
-  "bgRed",
+  "blue",
 ];
 
 class Command {
@@ -3411,7 +3400,7 @@ function commandPrefixColors(commands, options) {
   const colors = commands.map((command) => command.prefixColor);
   return colors.some(Boolean)
     ? colors.map((color) => color || "reset").join(",")
-    : undefined;
+    : "reset";
 }
 
 function prefixUsesIndexLabel(prefix) {
