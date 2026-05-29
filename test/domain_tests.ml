@@ -839,7 +839,7 @@ let test_output_formatter_prefix_modes () =
   assert (
     output api
       (ok (create_formatter ~prefix:"{index}:{pid}:{command}:{name}" commands))
-    = [ "0::npm run api:api ready" ]);
+    = [ "0::npm .. api:api ready" ]);
   let wrapped_api =
     ok (Command.create ~index:0 ~display_text:"npm run api" "node wrapper")
   in
@@ -866,7 +866,7 @@ let test_output_formatter_prefix_modes () =
   assert (
     output command_with_placeholder
       (ok (create_formatter ~prefix:"{command}" [ command_with_placeholder ]))
-    = [ "printf '{time}' ready" ]);
+    = [ "prin..me}' ready" ]);
   assert (
     output api
       (ok
