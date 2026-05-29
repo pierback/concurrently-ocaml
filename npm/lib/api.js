@@ -3039,7 +3039,8 @@ function nativeInvocation(commands, options, eventDir) {
         options.handleInput || options.inputStream,
         requiredCommandEnvPath(commandEnvPaths, command),
         commandCwd(command),
-        shouldDetachWrappedCommand(options)
+        shouldDetachWrappedCommand(options),
+        nativeKillPolicyMayStopCommands(options)
       )
     )
   );
@@ -3061,7 +3062,8 @@ function eventWrapperCommand(
   forwardStdin,
   commandEnvPath,
   cwd,
-  detachWrappedCommand
+  detachWrappedCommand,
+  nativeKillPolicy
 ) {
   const commandText = Buffer.from(command).toString("base64");
   const eventFile = Buffer.from(path).toString("base64");
@@ -3088,13 +3090,14 @@ function eventWrapperCommand(
     "const startMs=Date.now()",
     "let child",
     "let exiting=false",
+    "let receivedSignal=null",
     "let wrote=false",
     "const write=event=>{if(!wrote){wrote=true;fs.writeFileSync(file,JSON.stringify({...event,startMs,endMs:Date.now()}))}}",
     "const exitCode=signal=>128+(typeof signal==='number'?signal:(signalNumbers[signal]||1))",
     "const descendantPids=pid=>{if(process.platform==='win32'||!pid)return[];try{const ps=cp.spawnSync('ps',['-A','-o','pid=','-o','ppid='],{encoding:'utf8',timeout:200,maxBuffer:1024*1024});const rows=String(ps.stdout||'').trim().split(/\\n+/);const children=new Map();for(const row of rows){const parts=row.trim().split(/\\s+/);if(parts.length<2)continue;const childPid=Number(parts[0]);const parentPid=Number(parts[1]);if(!Number.isInteger(childPid)||!Number.isInteger(parentPid))continue;const childList=children.get(parentPid)||[];childList.push(childPid);children.set(parentPid,childList)}const result=[];const stack=[pid];while(stack.length>0){const parent=stack.pop();for(const childPid of children.get(parent)||[]){result.push(childPid);stack.push(childPid)}}return result}catch(_){return[]}}",
     "const killDescendants=(pid,signal)=>{for(const target of descendantPids(pid).reverse()){try{process.kill(target,signal)}catch(_){}}}",
     "const forward=signal=>{if(!child)return;const pid=child.pid;const killGroup=()=>{if(process.platform!=='win32'&&pid){try{process.kill(-pid,signal);return true}catch(_){}}return false};const killChild=()=>{try{child.kill(signal)}catch(_){}};const attempt=()=>{if(!killGroup())killDescendants(pid,signal);killChild()};attempt();for(const delay of [25,100,250])setTimeout(attempt,delay).unref()}",
-    "const onSignal=signal=>{write({code:null,signal});forward(signal);if(!exiting){exiting=true;setTimeout(()=>{forward('SIGKILL');process.exit(exitCode(signal))},5000).unref()}}",
+    "const onSignal=signal=>{receivedSignal=receivedSignal||signal;write({code:null,signal:receivedSignal});forward(signal);if(!exiting){exiting=true;setTimeout(()=>{forward('SIGKILL');process.exit(exitCode(receivedSignal))},5000).unref()}}",
     "const pollKill=()=>{try{if(fs.existsSync(killFile)){const signal=JSON.parse(fs.readFileSync(killFile,'utf8'));fs.rmSync(killFile,{force:true});onSignal(signal)}}catch(_){}}",
     "for(const signal of ['SIGHUP','SIGINT','SIGTERM','SIGQUIT','SIGUSR1','SIGUSR2','SIGBREAK']){if(signalNumbers[signal]){try{process.on(signal,()=>onSignal(signal))}catch(_){}}}",
     `const detachWrappedCommand=${detachWrappedCommand ? "true" : "false"}`,
@@ -3104,7 +3107,9 @@ function eventWrapperCommand(
     "fs.writeFileSync(startFile,JSON.stringify({startMs,pid:child.pid}))",
     "const killInterval=setInterval(pollKill,20);killInterval.unref()",
     "child.on('error',error=>{write({code:1,signal:null,error:error.message});process.exit(1)})",
-    "child.on('exit',(code,signal)=>{write({code,signal});if(signal){process.exit(exitCode(signal))}else{process.exit(code??1)}})",
+    `const nativeKillPolicy=${nativeKillPolicy ? "true" : "false"}`,
+    "const finishChildExit=(code,signal)=>{const effectiveSignal=receivedSignal||signal;if(effectiveSignal){write({code:null,signal:effectiveSignal});process.exit(exitCode(effectiveSignal))}else{write({code,signal:null});process.exit(code??1)}}",
+    "child.on('exit',(code,signal)=>{if(nativeKillPolicy&&!signal&&receivedSignal===null){setTimeout(()=>finishChildExit(code,signal),25)}else{finishChildExit(code,signal)}})",
   ].join(";");
   const runner = process.platform === "win32" ? "call " : "exec ";
   return `${runner}${shellArg(process.execPath)} -e ${shellArg(source)}`;

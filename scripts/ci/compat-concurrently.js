@@ -5907,8 +5907,10 @@ function runAsync(command, args, testCase) {
           }
         };
         if (write.afterStdout !== undefined) {
+          const stdoutContains = (text) =>
+            stdout.includes(text) || stdout.replace(/\r\n/g, "\n").includes(text);
           const poll = () => {
-            if (stdout.includes(write.afterStdout)) {
+            if (stdoutContains(write.afterStdout)) {
               writeInput();
               return;
             }
