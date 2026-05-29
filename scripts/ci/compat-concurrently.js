@@ -2717,6 +2717,8 @@ async function runNativeApiGlobalRawCommandFalseSmoke() {
 
 async function runNativeApiCommandAwareLoggerSmoke() {
   const api = require(resolve("index.js"));
+  const logTextCommand = nodePrintCommand("log-text");
+  const logMethodCommand = nodePrintCommand("log-method");
   const textLoggerRecords = [];
   const textLogger = {
     logCommandText(text, command) {
@@ -2729,7 +2731,7 @@ async function runNativeApiCommandAwareLoggerSmoke() {
     },
   };
 
-  await api.concurrently([{ name: "api", command: nodePrintCommand("log-text") }], {
+  await api.concurrently([{ name: "api", command: logTextCommand }], {
     logger: textLogger,
     raw: true,
     prefixColors: false,
@@ -2740,7 +2742,7 @@ async function runNativeApiCommandAwareLoggerSmoke() {
         record.text.includes("log-text") &&
         record.index === 0 &&
         record.name === "api" &&
-        record.command.includes("log-text")
+        record.command === logTextCommand
     )
   ) {
     throw new Error(
@@ -2759,7 +2761,7 @@ async function runNativeApiCommandAwareLoggerSmoke() {
       command: command?.command,
     });
   };
-  await api.concurrently([{ name: "web", command: nodePrintCommand("log-method") }], {
+  await api.concurrently([{ name: "web", command: logMethodCommand }], {
     logger,
     prefixColors: false,
   }).result;
@@ -2769,7 +2771,7 @@ async function runNativeApiCommandAwareLoggerSmoke() {
         record.text.includes("log-method") &&
         record.index === 0 &&
         record.name === "web" &&
-        record.command.includes("log-method")
+        record.command === logMethodCommand
     )
   ) {
     throw new Error(
