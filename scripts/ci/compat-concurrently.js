@@ -6189,7 +6189,14 @@ function nodeHangCommand() {
 }
 
 function nodeEvalCommand(source) {
-  return `node -e "${source.replaceAll('"', '\\"')}"`;
+  return `${nodeExecutableCommand()} -e "${source.replaceAll('"', '\\"')}"`;
+}
+
+function nodeExecutableCommand() {
+  if (process.platform === "win32") {
+    return `"${process.execPath}"`;
+  }
+  return "node";
 }
 
 function jsSingleQuoted(value) {
