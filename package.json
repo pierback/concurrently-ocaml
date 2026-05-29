@@ -6,16 +6,7 @@
   "main": "index.js",
   "types": "index.d.ts",
   "exports": {
-    ".": {
-      "import": {
-        "types": "./index.d.mts",
-        "default": "./index.mjs"
-      },
-      "require": {
-        "types": "./index.d.ts",
-        "default": "./index.js"
-      }
-    },
+    ".": "./index.mjs",
     "./package.json": "./package.json"
   },
   "files": [
@@ -55,6 +46,9 @@
   ],
   "author": "Franz Pieringer",
   "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
   "dependencies": {
     "rxjs": "7.8.2"
   },

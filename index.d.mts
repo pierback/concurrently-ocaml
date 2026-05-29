@@ -126,6 +126,7 @@ export interface ConcurrentlyOptions {
   kill?: KillProcess;
   timings?: boolean;
   teardown?: readonly string[];
+  shell?: string;
 }
 
 export declare class Command implements CommandInfo {
@@ -144,8 +145,8 @@ export declare class Command implements CommandInfo {
   state: "stopped" | "started" | "errored" | "exited";
   readonly close: Rx.Subject<CloseEvent>;
   readonly error: Rx.Subject<unknown>;
-  readonly stdout: Rx.Subject<Buffer>;
-  readonly stderr: Rx.Subject<Buffer>;
+  readonly stdout: Rx.Subject<Buffer<ArrayBufferLike>>;
+  readonly stderr: Rx.Subject<Buffer<ArrayBufferLike>>;
   readonly timer: Rx.Subject<TimerEvent>;
   readonly stateChange: Rx.Subject<"started" | "errored" | "exited">;
   readonly messages: {

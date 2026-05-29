@@ -35,8 +35,8 @@ npm run smoke:npm-install:host
 
 ## Current Packaging State
 
-The root npm package ships JavaScript CommonJS/ESM entrypoints, TypeScript
-declarations, CLI shims, and optional platform packages containing native
+The root npm package ships the JavaScript ESM entrypoint shape from
+`concurrently@10.0.0`, TypeScript declarations, CLI shims, and optional platform packages containing native
 `concurrently-ml` binaries for macOS, Linux GNU, Linux musl, and Windows.
 During local development the launcher can also use `_build/default/bin/main.exe`
 after `npm run compile`.
@@ -67,10 +67,12 @@ await result;
 CommonJS callers use the same alias:
 
 ```js
-const concurrently = require("concurrently");
+const { default: concurrently } = require("concurrently");
 
 concurrently(["node server.js", "npm run watch"]);
 ```
+
+The package requires Node.js 22 or newer, matching `concurrently@10.0.0`.
 
 `npm run smoke:npm-install:host` packages the current host binary, installs the
 root package plus matching platform package into a clean temporary npm project,
@@ -153,4 +155,5 @@ to the default target, while `index:` and `name:` prefixes route stdin chunks to
 a selected running command.
 
 `npm run compat:concurrently` compares deterministic CLI cases against pinned
-`concurrently@9.2.1`.
+`concurrently@9.2.1`; `npm run audit:npm-api` verifies the packaged JavaScript
+entrypoint and type surface against `concurrently@10.0.0`.

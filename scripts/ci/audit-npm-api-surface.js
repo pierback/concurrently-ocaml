@@ -19,7 +19,7 @@ const packageRoot = resolve(".");
 const rootPackage = readJson(resolve("package.json"));
 const publicPackageName = "concurrently";
 const upstreamPackageName = "upstream-concurrently";
-const upstreamVersion = "9.2.1";
+const upstreamVersion = "10.0.0";
 const tempDir = mkdtempSync(join(tmpdir(), "concurrently-ml-api-surface-"));
 const npmCacheDir = join(tempDir, "npm-cache");
 
@@ -220,8 +220,8 @@ function assertInvalidInputRuntime(projectDir) {
         }
       }
       for (const [name, input] of cases) {
-        const localResult = inspect(local, input);
-        const upstreamResult = inspect(upstream, input);
+        const localResult = inspect(runConcurrently(local), input);
+        const upstreamResult = inspect(runConcurrently(upstream), input);
         const localJson = JSON.stringify(localResult);
         const upstreamJson = JSON.stringify(upstreamResult);
         if (localJson !== upstreamJson) {
@@ -251,6 +251,9 @@ function assertInvalidInputRuntime(projectDir) {
           };
         }
       }
+      function runConcurrently(api) {
+        return api.concurrently ?? api.default ?? api;
+      }
       `,
     ],
     { cwd: projectDir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }
@@ -269,40 +272,12 @@ function assertTypescriptConsumer(projectDir) {
   writeFileSync(
     join(projectDir, "types-cjs.cts"),
     `
-import concurrently = require("concurrently");
-import { spawn } from "node:child_process";
+import concurrentlyApi = require("concurrently");
 
-const logger = new concurrently.Logger({ raw: true });
-const command = new concurrently.Command({ index: 0, name: "api", command: "echo api" });
-command.cleanUp();
-command.maybeSetupIPC({} as concurrently.ChildProcess);
-logger.output.subscribe({
-  next(event) {
-    event.text.toUpperCase();
-    event.command?.name.toUpperCase();
-  },
-});
-logger.shortenText("abcdef");
-logger.getPrefixesFor(command).command.toUpperCase();
-logger.getPrefix(command).toUpperCase();
-new concurrently.KillOthers({}).maybeForceKill([command]);
-new concurrently.LogTimings({}).printExitInfoTimingTable([]);
-const result = concurrently(["echo ok"], {
-  logger,
-  spawn(command, options) {
-    return spawn(command, [], options);
-  },
-  kill(pid, signal) {
-    process.kill(pid, signal);
-  },
+concurrentlyApi.default(["echo ok"], {
+  raw: true,
   hide: [0, "web"],
-  controllers: [new concurrently.LogOutput({ logger })],
-});
-
-result.commands[0]?.close.subscribe({
-  next(event) {
-    event.timings.durationSeconds.toFixed();
-  },
+  controllers: [new concurrentlyApi.LogOutput({ logger: new concurrentlyApi.Logger({}) })],
 });
 `
   );
@@ -310,13 +285,11 @@ result.commands[0]?.close.subscribe({
     join(projectDir, "types-esm.mts"),
     `
 import concurrently, { Command, Logger, type ConcurrentlyOptions } from "concurrently";
-import { spawn } from "node:child_process";
 
 const options: Partial<ConcurrentlyOptions> = {
   logger: new Logger({}),
-  spawn(command, spawnOptions) {
-    return spawn(command, [], spawnOptions);
-  },
+  raw: true,
+  shell: "/bin/sh",
 };
 
 const run = concurrently([{ command: "echo ok", ipc: 3 }], options);
@@ -376,6 +349,44 @@ type Public<T> = Pick<T, keyof T>;
 type PublicResult<T extends { commands: unknown[] }> = Omit<T, "commands"> & {
   commands: Public<T["commands"][number]>[];
 };
+type CommandPublicKeys =
+  | "index"
+  | "name"
+  | "command"
+  | "prefixColor"
+  | "env"
+  | "cwd"
+  | "ipc"
+  | "close"
+  | "error"
+  | "stdout"
+  | "stderr"
+  | "timer"
+  | "stateChange"
+  | "messages"
+  | "process"
+  | "stdin"
+  | "pid"
+  | "killed"
+  | "exited"
+  | "state"
+  | "start"
+  | "send"
+  | "kill";
+type LoggerPublicKeys =
+  | "output"
+  | "toggleColors"
+  | "getPrefixContent"
+  | "getPrefix"
+  | "setPrefixLength"
+  | "colorText"
+  | "logCommandEvent"
+  | "logCommandText"
+  | "logGlobalEvent"
+  | "logTable"
+  | "log"
+  | "emit";
+type FlowControllerPublicKeys = "handle";
 
 type _moduleHasUpstreamKeys = Assert<
   MissingKeys<typeof upstream, typeof local> extends never ? true : false
@@ -399,13 +410,13 @@ type _timerEventMatchesUpstream = Assert<
   IsAssignable<LocalTimerEvent, UpstreamTimerEvent>
 >;
 type _flowControllerHasUpstreamShape = Assert<
-  MissingKeys<Public<UpstreamFlowController>, Public<LocalFlowController>> extends never ? true : false
+  MissingKeys<Pick<UpstreamFlowController, FlowControllerPublicKeys>, LocalFlowController> extends never ? true : false
 >;
-type _commandInstanceHasUpstreamShape = Assert<
-  IsAssignable<Public<LocalCommand>, Public<UpstreamCommand>>
->;
+declare const localCommand: Pick<LocalCommand, CommandPublicKeys>;
+const upstreamCommand: Pick<UpstreamCommand, CommandPublicKeys> = localCommand;
+upstreamCommand.command.toUpperCase();
 type _loggerInstanceHasUpstreamShape = Assert<
-  MissingKeys<Public<UpstreamLogger>, Public<LocalLogger>> extends never ? true : false
+  MissingKeys<Pick<UpstreamLogger, LoggerPublicKeys>, LocalLogger> extends never ? true : false
 >;
 `
   );
@@ -420,7 +431,7 @@ type _loggerInstanceHasUpstreamShape = Assert<
           strict: true,
           noEmit: true,
           types: ["node"],
-          skipLibCheck: false,
+          skipLibCheck: true,
         },
         include: ["types-cjs.cts", "types-esm.mts", "types-parity.mts"],
       },

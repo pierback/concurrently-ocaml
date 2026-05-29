@@ -206,7 +206,12 @@ try {
     projectDir,
     "logger-smoke.cjs",
     `
-      const concurrently = require(${JSON.stringify(publicPackageName)});
+      const concurrentlyModule = require(${JSON.stringify(publicPackageName)});
+      if (typeof concurrentlyModule === "function") {
+        throw new Error("CommonJS export should be the v10 namespace object");
+      }
+      const concurrently = concurrentlyModule.default;
+      Object.assign(concurrently, concurrentlyModule);
       const { Writable } = require("node:stream");
       class CaptureLogger {
         constructor() {
@@ -439,11 +444,15 @@ try {
       projectDir,
       "api-smoke.cjs",
       `
-      const concurrently = require(${JSON.stringify(publicPackageName)});
+      const concurrentlyModule = require(${JSON.stringify(publicPackageName)});
+      if (typeof concurrentlyModule === "function") {
+        throw new Error("CommonJS export should be the v10 namespace object");
+      }
+      const concurrently = concurrentlyModule.default;
       if (typeof concurrently !== "function") {
         throw new Error("default export is not callable");
       }
-      if (typeof concurrently.createConcurrently !== "function") {
+      if (typeof concurrentlyModule.createConcurrently !== "function") {
         throw new Error("createConcurrently export is missing");
       }
       const run = concurrently(['node -e "process.exit(0)"'], { raw: true });
@@ -511,7 +520,12 @@ try {
     projectDir,
     "api-smoke.cjs",
     `
-      const concurrently = require(${JSON.stringify(publicPackageName)});
+      const concurrentlyModule = require(${JSON.stringify(publicPackageName)});
+      if (typeof concurrentlyModule === "function") {
+        throw new Error("CommonJS export should be the v10 namespace object");
+      }
+      const concurrently = concurrentlyModule.default;
+      Object.assign(concurrently, concurrentlyModule);
       const { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } = require("node:fs");
       const { fork, spawn, spawnSync } = require("node:child_process");
       const { tmpdir } = require("node:os");
