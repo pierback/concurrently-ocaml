@@ -6158,7 +6158,7 @@ function createWindowsCommandFixture() {
   writeFileSync(script, "@echo off\r\necho script:%~1:%~2\r\n");
 
   function command(name, body) {
-    const file = resolve(scriptDir, `${nextScriptId++}-${name}.cmd`);
+    const file = resolve(root, `${nextScriptId++}-${name}.cmd`);
     writeFileSync(file, `@echo off\r\n${body}`);
     return `"${file}"`;
   }
