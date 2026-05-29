@@ -384,18 +384,18 @@ Known divergences and deferred scope:
 | Timing table row order and killed-shell exit labels for runtime-dependent signal durations | npm sorts the timing table by measured duration. When one command is killed after another exits, relative durations can legitimately differ by runtime and platform. Shells can also report a sibling killed by `SIGTERM` as either status `0` or the signal label depending on process-tree timing. | Kill-on-fail and success-triggered kill timing now match npm under normalized timestamps, durations, duration-derived table row order, and the killed-shell status label. This is intentionally normalized compatibility evidence rather than byte-stable output, because the upstream sort key and shell status projection are runtime-dependent. |
 | Shell job-control diagnostics for trapped shell children | For shell commands such as `trap 'exit 129' HUP; sleep 1`, npm's process-tree kill path can race between surfacing and omitting shell diagnostics like `Hangup: 1` or `Terminated: 15` before the command close notification. Trap cleanup output emitted while the shell is being torn down can also appear or disappear by runtime timing. Upstream also races between parent exit status `0` and `1` for targeted `SIGINT`/`SIGUSR1`/`SIGHUP` trapped-shell sibling cancellation cases. | The native POSIX backend signals the process group directly to bound descendants. Lifecycle output matches upstream once shell-emitted job-control diagnostics, signal-trap cleanup output, and targeted trapped-shell parent status races are normalized as runtime-dependent evidence. |
 | Unsupported kill-signal stderr when used | Upstream forwards the exact `--kill-signal` string to Node/tree-kill. Bare aliases such as `TERM`/`HUP`, and unsupported names such as `SIGFOO`, print a partial shutdown log and then throw Node's `ERR_UNKNOWN_SIGNAL` stack when used. | The native CLI now matches the exit status, shutdown status line text, and `ERR_UNKNOWN_SIGNAL` headline for deterministic unsupported values. It still does not reproduce Node's environment-specific stack frames. |
-| JavaScript programmatic API | Upstream `concurrently()` can be imported from JavaScript. | The npm package now ships CommonJS/ESM/type entrypoints backed by the native binary, with matching top-level export names. Custom controllers can inspect the native-backed command list, replace the command list, receive close/timer/state events exposed by the facade, run `onFinish` callbacks, route native output through `options.logger` sinks, and kill returned commands through the native per-command control files or an `options.kill` callback once their child process identity is known. High-level runs with `options.spawn`, command-level `ipc`, command-aware logger callbacks, and custom kill callbacks combined with kill policies use the repo-owned JavaScript scheduler because those hooks require per-command Node child-process context rather than native merged output. The JavaScript scheduler now preserves controller-owned `Command` spawn metadata, supports controller-provided IPC children, runs `options.teardown` commands through the selected spawn hook, calls custom kill callbacks during policy-driven sibling cancellation, and passes command context to `logger.logCommandText(text, command)` and `logger.log(prefix, text, command)` callbacks. |
+| JavaScript programmatic API | Upstream `concurrently()` can be imported from JavaScript. | The npm package now ships CommonJS/ESM/type entrypoints backed by the native binary, with matching top-level export names. Custom controllers can inspect the native-backed command list, replace the command list, receive close/timer/state events exposed by the facade, run `onFinish` callbacks, route native output through `options.logger` sinks, expose `Logger.output` as an upstream-shaped `{ command, text }` observable, and kill returned commands through the native per-command control files or an `options.kill` callback once their child process identity is known. High-level runs with `options.spawn`, command-level `ipc`, command-aware logger callbacks, and custom kill callbacks combined with kill policies use the repo-owned JavaScript scheduler because those hooks require per-command Node child-process context rather than native merged output. The JavaScript scheduler now preserves controller-owned `Command` spawn metadata, supports controller-provided IPC children, runs `options.teardown` commands through the selected spawn hook, calls custom kill callbacks during policy-driven sibling cancellation, and passes command context to `logger.logCommandText(text, command)` and `logger.log(prefix, text, command)` callbacks. |
 | Linux musl packaging | Upstream runs on Alpine/musl through Node. | Linux musl packages are built and smoke-installed on Alpine through npm's `libc` package selector. |
 | Windows backend | Upstream supports Windows process semantics. | Windows npm-script callers no longer fall back to the pinned upstream JavaScript CLI. The native Windows backend uses `CreateProcessW`, inherited stdio handles, exit-code mapping, and job-object process-tree termination. Windows x64 package smoke gates pass in CI, including a Windows-selected pinned compatibility harness and native process-tree cleanup smoke. Windows ARM64 packaging is not advertised because the GitHub runner cannot provision an opam binary for `windows/arm64`. |
 
 ## Current Verification Snapshot
 
-As of May 28, 2026, commit `7715f4c` on
-`feat/windows-native-validation` has the following proof:
+As of May 29, 2026, `feat/windows-native-validation` has the following proof:
 
 - `opam exec -- dune build @install @runtest`, `npm run audit:npm-api`, and
   `npm run compat:concurrently` pass in GitHub Actions build run
-  `26604935141` against OCaml 5.4.1 and pinned `concurrently@9.2.1`.
+  `26612332069` at commit `f9254ae` against OCaml 5.4.1 and pinned
+  `concurrently@9.2.1`.
 - `npm run smoke:npm-install:host` passes on the host macOS arm64 target,
   packing the root npm package plus the native platform package, verifying the
   native package checksum manifest, and executing both npm-installed bin shims.
@@ -403,18 +403,18 @@ As of May 28, 2026, commit `7715f4c` on
   JavaScript API entrypoints, TypeScript declarations, README, and LICENSE;
   OCaml source, tests, Dune files, and development scripts stay outside the
   root package surface.
-- GitHub Actions run `26604935141` passes native package gates for Linux GNU
+- GitHub Actions run `26612332069` passes native package gates for Linux GNU
   x64/arm64, Linux musl x64/arm64, macOS x64/arm64, and Windows x64. Each
   package job builds the native binary, creates the platform npm package,
   smoke-installs the packed package, verifies installed bin shims, and uploads
   the package artifact.
-- The Windows x64 package gate in run `26604935141` builds `bin/main.exe`,
+- The Windows x64 package gate in run `26612332069` builds `bin/main.exe`,
   audits the npm API surface, runs the pinned compatibility harness on Windows
   command fixtures, runs the Windows-native process smoke, creates the
   `win32-x64` package, and smoke-installs the packed npm package.
-- On May 29, 2026, the local `npm run audit:npm-api` gate passes with an
-  explicit runtime IPC check against both the packed local `concurrently`
-  package and pinned `concurrently@9.2.1`.
+- On May 29, 2026, the local `npm run audit:npm-api` gate passes with
+  explicit runtime IPC and `Logger.output` checks against the packed local
+  `concurrently` package and pinned `concurrently@9.2.1`.
 
 ## Implementation Slices
 

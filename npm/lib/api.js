@@ -315,6 +315,7 @@ function commandCanRequestKill(command) {
 class Logger {
   constructor(options = {}) {
     this.options = options;
+    this.output = new SimpleSubject();
   }
 
   toggleColors() {}
@@ -338,11 +339,14 @@ class Logger {
   logTable(rows) {
     this.log("", `${JSON.stringify(rows)}\n`);
   }
-  log(prefix, text, _command) {
-    const stream = this.options.outputStream ?? process.stdout;
-    stream.write(`${prefix}${text}`);
+  log(prefix, text, command) {
+    this.emit(command, `${prefix}${text}`);
   }
-  emit() {}
+  emit(command, text) {
+    this.output.next({ command, text });
+    const stream = this.options.outputStream ?? process.stdout;
+    stream.write(text);
+  }
 }
 
 class PassThroughController {

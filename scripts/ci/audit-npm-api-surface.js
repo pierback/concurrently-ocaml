@@ -58,6 +58,7 @@ try {
 
   assertRuntimeExports(projectDir, "commonjs");
   assertRuntimeExports(projectDir, "module");
+  assertLoggerOutputRuntime(projectDir);
   assertTypescriptConsumer(projectDir);
   assertIpcRuntime(projectDir);
 
@@ -136,6 +137,12 @@ import concurrently = require("concurrently");
 import { spawn } from "node:child_process";
 
 const logger = new concurrently.Logger({ raw: true });
+logger.output.subscribe({
+  next(event) {
+    event.text.toUpperCase();
+    event.command?.name.toUpperCase();
+  },
+});
 const result = concurrently(["echo ok"], {
   logger,
   spawn(command, options) {
@@ -227,6 +234,50 @@ concurrently(["echo original"], controllerOptions);
   if (result.status !== 0) {
     throw new Error(
       `TypeScript consumer audit exited ${result.status}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`
+    );
+  }
+}
+
+function assertLoggerOutputRuntime(projectDir) {
+  const result = spawnSync(
+    process.execPath,
+    [
+      "-e",
+      `
+      const concurrently = require(${JSON.stringify(publicPackageName)});
+      const { Writable } = require("node:stream");
+      const logger = new concurrently.Logger({
+        raw: true,
+        outputStream: new Writable({
+          write(_chunk, _encoding, callback) {
+            callback();
+          },
+        }),
+      });
+      const events = [];
+      logger.output.subscribe({
+        next(event) {
+          events.push(event);
+        },
+      });
+      logger.logCommandText("hello", { index: 0, name: "api", command: "echo api" });
+      if (
+        events.length !== 1 ||
+        events[0].text !== "hello" ||
+        events[0].command?.name !== "api"
+      ) {
+        throw new Error("Logger.output did not emit upstream-shaped events: " + JSON.stringify(events));
+      }
+      `,
+    ],
+    { cwd: projectDir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }
+  );
+  if (result.error) {
+    throw result.error;
+  }
+  if (result.status !== 0) {
+    throw new Error(
+      `Logger.output runtime audit exited ${result.status}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`
     );
   }
 }
