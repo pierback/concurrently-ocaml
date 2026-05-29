@@ -124,7 +124,9 @@ let template_label ~now ~options ~process_id command template =
       ("{index}", index_label ~options command);
       ("{pid}", Option.value ~default:"" process_id);
       ("{name}", name_label command);
-      ("{command}", Command.display_text command);
+      ( "{command}",
+        truncate_command ~prefix_length:options.prefix_length
+          (Command.display_text command) );
       ("{time}", format_timestamp options.timestamp_format (now ()));
     ]
   in
