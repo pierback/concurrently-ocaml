@@ -91,6 +91,7 @@ const posixCases = [
     name: "help short option",
     upstream: "bin/concurrently.spec.ts -h",
     args: ["-h"],
+    normalizeStdout: normalizeHelpStdout,
   },
   {
     name: "help short option wins over separate prefix value",
@@ -1707,6 +1708,7 @@ const posixCases = [
       "printf fast",
     ],
     env: { CONCURRENTLY_M: "1" },
+    normalizeStdout: normalizeLineOrderStdout,
   },
   {
     name: "env max processes full name serializes command start",
@@ -1946,6 +1948,7 @@ const windowsCases = [
     name: "help short option",
     upstream: "bin/concurrently.spec.ts -h",
     args: ["-h"],
+    normalizeStdout: normalizeHelpStdout,
   },
   {
     name: "no commands prints help",
