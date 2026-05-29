@@ -75,7 +75,7 @@ installation and compilation so the runner image version does not become the
 minimum supported macOS version for the shipped Mach-O binary.
 Windows package jobs build and smoke-install the `win32-x64` native package.
 They also compare Windows-safe CLI fixtures against pinned
-`concurrently@9.2.1` and run a native job-object cleanup smoke against the
+`concurrently@10.0.0` and run a native job-object cleanup smoke against the
 local binary. The root npm bin shim must not route Windows hosts to the pinned
 upstream JavaScript CLI.
 

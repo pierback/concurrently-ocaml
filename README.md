@@ -155,5 +155,5 @@ to the default target, while `index:` and `name:` prefixes route stdin chunks to
 a selected running command.
 
 `npm run compat:concurrently` compares deterministic CLI cases against pinned
-`concurrently@9.2.1`; `npm run audit:npm-api` verifies the packaged JavaScript
+`concurrently@10.0.0`; `npm run audit:npm-api` verifies the packaged JavaScript
 entrypoint and type surface against `concurrently@10.0.0`.
