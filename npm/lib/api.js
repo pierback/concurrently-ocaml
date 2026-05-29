@@ -103,7 +103,8 @@ class SimpleReplaySubject extends SimpleSubject {
 }
 
 class Command {
-  constructor(info = {}, spawnOpts, spawn, killProcess) {
+  constructor(info, spawnOpts, spawn, killProcess) {
+    info = info ?? {};
     this.index = numberOrDefault(info.index, 0);
     this.name = stringOrDefault(info.name, String(this.index));
     this.command = stringOrDefault(info.command, "");
@@ -163,12 +164,12 @@ class Command {
     const startDate = new Date();
     const highResStartTime = process.hrtime();
     this.timer.next({ startDate });
-    this.subscriptions = this.setupIpc(child);
+    this.subscriptions = this.maybeSetupIPC(child);
     child.on?.("error", (error) => {
       if (this.runId !== runId) {
         return;
       }
-      this.cleanup();
+      this.cleanUp();
       const endDate = new Date();
       this.timer.next({ startDate, endDate });
       this.error.next(error);
@@ -178,7 +179,7 @@ class Command {
       if (this.runId !== runId) {
         return;
       }
-      this.cleanup();
+      this.cleanUp();
       this.exited = true;
       if (this.state !== "errored") {
         this.changeState("exited");
@@ -215,7 +216,7 @@ class Command {
     this.stateChange.next(state);
   }
 
-  setupIpc(child) {
+  maybeSetupIPC(child) {
     if (!this.ipc) {
       return [];
     }
@@ -277,7 +278,7 @@ class Command {
     }
   }
 
-  cleanup() {
+  cleanUp() {
     const child = this.process;
     for (const subscription of this.subscriptions) {
       subscription.unsubscribe();
@@ -313,57 +314,244 @@ function commandCanRequestKill(command) {
 }
 
 class Logger {
-  constructor(options = {}) {
+  constructor(options) {
+    options = options ?? {};
     this.options = options;
+    this.hide = arrayOption(options.hide).map(String);
+    this.raw = Boolean(options.raw);
+    this.prefixFormat = options.prefixFormat;
+    this.commandLength = options.commandLength || 10;
+    this.timestampFormat = options.timestampFormat || "yyyy-MM-dd HH:mm:ss.SSS";
+    this.prefixLength = 0;
+    this.lastWrite = undefined;
     this.output = new SimpleSubject();
   }
 
   toggleColors() {}
-  setPrefixLength() {}
-  getPrefixContent() {
-    return undefined;
+  setPrefixLength(length) {
+    this.prefixLength = length;
   }
-  getPrefix() {
-    return "";
+  shortenText(text) {
+    return spawnApiShortenText(text, { prefixLength: this.commandLength });
+  }
+  getPrefixesFor(command) {
+    return {
+      pid: command.pid != null ? String(command.pid) : "",
+      index: String(command.index),
+      name: command.name,
+      command: this.shortenText(command.command),
+      time: spawnApiFormatDate(new Date(), this.timestampFormat),
+    };
+  }
+  getPrefixContent(command) {
+    const prefix = this.prefixFormat || (command.name ? "name" : "index");
+    if (prefix === "none") {
+      return undefined;
+    }
+    const prefixes = this.getPrefixesFor(command);
+    if (Object.prototype.hasOwnProperty.call(prefixes, prefix)) {
+      return { type: "default", value: prefixes[prefix] };
+    }
+    const value = Object.entries(prefixes).reduce(
+      (text, [key, value]) =>
+        text.replaceAll(`{${key}}`, String(value)),
+      prefix
+    );
+    return { type: "template", value };
+  }
+  getPrefix(command) {
+    const content = this.getPrefixContent(command);
+    if (!content) {
+      return "";
+    }
+    const value = String(content.value).padEnd(this.prefixLength, " ");
+    return content.type === "template" ? value : `[${value}]`;
   }
   colorText(_command, text) {
     return text;
   }
-  logCommandEvent() {}
+  logCommandEvent(text, command) {
+    if (this.raw) {
+      return;
+    }
+    const prefix =
+      this.lastWrite?.command === command && this.lastWrite.char !== "\n"
+        ? "\n"
+        : "";
+    this.logCommandText(`${prefix}${text}\n`, command);
+  }
   logCommandText(text, command) {
-    this.log("", text, command);
+    if (
+      this.hide.includes(String(command.index)) ||
+      this.hide.includes(command.name)
+    ) {
+      return;
+    }
+    const prefix = this.colorText(command, this.getPrefix(command));
+    this.log(`${prefix}${prefix ? " " : ""}`, text, command);
   }
   logGlobalEvent(text) {
-    this.log("", text);
+    if (this.raw) {
+      return;
+    }
+    this.log("--> ", `${text}\n`);
   }
   logTable(rows) {
-    this.log("", `${JSON.stringify(rows)}\n`);
+    if (this.raw || !Array.isArray(rows) || rows.length === 0) {
+      return;
+    }
+    const output = outputWriter({
+      write: (chunk, _command, callback) => {
+        this.logGlobalEvent(String(chunk).replace(/^--> /, "").replace(/\n$/, ""));
+        callback();
+      },
+    });
+    spawnApiWriteTable(rows, output);
   }
   log(prefix, text, command) {
-    this.emit(command, `${prefix}${text}`);
+    if (this.raw) {
+      this.emit(command, text);
+      return;
+    }
+    text = String(text).replace(/\u2026/g, "...");
+    if (
+      this.lastWrite &&
+      this.lastWrite.command !== command &&
+      this.lastWrite.char !== "\n"
+    ) {
+      this.emit(this.lastWrite.command, "\n");
+    }
+    if (!this.lastWrite || this.lastWrite.char === "\n") {
+      this.emit(command, prefix);
+    }
+    this.emit(
+      command,
+      text.replaceAll("\n", (lineFeed, index) =>
+        lineFeed + (text[index + 1] ? prefix : "")
+      )
+    );
   }
   emit(command, text) {
+    this.lastWrite = { command, char: text[text.length - 1] };
     this.output.next({ command, text });
-    const stream = this.options.outputStream ?? process.stdout;
-    stream.write(text);
+    const stream = this.options.outputStream;
+    if (stream instanceof Writable) {
+      stream.write(text);
+    }
   }
 }
 
 class PassThroughController {
+  constructor(options) {
+    this.options = options ?? {};
+  }
+
   handle(commands) {
     return { commands };
   }
 }
 
-class InputHandler extends PassThroughController {}
-class KillOnSignal extends PassThroughController {}
-class KillOthers extends PassThroughController {}
-class LogError extends PassThroughController {}
-class LogExit extends PassThroughController {}
-class LogOutput extends PassThroughController {}
-class RestartProcess extends PassThroughController {}
+class InputHandler extends PassThroughController {
+  constructor(options) {
+    super(options);
+  }
+
+  handle(commands) {
+    return super.handle(commands);
+  }
+}
+
+class KillOnSignal extends PassThroughController {
+  constructor(options) {
+    super(options);
+  }
+
+  handle(commands) {
+    return super.handle(commands);
+  }
+}
+
+class KillOthers extends PassThroughController {
+  constructor(options) {
+    super(options);
+    this.logger = this.options.logger;
+    this.conditions = arrayOption(this.options.conditions);
+    this.killSignal = this.options.killSignal;
+    this.timeoutMs = this.options.timeoutMs;
+  }
+
+  handle(commands) {
+    return super.handle(commands);
+  }
+
+  maybeForceKill(commands) {
+    if (!this.timeoutMs || this.killSignal === "SIGKILL") {
+      return;
+    }
+    setTimeout(() => {
+      const killableCommands = commands.filter((command) => Command.canKill(command));
+      if (killableCommands.length === 0) {
+        return;
+      }
+      this.logger?.logGlobalEvent?.(
+        `Sending SIGKILL to ${killableCommands.length} processes..`
+      );
+      killableCommands.forEach((command) => command.kill("SIGKILL"));
+    }, this.timeoutMs);
+  }
+}
+
+class LogError extends PassThroughController {
+  constructor(options) {
+    super(options);
+  }
+
+  handle(commands) {
+    return super.handle(commands);
+  }
+}
+
+class LogExit extends PassThroughController {
+  constructor(options) {
+    super(options);
+  }
+
+  handle(commands) {
+    return super.handle(commands);
+  }
+}
+
+class LogOutput extends PassThroughController {
+  constructor(options) {
+    super(options);
+  }
+
+  handle(commands) {
+    return super.handle(commands);
+  }
+}
 
 class LogTimings extends PassThroughController {
+  constructor(options) {
+    super(options);
+    this.logger = this.options.logger;
+  }
+
+  handle(commands) {
+    return super.handle(commands);
+  }
+
+  printExitInfoTimingTable(exitInfos) {
+    const sorted = [...exitInfos].sort(
+      (left, right) =>
+        right.timings.durationSeconds - left.timings.durationSeconds
+    );
+    const rows = sorted.map(LogTimings.mapCloseEventToTimingInfo);
+    this.logger?.logGlobalEvent?.("Timings:");
+    this.logger?.logTable?.(rows);
+    return exitInfos;
+  }
+
   static mapCloseEventToTimingInfo({ command, timings, killed, exitCode }) {
     return {
       name: command.name ?? String(command.index),
@@ -375,6 +563,19 @@ class LogTimings extends PassThroughController {
       killed,
       command: command.command,
     };
+  }
+}
+
+class RestartProcess extends PassThroughController {
+  constructor(options) {
+    super(options);
+    const tries = this.options.tries;
+    this.tries =
+      tries == null ? 0 : Number(tries) < 0 ? Infinity : Number(tries);
+  }
+
+  handle(commands) {
+    return super.handle(commands);
   }
 }
 

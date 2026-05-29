@@ -58,6 +58,7 @@ try {
 
   assertRuntimeExports(projectDir, "commonjs");
   assertRuntimeExports(projectDir, "module");
+  assertPrototypeSurface(projectDir);
   assertLoggerOutputRuntime(projectDir);
   assertTypescriptConsumer(projectDir);
   assertIpcRuntime(projectDir);
@@ -129,6 +130,64 @@ function assertRuntimeExports(projectDir, moduleKind) {
   }
 }
 
+function assertPrototypeSurface(projectDir) {
+  const result = spawnSync(
+    process.execPath,
+    [
+      "-e",
+      `
+      const local = require(${JSON.stringify(publicPackageName)});
+      const upstream = require(${JSON.stringify(upstreamPackageName)});
+      function stringKeys(value) {
+        return Reflect.ownKeys(value)
+          .filter((key) => typeof key === "string")
+          .sort();
+      }
+      function prototypeKeys(value) {
+        return Object.getOwnPropertyNames(value.prototype ?? {}).sort();
+      }
+      function assertJsonEqual(actual, expected, label) {
+        const actualJson = JSON.stringify(actual);
+        const expectedJson = JSON.stringify(expected);
+        if (actualJson !== expectedJson) {
+          throw new Error(label + ": expected " + expectedJson + ", got " + actualJson);
+        }
+      }
+      for (const key of stringKeys(upstream)) {
+        const upstreamValue = upstream[key];
+        const localValue = local[key];
+        if (typeof upstreamValue !== "function") {
+          continue;
+        }
+        if (typeof localValue !== "function") {
+          throw new Error(key + ": expected function export");
+        }
+        if (localValue.length !== upstreamValue.length) {
+          throw new Error(
+            key + ": expected function length " + upstreamValue.length + ", got " + localValue.length
+          );
+        }
+        assertJsonEqual(prototypeKeys(localValue), prototypeKeys(upstreamValue), key + " prototype keys");
+        assertJsonEqual(
+          Object.getOwnPropertyNames(localValue).sort(),
+          Object.getOwnPropertyNames(upstreamValue).sort(),
+          key + " static keys"
+        );
+      }
+      `,
+    ],
+    { cwd: projectDir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }
+  );
+  if (result.error) {
+    throw result.error;
+  }
+  if (result.status !== 0) {
+    throw new Error(
+      `prototype surface audit exited ${result.status}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`
+    );
+  }
+}
+
 function assertTypescriptConsumer(projectDir) {
   writeFileSync(
     join(projectDir, "types-cjs.cts"),
@@ -137,12 +196,20 @@ import concurrently = require("concurrently");
 import { spawn } from "node:child_process";
 
 const logger = new concurrently.Logger({ raw: true });
+const command = new concurrently.Command({ index: 0, name: "api", command: "echo api" });
+command.cleanUp();
+command.maybeSetupIPC({} as concurrently.ChildProcess);
 logger.output.subscribe({
   next(event) {
     event.text.toUpperCase();
     event.command?.name.toUpperCase();
   },
 });
+logger.shortenText("abcdef");
+logger.getPrefixesFor(command).command.toUpperCase();
+logger.getPrefix(command).toUpperCase();
+new concurrently.KillOthers({}).maybeForceKill([command]);
+new concurrently.LogTimings({}).printExitInfoTimingTable([]);
 const result = concurrently(["echo ok"], {
   logger,
   spawn(command, options) {
