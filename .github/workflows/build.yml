@@ -38,6 +38,9 @@ jobs:
         with:
           node-version: "24"
 
+      - name: Install npm dependencies
+        run: npm install --ignore-scripts --no-audit --no-fund --no-package-lock
+
       - run: opam install . --deps-only --with-test
 
       - run: opam exec -- dune build @install @runtest --verbose
@@ -223,6 +226,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "24"
+
+      - name: Install npm dependencies
+        run: npm install --ignore-scripts --no-audit --no-fund --no-package-lock
 
       - run: opam install . --deps-only --with-test
 
