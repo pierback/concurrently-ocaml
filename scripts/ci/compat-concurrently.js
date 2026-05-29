@@ -107,6 +107,7 @@ const posixCases = [
     name: "no commands prints help",
     upstream: "bin/concurrently.ts default command handling",
     args: ["--no-color"],
+    normalizeStderr: normalizeHelpStdout,
   },
   {
     name: "unknown option leaves no commands and prints help",
@@ -1954,6 +1955,7 @@ const windowsCases = [
     name: "no commands prints help",
     upstream: "bin/concurrently.ts default command handling",
     args: ["--no-color"],
+    normalizeStderr: normalizeHelpStdout,
   },
   {
     name: "single success close notification",

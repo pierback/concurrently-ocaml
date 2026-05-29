@@ -4228,9 +4228,9 @@ let test_runner_does_not_mark_draining_exited_process_as_killed () =
   in
   let failed_command =
     Printf.sprintf
-      "printf ready > %s; i=0; while [ \"$i\" -lt 10000 ]; do printf \
+      "i=0; while [ \"$i\" -lt 10000 ]; do printf \
        xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx; \
-       i=$((i + 1)); done; exit 1"
+       i=$((i + 1)); done; printf ready > %s; exit 1"
       (Filename.quote marker)
   in
   Fun.protect
