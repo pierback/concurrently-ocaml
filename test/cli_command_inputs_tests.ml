@@ -71,6 +71,20 @@ let test_expands_passthrough_after_shortcuts () =
   assert (command_texts inputs = [ "npm run 'client build'" ]);
   assert (command_names inputs = [ "{1}" ])
 
+let test_expands_passthrough_with_upstream_shell_quote () =
+  let inputs =
+    expand ~cwd:None
+      ~passthrough_arguments:(Some [ "alpha"; "beta" ])
+      ~command_texts:
+        [ "node -e \"process.stdout.write(process.argv.join('|'))\" {1} {@} {*}" ]
+      ~names:None
+  in
+  assert (
+    command_texts inputs
+    = [
+        "node -e \"process.stdout.write(process.argv.join('|'))\" alpha alpha beta 'alpha beta'";
+      ])
+
 let test_expands_non_npm_shortcuts () =
   let inputs =
     expand ~cwd:None ~passthrough_arguments:None
@@ -323,6 +337,7 @@ let () =
   test_does_not_expand_shortcut_without_script ();
   test_preserves_empty_quoted_commands ();
   test_expands_passthrough_after_shortcuts ();
+  test_expands_passthrough_with_upstream_shell_quote ();
   test_expands_non_npm_shortcuts ();
   test_wildcard_scripts_are_not_shell_quoted ();
   test_wildcard_omission_matches_full_script_name ();
