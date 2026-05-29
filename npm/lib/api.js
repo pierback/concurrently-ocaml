@@ -11,6 +11,7 @@ const { cpus, tmpdir } = require("node:os");
 const { join, resolve } = require("node:path");
 const { Writable } = require("node:stream");
 const { StringDecoder } = require("node:string_decoder");
+const assert = require("node:assert");
 const {
   spawn: spawnChildProcess,
   spawnSync,
@@ -40,13 +41,6 @@ const AUTO_PREFIX_COLORS = [
   "bgGrey",
   "bgRed",
 ];
-
-class NativeApiUnsupportedError extends Error {
-  constructor(feature) {
-    super(`${feature} is not supported by the native concurrently-ml JavaScript facade`);
-    this.name = "NativeApiUnsupportedError";
-  }
-}
 
 class Command {
   constructor(info, spawnOpts, spawn, killProcess) {
@@ -96,9 +90,6 @@ class Command {
   }
 
   start() {
-    if (typeof this.spawn !== "function") {
-      throw new NativeApiUnsupportedError("Command.start()");
-    }
     this.runId += 1;
     const runId = this.runId;
     this.spawnApiCompleted = false;
@@ -527,9 +518,7 @@ class RestartProcess extends PassThroughController {
 
 function concurrently(commandInputs, options = {}) {
   assertCommandInputs(commandInputs);
-  if (commandInputs.length === 0) {
-    throw new Error("[concurrently] no commands provided");
-  }
+  assert.ok(commandInputs.length > 0, "[concurrently] no commands provided");
   assertNativeOptions(options);
 
   const commands = expandShortcutCommands(normalizeCommands(commandInputs), options);
@@ -680,9 +669,7 @@ function createConcurrently(commandInputs, options) {
 }
 
 function assertCommandInputs(commandInputs) {
-  if (!Array.isArray(commandInputs)) {
-    throw new Error("[concurrently] commands should be an array");
-  }
+  assert.ok(Array.isArray(commandInputs), "[concurrently] commands should be an array");
 }
 
 function assertNativeOptions(options) {
@@ -2620,15 +2607,18 @@ function spawnApiRestartDelay(restartDelay, nextAttempt = 1) {
 function normalizeCommands(commandInputs) {
   return commandInputs.map((input, index) => {
     if (typeof input === "string") {
+      assert.ok(input.length > 0, "[concurrently] command cannot be empty");
       return new Command({ index, name: "", command: input });
     }
-    if (!input || typeof input !== "object" || typeof input.command !== "string") {
-      throw new Error(`command ${index} must be a string or command object`);
-    }
+    const command = input && typeof input === "object" ? input.command : undefined;
+    assert.ok(
+      typeof command === "string" && command.length > 0,
+      "[concurrently] command cannot be empty"
+    );
     return new Command({
       index,
       name: input.name ?? "",
-      command: input.command,
+      command,
       prefixColor: input.prefixColor,
       env: input.env,
       cwd: input.cwd,
