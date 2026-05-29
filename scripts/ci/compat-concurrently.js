@@ -6168,15 +6168,15 @@ function createWindowsCommandFixture() {
   return {
     quotedScriptCommand: `"${script}" "alpha beta" plain`,
     printCommand(text) {
-      return command("print", `<nul set /p "=${text}"\r\n`);
+      return command("print", `<nul set /p "=${text}"\r\nexit /b 0\r\n`);
     },
     stderrCommand(text) {
-      return command("stderr", `1>&2 <nul set /p "=${text}"\r\n`);
+      return command("stderr", `1>&2 <nul set /p "=${text}"\r\nexit /b 0\r\n`);
     },
     delayPrintCommand(text, delayMs) {
       return command(
         "delay-print",
-        `powershell -NoProfile -Command "Start-Sleep -Milliseconds ${delayMs}" >nul\r\n<nul set /p "=${text}"\r\n`
+        `powershell -NoProfile -Command "Start-Sleep -Milliseconds ${delayMs}" >nul\r\n<nul set /p "=${text}"\r\nexit /b 0\r\n`
       );
     },
     exitCommand(exitCode) {
@@ -6199,13 +6199,14 @@ function createWindowsCommandFixture() {
           "shift\r\n" +
           "goto loop\r\n" +
           ":done\r\n" +
-          '<nul set /p "=!out!"\r\n'
+          '<nul set /p "=!out!"\r\n' +
+          "exit /b 0\r\n"
       );
     },
     cwdEnvCommand() {
       return command(
         "cwd-env",
-        'echo %CD%\r\n<nul set /p "=%CONCURRENTLY_COMPAT_ENV%"\r\n'
+        'echo %CD%\r\n<nul set /p "=%CONCURRENTLY_COMPAT_ENV%"\r\nexit /b 0\r\n'
       );
     },
     cleanup() {
