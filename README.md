@@ -106,16 +106,15 @@ return a repo-owned facade that spawns the native binary and exposes the
 upstream-compatible entrypoint names. The facade supports command-local `cwd`,
 `env`, `prefixColor`, `raw`, and `hidden` values by carrying that metadata into
 the native run. `options.logger` is accepted as the output sink for native
-stdout/stderr; command-aware logger callbacks are rejected because native output
-is merged after process execution. Custom controllers can inspect or replace the
-native-backed command list, receive close, timer, and state-change events from
-the facade, and kill returned commands through native per-command control files
-or an `options.kill` callback after the child PID is known. Standalone
-`new Command` instances support custom `spawn` and IPC for controller-style
-library code. High-level runs with `options.spawn` use the package-owned
-JavaScript scheduler so callers can replace command creation without routing to
-upstream JavaScript. Command-level `ipc` also uses that scheduler so Node IPC
-channels can be represented with upstream-compatible spawn options. Hooks that
+stdout/stderr, and `Logger.output` exposes upstream-shaped `{ command, text }`
+events. Custom controllers can inspect or replace the native-backed command
+list, receive close, timer, and state-change events from the facade, and kill
+returned commands through native per-command control files or an `options.kill`
+callback after the child PID is known. Standalone `new Command` instances
+support custom `spawn` and IPC for controller-style library code. High-level
+runs with `options.spawn`, command-level `ipc`, and command-aware logger
+callbacks use the package-owned JavaScript scheduler so callers get per-command
+Node child-process context without routing to upstream JavaScript. Hooks that
 still require native orchestration features that cannot be represented in that
 scheduler, such as `options.teardown` with `options.spawn` and `options.kill`
 combined with native kill policies, fail explicitly.

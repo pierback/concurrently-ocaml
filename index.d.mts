@@ -61,6 +61,11 @@ export interface SubjectLike<T> {
   };
 }
 
+export interface LoggerOutputEvent {
+  command: Command | undefined;
+  text: string;
+}
+
 export interface CloseEvent {
   command: CommandInfo;
   index: number;
@@ -175,6 +180,7 @@ export declare class Command implements CommandInfo {
 }
 
 export declare class Logger {
+  readonly output: SubjectLike<LoggerOutputEvent>;
   constructor(options?: {
     hide?: CommandIdentifier[];
     raw?: boolean;
