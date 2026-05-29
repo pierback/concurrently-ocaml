@@ -22,7 +22,7 @@ let test_auto_colors_are_bounded_by_palette () =
   | Error _ -> assert false
   | Ok styles ->
       assert (List.length styles = 1);
-      assert ((List.nth styles 0).Output_color.open_codes = [ 36 ]);
+      assert ((List.nth styles 0).Output_color.open_codes = [ 33 ]);
       assert ((List.nth styles 0).Output_color.close_codes = [ 39 ])
 
 let test_hex_colors_follow_chalk_color_level () =
@@ -34,25 +34,28 @@ let test_hex_colors_follow_chalk_color_level () =
     | Ok [ style ] -> assert (style.Output_color.open_codes = expected)
     | Ok _ -> assert false
   in
-  assert_hex 1 [ 92 ];
+  assert_hex 1 [ 32 ];
   assert_hex 2 [ 38; 5; 77 ];
   assert_hex 3 [ 38; 2; 35; 222; 67 ]
 
-let test_function_style_colors_fall_back_to_reset () =
-  match
-    Output_color.prefix_styles ~color_level:3 ~command_index:0 "rgb(1,2,3)"
-  with
-  | Ok _ -> assert false
-  | Error part -> assert (part = "rgb(1,2,3)");
+let test_function_style_colors_follow_chalk_paths () =
+  (match
+     Output_color.prefix_styles ~color_level:3 ~command_index:0 "rgb(1,2,3)"
+   with
+  | Error _ -> assert false
+  | Ok [ style ] ->
+      assert (style.Output_color.open_codes = [ 38; 2; 1; 2; 3 ])
+  | Ok _ -> assert false);
   match
     Output_color.prefix_styles ~color_level:3 ~command_index:0 "ansi256(123)"
   with
+  | Error _ -> assert false
+  | Ok [ style ] -> assert (style.Output_color.open_codes = [ 38; 5; 123 ])
   | Ok _ -> assert false
-  | Error part -> assert (part = "ansi256(123)")
 
 let () =
   test_prefix_styles_parse_chalk_parts ();
   test_prefix_styles_reject_unknown_part ();
   test_auto_colors_are_bounded_by_palette ();
   test_hex_colors_follow_chalk_color_level ();
-  test_function_style_colors_fall_back_to_reset ()
+  test_function_style_colors_follow_chalk_paths ()

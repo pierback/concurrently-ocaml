@@ -162,12 +162,38 @@ let split_csv = function
       csv |> String.split_on_char ',' |> List.map String.trim
       |> List.filter (fun token -> not (String.equal token ""))
 
+let split_prefix_colors_csv = function
+  | None -> []
+  | Some csv ->
+      let flush_segment segment segments =
+        let token =
+          segment |> List.rev |> List.to_seq |> String.of_seq |> String.trim
+        in
+        if String.equal token "" then segments else token :: segments
+      in
+      let rec split index paren_depth segment segments =
+        assert (paren_depth >= 0);
+        if index >= String.length csv then
+          List.rev (flush_segment segment segments)
+        else
+          match csv.[index] with
+          | '(' -> split (index + 1) (paren_depth + 1) ('(' :: segment) segments
+          | ')' ->
+              let next_depth = max 0 (paren_depth - 1) in
+              split (index + 1) next_depth (')' :: segment) segments
+          | ',' when paren_depth = 0 ->
+              split (index + 1) 0 [] (flush_segment segment segments)
+          | character ->
+              split (index + 1) paren_depth (character :: segment) segments
+      in
+      split 0 0 [] []
+
 let last = function
   | [] -> None
   | first :: rest -> Some (List.fold_left (fun _ item -> item) first rest)
 
 let prefix_palette prefix_colors_csv =
-  let colors = split_csv prefix_colors_csv in
+  let colors = split_prefix_colors_csv prefix_colors_csv in
   { colors = Array.of_list colors; last_color = last colors }
 
 let prefix_color_at palette index =
@@ -422,7 +448,7 @@ let display_command_text_at display_command_texts index =
       assert (index < Array.length values);
       Some values.(index)
 
-let create_commands ?cwd ~raw_by_index ~hidden_by_index ~prefix_palette
+let create_commands ?cwd ~shell ~raw_by_index ~hidden_by_index ~prefix_palette
     ?display_command_texts command_inputs =
   let rec create index commands = function
     | [] -> Ok (List.rev commands)
@@ -433,7 +459,7 @@ let create_commands ?cwd ~raw_by_index ~hidden_by_index ~prefix_palette
         match
           Command.create
             ?name:(option_of_name command_name)
-            ?cwd ~env:[]
+            ?cwd ?shell ~env:[]
             ?prefix_color:(prefix_color_at prefix_palette index)
             ?display_text:(display_command_text_at display_command_texts index)
             ~raw:raw_by_index.(index) ~hidden:hidden_by_index.(index) ~index
@@ -444,13 +470,14 @@ let create_commands ?cwd ~raw_by_index ~hidden_by_index ~prefix_palette
   in
   create 0 [] command_inputs
 
-let create_teardown_commands ?cwd ~main_command_count teardown_texts =
+let create_teardown_commands ?cwd ~shell ~main_command_count teardown_texts =
   let rec create offset commands = function
     | [] -> Ok (List.rev commands)
     | command_text :: rest -> (
         let index = main_command_count + offset in
         match
-          Command.create ?cwd ~raw:true ~allow_empty:true ~index command_text
+          Command.create ?cwd ?shell ~raw:true ~allow_empty:true ~index
+            command_text
         with
         | Error error -> Error (`Command_error (index, error))
         | Ok command -> create (offset + 1) (command :: commands) rest)
@@ -493,9 +520,9 @@ let create_run_spec ~commands ~policy =
 let create_result ~spec ~display ~input ~no_op =
   Ok { spec; display; input; no_op }
 
-let create_empty_expansion_config ~cwd ~teardown_texts ~policy_input ~display
-    ~no_op =
-  match create_teardown_commands ?cwd ~main_command_count:0 teardown_texts with
+let create_empty_expansion_config ~cwd ~shell ~teardown_texts ~policy_input
+    ~display ~no_op =
+  match create_teardown_commands ?cwd ~shell ~main_command_count:0 teardown_texts with
   | Error error -> Error error
   | Ok teardown -> (
       match create_policy policy_input ~teardown with
@@ -505,7 +532,7 @@ let create_empty_expansion_config ~cwd ~teardown_texts ~policy_input ~display
           | Error error -> Error error
           | Ok spec -> create_result ~spec ~display ~input:None ~no_op))
 
-let create_command_config ~cwd ~teardown_texts ~policy_input ~display
+let create_command_config ~cwd ~shell ~teardown_texts ~policy_input ~display
     ~handle_input ~default_input_target ~display_command_texts expanded =
   match
     display_command_texts_for_count ~command_count:expanded.command_count
@@ -515,7 +542,7 @@ let create_command_config ~cwd ~teardown_texts ~policy_input ~display
   | Ok display_command_texts -> (
       match
         create_commands ?cwd ~raw_by_index:expanded.raw_by_index
-          ~hidden_by_index:expanded.hidden_by_index
+          ~shell ~hidden_by_index:expanded.hidden_by_index
           ~prefix_palette:expanded.prefix_palette ?display_command_texts
           expanded.command_inputs
       with
@@ -528,7 +555,7 @@ let create_command_config ~cwd ~teardown_texts ~policy_input ~display
           | Error error -> Error error
           | Ok input -> (
               match
-                create_teardown_commands ?cwd
+                create_teardown_commands ?cwd ~shell
                   ~main_command_count:expanded.command_count teardown_texts
               with
               | Error error -> Error error
@@ -542,7 +569,7 @@ let create_command_config ~cwd ~teardown_texts ~policy_input ~display
                           create_result ~spec ~display ~input
                             ~no_op:expanded.no_op)))))
 
-let create_with_display ~cwd ~passthrough_arguments ~teardown_texts
+let create_with_display ~cwd ~shell ~passthrough_arguments ~teardown_texts
     ~command_texts ~display_command_texts ~names_csv
     ~force_empty_expansion ~name_separator ~spacious ~timings ~group ~raw
     ~hide_csv ~api_hide_indexes_csv ~api_raw_indexes_csv
@@ -605,10 +632,10 @@ let create_with_display ~cwd ~passthrough_arguments ~teardown_texts
           let policy_input =
             { policy_input with success_condition = Run_policy.NoCommands }
           in
-          create_empty_expansion_config ~cwd ~teardown_texts ~policy_input
+          create_empty_expansion_config ~cwd ~shell ~teardown_texts ~policy_input
             ~display ~no_op:expanded.no_op
         else
-          create_command_config ~cwd ~teardown_texts ~policy_input ~display
+          create_command_config ~cwd ~shell ~teardown_texts ~policy_input ~display
             ~handle_input ~default_input_target ~display_command_texts expanded
       in
       if force_empty_expansion then
@@ -641,7 +668,7 @@ let create ~cwd ~passthrough_arguments ~teardown_texts ~command_texts ~names_csv
     ~pad_prefix ~timestamp_format ~handle_input ~default_input_target ~success
     ~kill_others_on_success ~kill_others ~kill_others_on_fail ~kill_signal
     ~kill_timeout_ms ~max_processes ~restart_tries ~restart_after =
-  create_with_display ~cwd ~passthrough_arguments ~teardown_texts
+  create_with_display ~cwd ~shell:None ~passthrough_arguments ~teardown_texts
     ~command_texts ~display_command_texts:[] ~names_csv
     ~force_empty_expansion:false ~name_separator
     ~spacious ~timings ~group ~raw ~hide_csv ~api_hide_indexes_csv
@@ -659,7 +686,7 @@ let input t = t.input
 let is_no_op (t : t) = t.no_op
 
 let command_error_message = function
-  | `Empty_command -> "command text must not be empty"
+  | `Empty_command -> "[concurrently] command cannot be empty"
   | `Empty_cwd -> "command cwd must not be empty"
   | `Negative_index -> "command index must not be negative"
 

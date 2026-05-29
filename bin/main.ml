@@ -68,26 +68,25 @@ let parse_force_color_int value =
     in
     parse_digits digit_start 0 false
 
-let github_actions_color_cap () =
-  match (Sys.getenv_opt "CI", Sys.getenv_opt "GITHUB_ACTIONS", Sys.getenv_opt "TERM") with
-  | Some _, Some _, Some "dumb" -> None
-  | Some _, Some _, _ -> Some Output_formatter.Ansi16
+let github_actions_color_support () =
+  match (Sys.getenv_opt "CI", Sys.getenv_opt "GITHUB_ACTIONS") with
+  | Some _, Some _ -> Some Output_formatter.Truecolor
   | _ -> None
 
 let color_mode_of_force_color value =
-  let ci_color_cap = github_actions_color_cap () in
+  let ci_color_support = github_actions_color_support () in
   match value with
   | "false" | "0" -> Output_formatter.Never
-  | "true" | "" -> Option.value ~default:Output_formatter.Ansi16 ci_color_cap
+  | "true" | "" -> Output_formatter.Ansi16
   | value -> (
       match parse_force_color_int value with
       | Some level when level < 0 ->
-          Option.value ~default:Output_formatter.Never ci_color_cap
+          Option.value ~default:Output_formatter.Never ci_color_support
       | Some 0 -> Output_formatter.Never
-      | Some 1 -> Option.value ~default:Output_formatter.Ansi16 ci_color_cap
-      | Some 2 -> Option.value ~default:Output_formatter.Ansi256 ci_color_cap
-      | Some _ -> Option.value ~default:Output_formatter.Truecolor ci_color_cap
-      | None -> Option.value ~default:Output_formatter.Never ci_color_cap)
+      | Some 1 -> Output_formatter.Ansi16
+      | Some 2 -> Output_formatter.Ansi256
+      | Some _ -> Output_formatter.Truecolor
+      | None -> Option.value ~default:Output_formatter.Never ci_color_support)
 
 let stdout_is_tty () =
   try Unix.isatty Unix.stdout with _ -> false
@@ -112,9 +111,6 @@ General
   -n, --names                  List of custom names to be used in prefix
                                template.
                                Example names: "main,browser,server"     [string]
-      --name-separator         The character to split <names> on. Example usage:
-                               -n "styles|scripts|server" --name-separator "|"
-                                                                  [default: ","]
   -s, --success                Which command(s) must exit with code 0 in order
                                for concurrently exit with code 0 too. Options
                                are:
@@ -137,6 +133,8 @@ General
                                sequentially.                           [boolean]
       --timings                Show timing information for all processes.
                                                       [boolean] [default: false]
+      --shell                  Shell to run commands with. Defaults to cmd.exe
+                               on Windows and /bin/sh elsewhere.        [string]
   -P, --passthrough-arguments  Passthrough additional arguments to commands
                                (accessible via placeholders) instead of treating
                                them as commands.      [boolean] [default: false]
@@ -150,7 +148,7 @@ Prefix styling
                           Possible values: index, pid, time, command, name,
                           none, or a template. Example template: "{time}-{pid}"
                          [string] [default: index or name (when --names is set)]
-  -c, --prefix-colors     Comma-separated list of chalk colors to use on
+  -c, --prefix-colors     Comma-separated list of Chalk colors to use on
                           prefixes. If there are more commands than colors, the
                           last color will be repeated.
                           - Available modifiers: reset, bold, dim, italic,
@@ -162,7 +160,7 @@ Prefix styling
                           - Available background colors: bgBlack, bgRed,
                           bgGreen, bgYellow, bgBlue, bgMagenta, bgCyan, bgWhite
                           See https://www.npmjs.com/package/chalk for more
-                          information.               [string] [default: "reset"]
+                          information.                [string] [default: "auto"]
   -l, --prefix-length     Limit how many characters of the command is displayed
                           in prefix. The option can be used to shorten the
                           prefix when it is set to "command"
@@ -206,7 +204,7 @@ Options:
   -v, -V, --version  Show version number                               [boolean]
 
 For documentation and more examples, visit:
-https://github.com/open-cli-tools/concurrently/tree/v9.2.1/docs
+https://github.com/open-cli-tools/concurrently/tree/v10.0.0/docs
 |help}
 
 let run_config env config =
@@ -263,7 +261,7 @@ let run ~passthrough_argv_arguments ~deprecated_name_separator_used
     command_texts display_command_texts names_csv api_empty_expansion
     name_separator api_name_separator timings group raw hide_csv api_hide_indexes_csv
     api_raw_indexes_csv api_formatted_indexes_csv api_index_labels_csv no_color
-    passthrough_arguments handle_input default_input_target success prefix
+    passthrough_arguments handle_input shell default_input_target success prefix
     prefix_colors_csv prefix_length timestamp_format pad_prefix kill_others
     kill_others_on_success kill_others_on_fail kill_signal kill_timeout_ms
     max_processes restart_tries restart_after teardown_texts =
@@ -275,7 +273,7 @@ let run ~passthrough_argv_arguments ~deprecated_name_separator_used
     | Some _ | None -> 10.0
   in
   match
-    Cli_config.create_with_display ~cwd:None
+    Cli_config.create_with_display ~cwd:None ~shell
       ~passthrough_arguments:
         (if passthrough_arguments then Some passthrough_argv_arguments else None)
       ~teardown_texts ~command_texts ~display_command_texts ~names_csv
@@ -374,6 +372,14 @@ let handle_input =
   let doc = "Forward stdin to running commands." in
   Cmdliner.Arg.(value & flag & info [ "i"; "handle-input" ] ~doc)
 
+let shell =
+  let doc =
+    "Shell to run commands with. Defaults to cmd.exe on Windows and /bin/sh \
+     elsewhere."
+  in
+  Cmdliner.Arg.(
+    value & opt (some string) None & info [ "shell" ] ~docv:"SHELL" ~doc)
+
 let default_input_target =
   let doc = "Command index or name that receives unprefixed stdin." in
   Cmdliner.Arg.(
@@ -396,7 +402,7 @@ let prefix_colors =
   in
   Cmdliner.Arg.(
     value
-    & opt (some string) None
+    & opt (some string) (Some "auto")
     & info [ "c"; "prefix-colors" ] ~docv:"COLORS" ~doc)
 
 let prefix_length =
@@ -505,7 +511,7 @@ let command ~passthrough_argv_arguments ~deprecated_name_separator_used =
       $ name_separator $ api_name_separator $ timings $ group $ raw $ hide
       $ api_hide_indexes $ api_raw_indexes $ api_formatted_indexes
       $ api_index_labels $ no_color $ passthrough_arguments $ handle_input
-      $ default_input_target $ success $ prefix $ prefix_colors $ prefix_length
+      $ shell $ default_input_target $ success $ prefix $ prefix_colors $ prefix_length
       $ timestamp_format $ pad_prefix $ kill_others $ kill_others_on_success
       $ kill_others_on_fail $ kill_signal $ kill_timeout $ max_processes
       $ restart_tries $ restart_after $ teardown)

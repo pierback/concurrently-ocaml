@@ -70,11 +70,27 @@ let test_passthrough_separator_before_commands_leaves_no_commands () =
     = [ "echo {1}"; "--"; "--watch" ]);
   assert (Cli_argv.requests_default_help normalized.Cli_argv.argv)
 
-let test_tracks_deprecated_name_separator () =
+let test_treats_removed_name_separator_as_unknown () =
   let normalized =
     Cli_argv.normalize [| "conc"; "--name-separator"; "|"; "echo ok" |]
   in
-  assert normalized.Cli_argv.deprecated_name_separator_used;
+  assert (not normalized.Cli_argv.deprecated_name_separator_used);
+  assert_array_equal [| "conc"; "echo ok" |] normalized.Cli_argv.argv;
+  let normalized =
+    Cli_argv.normalize
+      [|
+        "conc";
+        "--names";
+        "a,b";
+        "--name-separator";
+        "";
+        "printf one";
+        "printf two";
+      |]
+  in
+  assert_array_equal
+    [| "conc"; "--names"; "a,b"; "printf one"; "printf two" |]
+    normalized.Cli_argv.argv;
   assert (normalized.Cli_argv.passthrough_arguments = [])
 
 let test_normalizes_negative_option_values () =
@@ -396,7 +412,7 @@ let () =
   test_requests_default_help ();
   test_extracts_passthrough_arguments ();
   test_passthrough_separator_before_commands_leaves_no_commands ();
-  test_tracks_deprecated_name_separator ();
+  test_treats_removed_name_separator_as_unknown ();
   test_normalizes_negative_option_values ();
   test_drops_dangling_value_options_before_unknown_options ();
   test_drops_dangling_value_options_before_boolean_options ();
