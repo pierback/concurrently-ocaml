@@ -18,12 +18,19 @@ const { PassThrough, Writable } = require("node:stream");
 const npmConcurrentlyVersion = "10.0.0";
 const localBinary = resolve("_build", "default", "bin", "main.exe");
 const npmConcurrentlyCommand = resolveNpmConcurrentlyCommand();
+const windowsCommandFixture = createWindowsCommandFixture();
 const inputEchoCommand =
-  "node -e \"process.stdin.once('data',d=>{process.stdout.write(d);process.exit(0)})\"";
+  process.platform === "win32"
+    ? windowsCommandFixture.stdinEchoCommand("")
+    : "node -e \"process.stdin.once('data',d=>{process.stdout.write(d);process.exit(0)})\"";
 const firstInputEchoCommand =
-  "node -e \"process.stdin.once('data',d=>{process.stdout.write('first:'+d);process.exit(0)})\"";
+  process.platform === "win32"
+    ? windowsCommandFixture.stdinEchoCommand("first:")
+    : "node -e \"process.stdin.once('data',d=>{process.stdout.write('first:'+d);process.exit(0)})\"";
 const secondInputEchoCommand =
-  "node -e \"process.stdin.once('data',d=>{process.stdout.write('second:'+d);process.exit(0)})\"";
+  process.platform === "win32"
+    ? windowsCommandFixture.stdinEchoCommand("second:")
+    : "node -e \"process.stdin.once('data',d=>{process.stdout.write('second:'+d);process.exit(0)})\"";
 const firstChunkInputCommand =
   "node -e \"process.stdin.on('data',d=>process.stdout.write('first:'+d)); setTimeout(()=>process.exit(0),500)\"";
 const secondChunkInputCommand =
@@ -65,7 +72,6 @@ const invalidPackageFixture = createInvalidPackageFixture();
 const invalidDenoFixture = createInvalidDenoFixture();
 const killTimeoutFixture = createKillTimeoutFixture();
 const restartFixture = createRestartFixture();
-const windowsCommandFixture = createWindowsCommandFixture();
 const inputReadyDelayMs = 2500;
 const compatWatchdog = startCompatWatchdog("compat harness", 420000);
 
@@ -6150,10 +6156,59 @@ function createWindowsCommandFixture() {
   const root = mkdtempSync(resolve(tmpdir(), "concurrently-ocaml-win-cmd-"));
   const scriptDir = resolve(root, "script dir");
   const script = resolve(scriptDir, "echo args.cmd");
+  let nextScriptId = 0;
   mkdirSync(scriptDir, { recursive: true });
   writeFileSync(script, "@echo off\r\necho script:%~1:%~2\r\n");
+
+  function command(name, body) {
+    const file = resolve(scriptDir, `${nextScriptId++}-${name}.cmd`);
+    writeFileSync(file, `@echo off\r\n${body}`);
+    return `"${file}"`;
+  }
+
   return {
     quotedScriptCommand: `"${script}" "alpha beta" plain`,
+    printCommand(text) {
+      return command("print", `<nul set /p "=${text}"\r\n`);
+    },
+    stderrCommand(text) {
+      return command("stderr", `1>&2 <nul set /p "=${text}"\r\n`);
+    },
+    delayPrintCommand(text, delayMs) {
+      return command(
+        "delay-print",
+        `powershell -NoProfile -Command "Start-Sleep -Milliseconds ${delayMs}" >nul\r\n<nul set /p "=${text}"\r\n`
+      );
+    },
+    exitCommand(exitCode) {
+      return command("exit", `exit /b ${exitCode}\r\n`);
+    },
+    hangCommand() {
+      return command("hang", ":loop\r\nping -n 2 127.0.0.1 >nul\r\ngoto loop\r\n");
+    },
+    stdinEchoCommand(prefix) {
+      return command("stdin-echo", `set /p line=\r\necho ${prefix}%line%\r\n`);
+    },
+    argvPipeCommand() {
+      return command(
+        "argv-pipe",
+        "setlocal EnableDelayedExpansion\r\n" +
+          'set "out="\r\n' +
+          ":loop\r\n" +
+          'if "%~1"=="" goto done\r\n' +
+          'if defined out (set "out=!out!|%~1") else set "out=%~1"\r\n' +
+          "shift\r\n" +
+          "goto loop\r\n" +
+          ":done\r\n" +
+          '<nul set /p "=!out!"\r\n'
+      );
+    },
+    cwdEnvCommand() {
+      return command(
+        "cwd-env",
+        'echo %CD%\r\n<nul set /p "=%CONCURRENTLY_COMPAT_ENV%"\r\n'
+      );
+    },
     cleanup() {
       rmSync(root, { force: true, recursive: true });
     },
@@ -6165,14 +6220,23 @@ function shellQuote(value) {
 }
 
 function nodePrintCommand(text) {
+  if (process.platform === "win32") {
+    return windowsCommandFixture.printCommand(text);
+  }
   return nodeEvalCommand(`process.stdout.write('${jsSingleQuoted(text)}')`);
 }
 
 function nodeStderrCommand(text) {
+  if (process.platform === "win32") {
+    return windowsCommandFixture.stderrCommand(text);
+  }
   return nodeEvalCommand(`process.stderr.write('${jsSingleQuoted(text)}')`);
 }
 
 function nodeDelayPrintCommand(text, delayMs) {
+  if (process.platform === "win32") {
+    return windowsCommandFixture.delayPrintCommand(text, delayMs);
+  }
   return nodeEvalCommand(
     `setTimeout(function(){` +
       `process.stdout.write('${jsSingleQuoted(text)}')` +
@@ -6181,14 +6245,31 @@ function nodeDelayPrintCommand(text, delayMs) {
 }
 
 function nodeExitCommand(exitCode) {
+  if (process.platform === "win32") {
+    return windowsCommandFixture.exitCommand(exitCode);
+  }
   return nodeEvalCommand(`process.exit(${exitCode})`);
 }
 
 function nodeHangCommand() {
+  if (process.platform === "win32") {
+    return windowsCommandFixture.hangCommand();
+  }
   return nodeEvalCommand("setInterval(function(){},1000)");
 }
 
 function nodeEvalCommand(source) {
+  if (process.platform === "win32") {
+    if (source === "process.stdout.write(process.argv.slice(1).join('|'))") {
+      return windowsCommandFixture.argvPipeCommand();
+    }
+    if (
+      source ===
+      "process.stdout.write(process.cwd()+'\\n'+process.env.CONCURRENTLY_COMPAT_ENV)"
+    ) {
+      return windowsCommandFixture.cwdEnvCommand();
+    }
+  }
   return `${nodeExecutableCommand()} -e "${source.replaceAll('"', '\\"')}"`;
 }
 
