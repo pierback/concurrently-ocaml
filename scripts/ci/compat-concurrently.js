@@ -6246,7 +6246,7 @@ function normalizeVersionStdout(stdout) {
 function normalizeHelpStdout(stdout) {
   return stdout
     .replace(/\r\n/g, "\n")
-    .replace(/^concurrently(?:\.js)? /, "concurrently.js ");
+    .replace(/^(?:index|concurrently)(?:\.js)? /, "concurrently.js ");
 }
 
 function normalizeNpmLogPaths(stdout) {
