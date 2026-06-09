@@ -16,6 +16,12 @@ const { EventEmitter } = require("node:events");
 const { PassThrough, Writable } = require("node:stream");
 
 const npmConcurrentlyVersion = "10.0.0";
+const npmScriptShellEnv = "npm_config_script_shell";
+const nativeApiExplicitShell = process.platform === "win32" ? "cmd.exe" : "/bin/sh";
+const nativeApiMissingShell =
+  process.platform === "win32"
+    ? "Z:\\concurrently-shell-missing.exe"
+    : "/definitely/missing-concurrently-shell";
 const localBinary = resolve("_build", "default", "bin", "main.exe");
 const npmConcurrentlyCommand = resolveNpmConcurrentlyCommand();
 const windowsCommandFixture = createWindowsCommandFixture();
@@ -2256,6 +2262,7 @@ async function runNativeApiSmoke() {
   await runNativeApiControllerIpcSmoke();
   await runNativeApiGlobalRawCommandFalseSmoke();
   await runNativeApiCommandAwareLoggerSmoke();
+  await runNativeApiShellOptionSmoke();
   await runNativeApiCustomSpawnWithTimeout();
   await runNativeApiTeardownCustomSpawnSmoke();
   await runNativeApiNumericNameSuccessSelectorSmoke();
@@ -2803,6 +2810,7 @@ async function runNativeApiCustomSpawnSmoke() {
     {
       outputStream: sink,
       env: { CONCURRENTLY_ML_PRIVATE_ENV: "spawn-secret-do-not-leak" },
+      shell: nativeApiExplicitShell,
       spawn(command, options) {
         calls.push({ command, options });
         return spawn(command, [], options);
@@ -2812,7 +2820,11 @@ async function runNativeApiCustomSpawnSmoke() {
   const events = await run.result;
 
   assertEqual(calls.length, 1, "native JS API custom spawn call count");
-  assertEqual(calls[0].options.shell, true, "native JS API custom spawn shell");
+  assertEqual(
+    calls[0].options.shell,
+    nativeApiExplicitShell,
+    "native JS API custom spawn shell"
+  );
   assertEqual(
     calls[0].options.env.CONCURRENTLY_ML_SPAWN_SMOKE,
     "spawn-ok",
@@ -4846,24 +4858,28 @@ async function runNativeApiCustomSpawnSmoke() {
         callback();
       },
     });
+    const killOthersRestartCommand =
+      "node -e " +
+      JSON.stringify(
+        "const fs=require('node:fs');const f=process.env.CONCURRENTLY_ML_KILL_OTHERS_RESTART_MARKER;if(!fs.existsSync(f)){fs.writeFileSync(f,'1');process.exit(1)}else{process.exit(0)}"
+      );
+    const killOthersRestartSuccessCommand =
+      "node -e " +
+      JSON.stringify(
+        "const fs=require('node:fs');const f=process.env.CONCURRENTLY_ML_KILL_OTHERS_RESTART_MARKER;const deadline=Date.now()+2000;const poll=()=>{if(fs.existsSync(f))process.exit(0);if(Date.now()>deadline)process.exit(2);setTimeout(poll,10)};poll()"
+      );
     let killOthersRestartCalls = 0;
     const killOthersRestartRun = api.concurrently(
-      [
-        "node -e " +
-          JSON.stringify(
-            "const fs=require('node:fs');const f=process.env.CONCURRENTLY_ML_KILL_OTHERS_RESTART_MARKER;if(!fs.existsSync(f)){fs.writeFileSync(f,'1');process.exit(1)}else{process.exit(0)}"
-          ),
-        "node -e \"setTimeout(()=>process.exit(0),20)\"",
-      ],
+      [killOthersRestartCommand, killOthersRestartSuccessCommand],
       {
         env: { CONCURRENTLY_ML_KILL_OTHERS_RESTART_MARKER: killOthersRestartMarker },
         killOthersOn: ["success"],
         maxProcesses: 2,
         outputStream: killOthersRestartSink,
-        restartDelay: 100,
+        restartDelay: 1000,
         restartTries: 1,
         spawn(command, options) {
-          if (command.includes("KILL_OTHERS_RESTART")) {
+          if (command === killOthersRestartCommand) {
             killOthersRestartCalls += 1;
           }
           return spawn(command, [], options);
@@ -5357,6 +5373,190 @@ async function runNativeApiCustomSpawnSmoke() {
     "native JS API custom spawn hidden raw stdout"
   );
   console.log("compat ok: native JS API custom spawn");
+}
+
+async function runNativeApiShellOptionSmoke() {
+  const api = require(resolve("index.js"));
+  const sink = new Writable({
+    write(_chunk, _encoding, callback) {
+      callback();
+    },
+  });
+  const shellFailure = await api.concurrently(["echo shell-option-check"], {
+    outputStream: sink,
+    raw: true,
+    shell: nativeApiMissingShell,
+  }).result.then(
+    () => "resolved",
+    (error) => error
+  );
+  if (shellFailure === "resolved") {
+    throw new Error("native JS API shell option unexpectedly succeeded");
+  }
+  if (!Array.isArray(shellFailure) || shellFailure.length === 0) {
+    throw new Error(
+      `native JS API shell option returned non-close-event rejection: ${shellFailure}`
+    );
+  }
+  if (shellFailure[0].exitCode === 0 || shellFailure[0].exitCode === "0") {
+    throw new Error(
+      `native JS API shell option reported success with missing shell: ${JSON.stringify(shellFailure)}`
+    );
+  }
+
+  if (process.platform !== "win32") {
+    const shellRoot = mkdtempSync(resolve(tmpdir(), "concurrently-ml-shell-"));
+    try {
+      const shellLog = resolve(shellRoot, "shell.log");
+      const shellPath = resolve(shellRoot, "shell");
+      const powershellLog = resolve(shellRoot, "powershell.log");
+      const powershellPath = resolve(shellRoot, "pwsh");
+      const readShellInvocations = () =>
+        readFileSync(shellLog, "utf8")
+          .trim()
+          .split(/\r?\n/)
+          .filter((line) => line !== "");
+      const readPowershellInvocations = () =>
+        readFileSync(powershellLog, "utf8")
+          .trim()
+          .split(/\r?\n/)
+          .filter((line) => line !== "");
+      writeFileSync(
+        shellPath,
+        `#!/bin/sh\nprintf '%s\\n' "$2" >> ${shellQuote(shellLog)}\nexec /bin/sh "$@"\n`
+      );
+      writeFileSync(
+        powershellPath,
+        [
+          "#!/bin/sh",
+          `printf '%s\\n' "$@" >> ${shellQuote(powershellLog)}`,
+          `if [ "$1" = "-NoProfile" ] && [ "$2" = "-Command" ]; then exec /bin/sh -c "$3"; fi`,
+          "exit 64",
+          "",
+        ].join("\n")
+      );
+      chmodSync(shellPath, 0o755);
+      chmodSync(powershellPath, 0o755);
+      await api.concurrently(["echo shell-native-check"], {
+        outputStream: sink,
+        raw: true,
+        shell: shellPath,
+      }).result;
+      const shellInvocations = readShellInvocations();
+      assertEqual(
+        shellInvocations.length,
+        1,
+        "native JS API shell option should not launch wrapper through custom shell"
+      );
+      assertEqual(
+        shellInvocations[0],
+        "echo shell-native-check",
+        "native JS API shell option custom shell command"
+      );
+
+      await api.concurrently(["echo shell-powershell-native"], {
+        outputStream: sink,
+        raw: true,
+        shell: powershellPath,
+      }).result;
+      const powershellNativeInvocations = readPowershellInvocations();
+      assertEqual(
+        JSON.stringify(powershellNativeInvocations),
+        JSON.stringify(["-NoProfile", "-Command", "echo shell-powershell-native"]),
+        "native JS API powershell shell option arguments"
+      );
+
+      writeFileSync(powershellLog, "");
+      await api.concurrently(["echo shell-powershell-main"], {
+        outputStream: sink,
+        raw: true,
+        shell: powershellPath,
+        teardown: ["echo shell-powershell-cleanup"],
+      }).result;
+      const powershellTeardownInvocations = readPowershellInvocations();
+      assertEqual(
+        JSON.stringify(powershellTeardownInvocations),
+        JSON.stringify([
+          "-NoProfile",
+          "-Command",
+          "echo shell-powershell-main",
+          "-NoProfile",
+          "-Command",
+          "echo shell-powershell-cleanup",
+        ]),
+        "native JS API powershell shell option teardown arguments"
+      );
+
+      writeFileSync(shellLog, "");
+      await api.concurrently(["echo shell-teardown-main"], {
+        outputStream: sink,
+        raw: true,
+        shell: shellPath,
+        teardown: ["echo shell-teardown-cleanup"],
+      }).result;
+      const shellTeardownInvocations = readShellInvocations();
+      assertEqual(
+        JSON.stringify(shellTeardownInvocations),
+        JSON.stringify(["echo shell-teardown-main", "echo shell-teardown-cleanup"]),
+        "native JS API shell option custom shell teardown commands"
+      );
+
+      const previousScriptShell = process.env[npmScriptShellEnv];
+      process.env[npmScriptShellEnv] = shellPath;
+      try {
+        writeFileSync(shellLog, "");
+        await api.concurrently(["echo shell-env-teardown-main"], {
+          outputStream: sink,
+          raw: true,
+          teardown: ["echo shell-env-teardown-cleanup"],
+        }).result;
+        const shellEnvTeardownInvocations = readShellInvocations();
+        assertEqual(
+          JSON.stringify(shellEnvTeardownInvocations),
+          JSON.stringify([
+            "echo shell-env-teardown-main",
+            "echo shell-env-teardown-cleanup",
+          ]),
+          "native JS API npm_config_script_shell teardown commands"
+        );
+      } finally {
+        if (previousScriptShell === undefined) {
+          delete process.env[npmScriptShellEnv];
+        } else {
+          process.env[npmScriptShellEnv] = previousScriptShell;
+        }
+      }
+    } finally {
+      rmSync(shellRoot, { recursive: true, force: true });
+    }
+  }
+
+  const previousScriptShell = process.env[npmScriptShellEnv];
+  process.env[npmScriptShellEnv] = nativeApiExplicitShell;
+  try {
+    let observedShell;
+    await api.concurrently(["echo shell-env-check"], {
+      outputStream: sink,
+      raw: true,
+      spawn(command, options) {
+        observedShell = options.shell;
+        return spawn(command, [], options);
+      },
+    }).result;
+    assertEqual(
+      observedShell,
+      nativeApiExplicitShell,
+      "native JS API npm_config_script_shell forwarding"
+    );
+  } finally {
+    if (previousScriptShell === undefined) {
+      delete process.env[npmScriptShellEnv];
+    } else {
+      process.env[npmScriptShellEnv] = previousScriptShell;
+    }
+  }
+
+  console.log("compat ok: native JS API shell option");
 }
 
 async function runNativeApiTeardownCustomSpawnSmoke() {

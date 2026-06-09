@@ -22,6 +22,7 @@ const { runNative } = require("./native");
 const SHORTCUT_RUNNERS = new Set(["npm", "yarn", "pnpm", "bun", "node", "deno"]);
 const SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"];
 const SIGNAL_VALIDATION_PID = 2147483647;
+const NPM_SCRIPT_SHELL_ENV = "npm_config_script_shell";
 const KILLED_COMMAND_CLEANUP_RETRY_DELAYS_MS = [25, 100, 500, 1000, 2500];
 const AUTO_PREFIX_COLORS = [
   "cyan",
@@ -527,6 +528,7 @@ function concurrently(commandInputs, options = {}) {
     options.spawn !== undefined ||
     commandsNeedSpawnApi(controlledCommands) ||
     loggerNeedsCommandContext(options.logger) ||
+    teardownNeedsSpawnApiShell(options) ||
     (options.kill !== undefined && nativeKillPolicyMayStopCommands(options))
   ) {
     return runSpawnApi(controlledCommands, controlled.onFinishCallbacks, options);
@@ -676,6 +678,9 @@ function assertNativeOptions(options) {
   }
   if (options.kill !== undefined && typeof options.kill !== "function") {
     throw new Error("options.kill must be a function");
+  }
+  if (options.shell !== undefined && typeof options.shell !== "string") {
+    throw new Error("options.shell must be a string");
   }
 }
 
@@ -835,6 +840,17 @@ function loggerNeedsCommandContext(logger) {
       ((typeof logger.logCommandText === "function" &&
         logger.logCommandText.length > 1) ||
         (typeof logger.log === "function" && logger.log.length > 2))
+  );
+}
+
+function teardownNeedsSpawnApiShell(options) {
+  return arrayOption(options.teardown).length > 0 && hasShellOverride(options);
+}
+
+function hasShellOverride(options) {
+  return (
+    isNonEmptyString(options.shell) ||
+    isNonEmptyString(process.env[NPM_SCRIPT_SHELL_ENV])
   );
 }
 
@@ -2226,6 +2242,68 @@ function spawnApiClearTimers(scheduler) {
   scheduler.restartTimers.clear();
 }
 
+function resolveApiShell(options) {
+  if (isNonEmptyString(options.shell)) {
+    return options.shell;
+  }
+  const npmScriptShell = process.env[NPM_SCRIPT_SHELL_ENV];
+  if (isNonEmptyString(npmScriptShell)) {
+    return npmScriptShell;
+  }
+  return defaultApiShell();
+}
+
+function defaultApiShell() {
+  if (process.platform !== "win32") {
+    return "/bin/sh";
+  }
+  const comspec = process.env.ComSpec;
+  return isNonEmptyString(comspec) ? comspec : "cmd.exe";
+}
+
+function isNonEmptyString(value) {
+  return typeof value === "string" && value.length > 0;
+}
+
+function apiShellInvocation(shellPath, command) {
+  const kind = apiShellKind(shellPath);
+  if (kind === "cmd") {
+    return {
+      args: ["/s", "/c", `"${command}"`],
+      file: shellPath,
+      options: { windowsVerbatimArguments: true },
+    };
+  }
+  if (kind === "powershell") {
+    return {
+      args: ["-NoProfile", "-Command", command],
+      file: shellPath,
+      options: {},
+    };
+  }
+  return {
+    args: ["-c", command],
+    file: shellPath,
+    options: {},
+  };
+}
+
+function apiShellKind(shellPath) {
+  const base = String(shellPath)
+    .replace(/\\/g, "/")
+    .split("/")
+    .pop()
+    .toLowerCase()
+    .replace(/\.exe$/i, "");
+  if (base === "cmd") {
+    return "cmd";
+  }
+  if (base === "powershell" || base === "pwsh") {
+    return "powershell";
+  }
+  return "posix";
+}
+
 function spawnApiOptions(command, options, hidden) {
   const raw = typeof command.raw === "boolean" ? command.raw : Boolean(options.raw);
   const stdin = spawnApiForwardsInput(options) ? "pipe" : "ignore";
@@ -2248,7 +2326,7 @@ function spawnApiOptions(command, options, hidden) {
       ...normalizeEnv(command.env),
     },
     detached: process.platform !== "win32",
-    shell: true,
+    shell: resolveApiShell(options),
     stdio,
   };
 }
@@ -2262,20 +2340,21 @@ function spawnApiTeardownOptions(options) {
       ...normalizeEnv(options.env),
     },
     detached: process.platform !== "win32",
-    shell: true,
+    shell: resolveApiShell(options),
     stdio: ["inherit", output, output],
   };
 }
 
 function spawnApiDefaultSpawn(command, options) {
-  const { shell: _shell, ...spawnOptions } = options;
-  if (process.platform === "win32") {
-    return spawnChildProcess("cmd.exe", ["/s", "/c", `"${command}"`], {
-      ...spawnOptions,
-      windowsVerbatimArguments: true,
-    });
-  }
-  return spawnChildProcess("/bin/sh", ["-c", command], spawnOptions);
+  const { shell, ...spawnOptions } = options;
+  const invocation = apiShellInvocation(
+    isNonEmptyString(shell) ? shell : defaultApiShell(),
+    command
+  );
+  return spawnChildProcess(invocation.file, invocation.args, {
+    ...spawnOptions,
+    ...invocation.options,
+  });
 }
 
 function spawnApiRunTeardown(options, outputState, output) {
@@ -2936,6 +3015,7 @@ function nativeInvocation(commands, options, eventDir) {
   const args = [];
   const env = { ...process.env };
   const cwd = invocationCwd(options);
+  const shell = resolveApiShell(options);
   const rawValues = commandRawValues(commands, options);
   const inheritedCommandEnv = {};
 
@@ -3040,7 +3120,8 @@ function nativeInvocation(commands, options, eventDir) {
         requiredCommandEnvPath(commandEnvPaths, command),
         commandCwd(command),
         shouldDetachWrappedCommand(options),
-        nativeKillPolicyMayStopCommands(options)
+        nativeKillPolicyMayStopCommands(options),
+        shell
       )
     )
   );
@@ -3063,7 +3144,8 @@ function eventWrapperCommand(
   commandEnvPath,
   cwd,
   detachWrappedCommand,
-  nativeKillPolicy
+  nativeKillPolicy,
+  shell
 ) {
   const commandText = Buffer.from(command).toString("base64");
   const eventFile = Buffer.from(path).toString("base64");
@@ -3072,6 +3154,8 @@ function eventWrapperCommand(
   const commandEnvFile = Buffer.from(commandEnvPath).toString("base64");
   const commandCwd =
     cwd === undefined ? undefined : Buffer.from(cwd).toString("base64");
+  const shellPath = Buffer.from(shell).toString("base64");
+  const shellKind = apiShellKind(shell);
   const childStdin = forwardStdin ? "inherit" : "ignore";
   const source = [
     "const cp=require('node:child_process')",
@@ -3082,6 +3166,8 @@ function eventWrapperCommand(
     `const startFile=Buffer.from('${startFile}','base64').toString()`,
     `const killFile=Buffer.from('${killFile}','base64').toString()`,
     `const commandEnvFile=Buffer.from('${commandEnvFile}','base64').toString()`,
+    `const shellPath=Buffer.from('${shellPath}','base64').toString()`,
+    `const shellKind='${shellKind}'`,
     commandCwd === undefined
       ? "const cwd=undefined"
       : `const cwd=Buffer.from('${commandCwd}','base64').toString()`,
@@ -3101,9 +3187,11 @@ function eventWrapperCommand(
     "const pollKill=()=>{try{if(fs.existsSync(killFile)){const signal=JSON.parse(fs.readFileSync(killFile,'utf8'));fs.rmSync(killFile,{force:true});onSignal(signal)}}catch(_){}}",
     "for(const signal of ['SIGHUP','SIGINT','SIGTERM','SIGQUIT','SIGUSR1','SIGUSR2','SIGBREAK']){if(signalNumbers[signal]){try{process.on(signal,()=>onSignal(signal))}catch(_){}}}",
     `const detachWrappedCommand=${detachWrappedCommand ? "true" : "false"}`,
-    "const spawnOptions={shell:true,detached:detachWrappedCommand,stdio:[childStdin,'inherit','inherit'],env:{...process.env,...commandEnv}}",
+    "const shellArgs=shellKind==='cmd'?['/s','/c','\"'+cmd+'\"']:shellKind==='powershell'?['-NoProfile','-Command',cmd]:['-c',cmd]",
+    "const spawnOptions={detached:detachWrappedCommand,stdio:[childStdin,'inherit','inherit'],env:{...process.env,...commandEnv}}",
+    "if(shellKind==='cmd')spawnOptions.windowsVerbatimArguments=true",
     "if(cwd!==undefined)spawnOptions.cwd=cwd",
-    "child=cp.spawn(cmd,spawnOptions)",
+    "child=cp.spawn(shellPath,shellArgs,spawnOptions)",
     "fs.writeFileSync(startFile,JSON.stringify({startMs,pid:child.pid}))",
     "const killInterval=setInterval(pollKill,20);killInterval.unref()",
     "child.on('error',error=>{write({code:1,signal:null,error:error.message});process.exit(1)})",
