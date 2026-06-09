@@ -2544,7 +2544,7 @@ function spawnApiKillProcessGroup(pid, signal) {
   try {
     process.kill(-pid, signal);
   } catch (error) {
-    if (error?.code !== "ESRCH") {
+    if (error?.code !== "ESRCH" && error?.code !== "EPERM") {
       throw error;
     }
   }

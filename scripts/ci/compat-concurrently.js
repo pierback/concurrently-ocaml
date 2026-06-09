@@ -2272,7 +2272,10 @@ async function runNativeApiSmoke() {
 let nativeApiCustomSpawnPhase = "not started";
 
 async function runNativeApiCustomSpawnWithTimeout() {
-  const timeoutMs = process.platform === "win32" ? 120000 : 30000;
+  const defaultTimeoutMs = process.platform === "win32" ? 120000 : 30000;
+  const timeoutMs = Number(
+    process.env.CONCURRENTLY_ML_COMPAT_TIMEOUT_MS ?? defaultTimeoutMs
+  );
   let timer;
   try {
     await Promise.race([
