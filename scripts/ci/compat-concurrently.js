@@ -5412,10 +5412,17 @@ async function runNativeApiShellOptionSmoke() {
     try {
       const shellLog = resolve(shellRoot, "shell.log");
       const shellPath = resolve(shellRoot, "shell");
+      const cmdLog = resolve(shellRoot, "cmd.log");
+      const cmdPath = resolve(shellRoot, "cmd.exe");
       const powershellLog = resolve(shellRoot, "powershell.log");
       const powershellPath = resolve(shellRoot, "pwsh");
       const readShellInvocations = () =>
         readFileSync(shellLog, "utf8")
+          .trim()
+          .split(/\r?\n/)
+          .filter((line) => line !== "");
+      const readCmdInvocations = () =>
+        readFileSync(cmdLog, "utf8")
           .trim()
           .split(/\r?\n/)
           .filter((line) => line !== "");
@@ -5438,7 +5445,21 @@ async function runNativeApiShellOptionSmoke() {
           "",
         ].join("\n")
       );
+      writeFileSync(
+        cmdPath,
+        [
+          "#!/bin/sh",
+          `printf '%s\\n' "$@" >> ${shellQuote(cmdLog)}`,
+          "command=$4",
+          "command=${command#\\\"}",
+          "command=${command%\\\"}",
+          `if [ "$1" = "/d" ] && [ "$2" = "/s" ] && [ "$3" = "/c" ]; then exec /bin/sh -c "$command"; fi`,
+          "exit 64",
+          "",
+        ].join("\n")
+      );
       chmodSync(shellPath, 0o755);
+      chmodSync(cmdPath, 0o755);
       chmodSync(powershellPath, 0o755);
       await api.concurrently(["echo shell-native-check"], {
         outputStream: sink,
@@ -5455,6 +5476,18 @@ async function runNativeApiShellOptionSmoke() {
         shellInvocations[0],
         "echo shell-native-check",
         "native JS API shell option custom shell command"
+      );
+
+      await api.concurrently(["echo shell-cmd-native"], {
+        outputStream: sink,
+        raw: true,
+        shell: cmdPath,
+      }).result;
+      const cmdNativeInvocations = readCmdInvocations();
+      assertEqual(
+        JSON.stringify(cmdNativeInvocations),
+        JSON.stringify(["/d", "/s", "/c", `"echo shell-cmd-native"`]),
+        "native JS API cmd shell option arguments"
       );
 
       await api.concurrently(["echo shell-powershell-native"], {
@@ -5490,6 +5523,29 @@ async function runNativeApiShellOptionSmoke() {
         "native JS API powershell shell option teardown arguments"
       );
 
+      writeFileSync(cmdLog, "");
+      await api.concurrently(["echo shell-cmd-main"], {
+        outputStream: sink,
+        raw: true,
+        shell: cmdPath,
+        teardown: ["echo shell-cmd-cleanup"],
+      }).result;
+      const cmdTeardownInvocations = readCmdInvocations();
+      assertEqual(
+        JSON.stringify(cmdTeardownInvocations),
+        JSON.stringify([
+          "/d",
+          "/s",
+          "/c",
+          `"echo shell-cmd-main"`,
+          "/d",
+          "/s",
+          "/c",
+          `"echo shell-cmd-cleanup"`,
+        ]),
+        "native JS API cmd shell option teardown arguments"
+      );
+
       writeFileSync(shellLog, "");
       await api.concurrently(["echo shell-teardown-main"], {
         outputStream: sink,
@@ -5521,6 +5577,36 @@ async function runNativeApiShellOptionSmoke() {
             "echo shell-env-teardown-cleanup",
           ]),
           "native JS API npm_config_script_shell teardown commands"
+        );
+      } finally {
+        if (previousScriptShell === undefined) {
+          delete process.env[npmScriptShellEnv];
+        } else {
+          process.env[npmScriptShellEnv] = previousScriptShell;
+        }
+      }
+
+      process.env[npmScriptShellEnv] = shellPath;
+      try {
+        writeFileSync(shellLog, "");
+        const run = api.concurrently(
+          ["node -e \"setTimeout(()=>process.exit(0),100)\""],
+          {
+            outputStream: sink,
+            raw: true,
+            teardown: ["echo shell-env-snapshot-cleanup"],
+          }
+        );
+        process.env[npmScriptShellEnv] = nativeApiMissingShell;
+        await run.result;
+        const shellEnvSnapshotInvocations = readShellInvocations();
+        assertEqual(
+          JSON.stringify(shellEnvSnapshotInvocations),
+          JSON.stringify([
+            "node -e \"setTimeout(()=>process.exit(0),100)\"",
+            "echo shell-env-snapshot-cleanup",
+          ]),
+          "native JS API npm_config_script_shell snapshot commands"
         );
       } finally {
         if (previousScriptShell === undefined) {

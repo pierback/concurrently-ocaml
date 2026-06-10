@@ -510,6 +510,7 @@ function concurrently(commandInputs, options = {}) {
   assertCommandInputs(commandInputs);
   assert.ok(commandInputs.length > 0, "[concurrently] no commands provided");
   assertNativeOptions(options);
+  options = normalizeApiOptions(options);
 
   const commands = expandShortcutCommands(normalizeCommands(commandInputs), options);
   expandAdditionalArguments(commands, options.additionalArguments);
@@ -695,6 +696,15 @@ function assertNativeLogger(logger) {
   }
 }
 
+function normalizeApiOptions(options) {
+  const normalized = { ...options };
+  if (!isNonEmptyString(normalized.shell)) {
+    const npmScriptShell = process.env[NPM_SCRIPT_SHELL_ENV];
+    normalized.shell = isNonEmptyString(npmScriptShell) ? npmScriptShell : null;
+  }
+  return normalized;
+}
+
 function runSpawnApi(commands, onFinishCallbacks, options) {
   const output = spawnApiOutput(spawnApiOutputSink(options));
   const closeEvents = [];
@@ -848,10 +858,7 @@ function teardownNeedsSpawnApiShell(options) {
 }
 
 function hasShellOverride(options) {
-  return (
-    isNonEmptyString(options.shell) ||
-    isNonEmptyString(process.env[NPM_SCRIPT_SHELL_ENV])
-  );
+  return isNonEmptyString(options.shell);
 }
 
 function subscribeSpawnApiCommand(command, state) {
@@ -2246,10 +2253,6 @@ function resolveApiShell(options) {
   if (isNonEmptyString(options.shell)) {
     return options.shell;
   }
-  const npmScriptShell = process.env[NPM_SCRIPT_SHELL_ENV];
-  if (isNonEmptyString(npmScriptShell)) {
-    return npmScriptShell;
-  }
   return defaultApiShell();
 }
 
@@ -2267,25 +2270,25 @@ function isNonEmptyString(value) {
 
 function apiShellInvocation(shellPath, command) {
   const kind = apiShellKind(shellPath);
+  return {
+    args: apiShellArguments(kind, command),
+    file: shellPath,
+    options: apiShellOptions(kind),
+  };
+}
+
+function apiShellArguments(kind, command) {
   if (kind === "cmd") {
-    return {
-      args: ["/s", "/c", `"${command}"`],
-      file: shellPath,
-      options: { windowsVerbatimArguments: true },
-    };
+    return ["/d", "/s", "/c", `"${command}"`];
   }
   if (kind === "powershell") {
-    return {
-      args: ["-NoProfile", "-Command", command],
-      file: shellPath,
-      options: {},
-    };
+    return ["-NoProfile", "-Command", command];
   }
-  return {
-    args: ["-c", command],
-    file: shellPath,
-    options: {},
-  };
+  return ["-c", command];
+}
+
+function apiShellOptions(kind) {
+  return kind === "cmd" ? { windowsVerbatimArguments: true } : {};
 }
 
 function apiShellKind(shellPath) {
@@ -3187,9 +3190,11 @@ function eventWrapperCommand(
     "const pollKill=()=>{try{if(fs.existsSync(killFile)){const signal=JSON.parse(fs.readFileSync(killFile,'utf8'));fs.rmSync(killFile,{force:true});onSignal(signal)}}catch(_){}}",
     "for(const signal of ['SIGHUP','SIGINT','SIGTERM','SIGQUIT','SIGUSR1','SIGUSR2','SIGBREAK']){if(signalNumbers[signal]){try{process.on(signal,()=>onSignal(signal))}catch(_){}}}",
     `const detachWrappedCommand=${detachWrappedCommand ? "true" : "false"}`,
-    "const shellArgs=shellKind==='cmd'?['/s','/c','\"'+cmd+'\"']:shellKind==='powershell'?['-NoProfile','-Command',cmd]:['-c',cmd]",
+    `const apiShellArguments=${apiShellArguments.toString()}`,
+    `const apiShellOptions=${apiShellOptions.toString()}`,
+    "const shellArgs=apiShellArguments(shellKind,cmd)",
     "const spawnOptions={detached:detachWrappedCommand,stdio:[childStdin,'inherit','inherit'],env:{...process.env,...commandEnv}}",
-    "if(shellKind==='cmd')spawnOptions.windowsVerbatimArguments=true",
+    "Object.assign(spawnOptions,apiShellOptions(shellKind))",
     "if(cwd!==undefined)spawnOptions.cwd=cwd",
     "child=cp.spawn(shellPath,shellArgs,spawnOptions)",
     "fs.writeFileSync(startFile,JSON.stringify({startMs,pid:child.pid}))",
