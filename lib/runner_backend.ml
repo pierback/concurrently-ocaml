@@ -7,6 +7,7 @@ type process =
   ; stdout : source
   ; stderr : source
   ; signal : int -> (bool, string) result
+  ; needs_cleanup_after_exit : unit -> bool
   ; cleanup_after_exit : unit -> unit
   ; await : unit -> Close_event.exit_status
   }

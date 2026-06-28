@@ -186,6 +186,7 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
     let retry_pending_command_indexes = ref [] in
     let killed_command_indexes = ref [] in
     let force_killed_command_indexes = ref [] in
+    let timed_out_cleanup_signals = ref [] in
     let pending_force_kill_completions = Hashtbl.create command_count in
     let closed_command_indexes = ref [] in
     let current_attempts = Array.make command_count 0 in
@@ -253,6 +254,8 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
           teardown_parent_signal_delivery_generations :=
             List.remove_assoc command_index
               !teardown_parent_signal_delivery_generations;
+          timed_out_cleanup_signals :=
+            List.remove_assoc command_index !timed_out_cleanup_signals;
           running_processes :=
             List.filter
               (fun process -> process.command_index <> command_index)
@@ -333,6 +336,10 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
       Eio.Mutex.use_ro state_mutex (fun () ->
           List.mem command_index !force_killed_command_indexes)
     in
+    let command_timed_out_cleanup_signal command_index =
+      Eio.Mutex.use_ro state_mutex (fun () ->
+          List.assoc_opt command_index !timed_out_cleanup_signals)
+    in
     let pending_force_kill_completion command_index =
       Eio.Mutex.use_ro state_mutex (fun () ->
           Hashtbl.find_opt pending_force_kill_completions command_index)
@@ -347,23 +354,10 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
           | Some (current_completion, _) -> current_completion == completion
           | None -> false)
     in
-    let process_status_matches_signal ~signal = function
-      | Close_event.Signaled exited_signal ->
-          exited_signal = string_of_int signal
-          || exited_signal = string_of_int (Sys.signal_to_int signal)
-      | Close_event.Exited _ | Close_event.Spawn_error _ -> false
-    in
-    let pending_force_kill_for_status ~process_status command_index =
+    let pending_force_kill_for_status ~process_status:_ command_index =
       match pending_force_kill_completion command_index with
       | None -> None
-      | Some (completion, initial_signal) ->
-          if
-            not
-              (process_status_matches_signal ~signal:initial_signal process_status)
-          then (
-            remove_pending_force_kill command_index;
-            None)
-          else Some completion
+      | Some (completion, _initial_signal) -> Some completion
     in
     let command_is_closed command_index =
       Eio.Mutex.use_ro state_mutex (fun () ->
@@ -592,8 +586,15 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
                                 if root_already_exited then None
                                 else Some running_process.command_index)
                        in
-                       if root_force_killed_command_indexes <> [] then
+                       if force_kill_results <> [] then
                          Eio.Mutex.use_rw ~protect:true state_mutex (fun () ->
+                             timed_out_cleanup_signals :=
+                               force_kill_results
+                               |> List.map (fun (running_process, _) ->
+                                      (running_process.command_index, initial_signal))
+                               |> List.rev_append !timed_out_cleanup_signals
+                               |> List.sort_uniq (fun (left_index, _) (right_index, _) ->
+                                      Int.compare left_index right_index);
                              force_killed_command_indexes :=
                                root_force_killed_command_indexes
                                |> List.rev_append !force_killed_command_indexes
@@ -877,7 +878,9 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
             List.filter
               (fun force_killed_command_index ->
                 force_killed_command_index <> command_index)
-              !force_killed_command_indexes)
+              !force_killed_command_indexes;
+          timed_out_cleanup_signals :=
+            List.remove_assoc command_index !timed_out_cleanup_signals)
     in
     let finish_close_event ~sw close_event =
       if should_retry close_event then (
@@ -1084,7 +1087,14 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
                       let status =
                         if killed && command_was_force_killed command_index then
                           signaled_status Sys.sigkill
-                        else process_status
+                        else
+                          match
+                            ( process_status,
+                              command_timed_out_cleanup_signal command_index )
+                          with
+                          | Close_event.Exited 0, Some signal ->
+                              signaled_status signal
+                          | _ -> process_status
                       in
                       match
                         create_close_event ~command ~attempt ~killed ~status
@@ -1109,6 +1119,16 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
                       let stderr_result = await_reader stderr_reader in
                       (stdout_result, stderr_result)
                     in
+                    let rec await_cleanup_clearance_or_timeout completion =
+                      if not (process.Runner_backend.needs_cleanup_after_exit ()) then
+                        `Cleared
+                      else if Eio.Promise.is_resolved completion then (
+                        Eio.Promise.await completion;
+                        `Timed_out)
+                      else (
+                        sleep 0.01;
+                        await_cleanup_clearance_or_timeout completion)
+                    in
                     let stdout_result, stderr_result =
                       match pending_force_kill with
                       | None -> await_readers ()
@@ -1120,10 +1140,18 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
                                 Eio.Promise.await completion;
                                 `Force_kill_timeout)
                           with
-                          | `Readers results ->
-                              remove_pending_force_kill command_index;
-                              process.Runner_backend.cleanup_after_exit ();
-                              results
+                          | `Readers results -> (
+                              match
+                                await_cleanup_clearance_or_timeout completion
+                              with
+                              | `Cleared ->
+                                  remove_pending_force_kill command_index;
+                                  process.Runner_backend.cleanup_after_exit ();
+                                  results
+                              | `Timed_out ->
+                                  process.Runner_backend.cleanup_after_exit ();
+                                  remove_pending_force_kill command_index;
+                                  results)
                           | `Force_kill_timeout ->
                               process.Runner_backend.cleanup_after_exit ();
                               remove_pending_force_kill command_index;

@@ -13,6 +13,9 @@ type process =
   ; signal : int -> (bool, string) result
   (** [signal n] returns [Ok true] when the signal was sent and [Ok false]
       when the process has already exited. *)
+  ; needs_cleanup_after_exit : unit -> bool
+  (** [needs_cleanup_after_exit ()] reports whether backend-owned descendants
+      may still need reclamation after the root process exits. *)
   ; cleanup_after_exit : unit -> unit
   (** [cleanup_after_exit ()] reclaims backend-owned descendants after the root
       process exits without emitting another logical signal result. *)

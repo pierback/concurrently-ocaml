@@ -129,6 +129,8 @@ let spawn ~sw ~command =
     ; stdout = (stdout_pipe.source :> Runner_backend.source)
     ; stderr = (stderr_pipe.source :> Runner_backend.source)
     ; signal
+    ; needs_cleanup_after_exit =
+        (fun () -> Posix_process_group.group_exists ~pid)
     ; cleanup_after_exit =
         (fun () ->
           match Posix_process_group.signal_group ~pid Sys.sigkill with

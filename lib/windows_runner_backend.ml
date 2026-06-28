@@ -230,6 +230,7 @@ let spawn ~sw ~command =
         stdout = (stdout_pipe.source :> Runner_backend.source);
         stderr = (stderr_pipe.source :> Runner_backend.source);
         signal;
+        needs_cleanup_after_exit = (fun () -> false);
         cleanup_after_exit = (fun () -> ());
         await =
           (fun () ->

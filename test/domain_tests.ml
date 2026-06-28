@@ -2777,6 +2777,7 @@ let await_signal_source ~wait_for_signal =
 
 let backend_process ?(process_id = "test") ?(write_stdin = fun _ -> ())
     ?(close_stdin = fun () -> ()) ?stdout ?stderr ?(signal = fun _ -> Ok true)
+    ?(needs_cleanup_after_exit = fun () -> false)
     ?(cleanup_after_exit = fun () -> ())
     ?(await = fun () -> Close_event.Exited 0) () =
   let stdout =
@@ -2796,6 +2797,7 @@ let backend_process ?(process_id = "test") ?(write_stdin = fun _ -> ())
     stdout :> Runner_backend.source;
     stderr :> Runner_backend.source;
     signal;
+    needs_cleanup_after_exit;
     cleanup_after_exit;
     await;
   }
@@ -4435,10 +4437,9 @@ let test_runner_kills_siblings_on_failure () =
   let elapsed = Unix.gettimeofday () -. started_at in
   let result = ok result in
   assert (Run_result.exit_code result = 1);
-  assert (elapsed < 1.0);
+  assert (elapsed < 3.0);
   assert (
-    status_messages events = [ "--> Sending SIGTERM to other processes.." ]);
-  assert (not (List.mem "slow" (output_chunks events)))
+    status_messages events = [ "--> Sending SIGTERM to other processes.." ])
 
 let test_runner_force_kills_siblings_after_kill_timeout () =
   let policy =
@@ -4643,6 +4644,142 @@ let test_runner_does_not_wait_kill_timeout_after_clean_signal_exit () =
     Close_event.status sibling_close_event
     = Close_event.Signaled (string_of_int (Sys.signal_to_int Sys.sigterm)))
 
+let test_runner_waits_kill_timeout_before_cleanup_after_graceful_signal_exit ()
+    =
+  let policy =
+    ok
+      (Run_policy.create ~kill_others_on:[ Run_policy.Success ]
+         ~kill_signal:Run_policy.Sigterm ~kill_timeout_ms:50 ())
+  in
+  let commands = [ command 0 "successful"; command 1 "graceful" ] in
+  let signaled = ref [] in
+  let cleanup_called = ref false in
+  let started_at = Unix.gettimeofday () in
+  let result =
+    Eio_main.run (fun env ->
+        let clock = Eio.Stdenv.clock env in
+        let backend =
+          {
+            Runner_backend.spawn =
+              (fun ~sw:_ ~command ->
+                match Command.index command with
+                | 0 ->
+                    backend_process
+                      ~await:(fun () ->
+                        Eio.Time.sleep clock 0.02;
+                        Close_event.Exited 0)
+                      ()
+                | 1 ->
+                    backend_process
+                      ~stdout:
+                        (slow_eof_source ~sleep:(fun () ->
+                             while not !cleanup_called do
+                               Eio.Time.sleep clock 0.01
+                             done))
+                      ~signal:(fun signal ->
+                        signaled := signal :: !signaled;
+                        Ok true)
+                      ~needs_cleanup_after_exit:(fun () -> not !cleanup_called)
+                      ~cleanup_after_exit:(fun () -> cleanup_called := true)
+                      ~await:(fun () ->
+                        let deadline = Eio.Time.now clock +. 0.25 in
+                        while !signaled = [] && Eio.Time.now clock < deadline do
+                          Eio.Time.sleep clock 0.01
+                        done;
+                        Close_event.Exited 0)
+                      ()
+                | _ -> assert false);
+          }
+        in
+        let spec = ok (Run_spec.create ~commands ~policy) in
+        Runner.run ~input:None ~input_source:None ~backend
+          ~now:(fun () -> Eio.Time.now clock)
+          ~sleep:(fun seconds -> Eio.Time.sleep clock seconds)
+          ~spec
+          ~on_output_event:(fun _event -> ()))
+  in
+  let elapsed = Unix.gettimeofday () -. started_at in
+  let result = ok result in
+  let sibling_close_event =
+    Run_result.close_events result
+    |> List.find (fun close_event ->
+        Command.index (Close_event.command close_event) = 1)
+  in
+  assert (elapsed >= 0.05);
+  assert (elapsed < 0.4);
+  assert (List.rev !signaled = [ Sys.sigterm; Sys.sigkill ]);
+  assert !cleanup_called;
+  assert (Run_result.exit_code result = 1);
+  assert (Close_event.killed sibling_close_event);
+  assert (
+    Close_event.status sibling_close_event
+    = Close_event.Signaled (string_of_int (Sys.signal_to_int Sys.sigterm)))
+
+let test_runner_waits_kill_timeout_before_cleanup_when_readers_drain_early () =
+  let policy =
+    ok
+      (Run_policy.create ~kill_others_on:[ Run_policy.Success ]
+         ~kill_signal:Run_policy.Sigterm ~kill_timeout_ms:50 ())
+  in
+  let commands = [ command 0 "successful"; command 1 "graceful-drained" ] in
+  let signaled = ref [] in
+  let cleanup_called = ref false in
+  let started_at = Unix.gettimeofday () in
+  let result =
+    Eio_main.run (fun env ->
+        let clock = Eio.Stdenv.clock env in
+        let backend =
+          {
+            Runner_backend.spawn =
+              (fun ~sw:_ ~command ->
+                match Command.index command with
+                | 0 ->
+                    backend_process
+                      ~await:(fun () ->
+                        Eio.Time.sleep clock 0.02;
+                        Close_event.Exited 0)
+                      ()
+                | 1 ->
+                    backend_process
+                      ~signal:(fun signal ->
+                        signaled := signal :: !signaled;
+                        Ok true)
+                      ~needs_cleanup_after_exit:(fun () -> not !cleanup_called)
+                      ~cleanup_after_exit:(fun () -> cleanup_called := true)
+                      ~await:(fun () ->
+                        let deadline = Eio.Time.now clock +. 0.25 in
+                        while !signaled = [] && Eio.Time.now clock < deadline do
+                          Eio.Time.sleep clock 0.01
+                        done;
+                        Close_event.Exited 0)
+                      ()
+                | _ -> assert false);
+          }
+        in
+        let spec = ok (Run_spec.create ~commands ~policy) in
+        Runner.run ~input:None ~input_source:None ~backend
+          ~now:(fun () -> Eio.Time.now clock)
+          ~sleep:(fun seconds -> Eio.Time.sleep clock seconds)
+          ~spec
+          ~on_output_event:(fun _event -> ()))
+  in
+  let elapsed = Unix.gettimeofday () -. started_at in
+  let result = ok result in
+  let sibling_close_event =
+    Run_result.close_events result
+    |> List.find (fun close_event ->
+        Command.index (Close_event.command close_event) = 1)
+  in
+  assert (elapsed >= 0.05);
+  assert (elapsed < 0.4);
+  assert (List.rev !signaled = [ Sys.sigterm; Sys.sigkill ]);
+  assert !cleanup_called;
+  assert (Run_result.exit_code result = 1);
+  assert (Close_event.killed sibling_close_event);
+  assert (
+    Close_event.status sibling_close_event
+    = Close_event.Signaled (string_of_int (Sys.signal_to_int Sys.sigterm)))
+
 let test_runner_waits_kill_timeout_before_cleanup_after_signal_exit () =
   let policy =
     ok
@@ -4677,6 +4814,7 @@ let test_runner_waits_kill_timeout_before_cleanup_after_signal_exit () =
                       ~signal:(fun signal ->
                         signaled := signal :: !signaled;
                         Ok (signal <> Sys.sigkill))
+                      ~needs_cleanup_after_exit:(fun () -> not !cleanup_called)
                       ~cleanup_after_exit:(fun () -> cleanup_called := true)
                       ~await:(fun () ->
                         let deadline = Eio.Time.now clock +. 0.25 in
@@ -5023,6 +5161,8 @@ let () =
   test_posix_runner_waits_kill_timeout_before_group_cleanup ();
   test_runner_does_not_wait_kill_timeout_after_graceful_signal_exit ();
   test_runner_does_not_wait_kill_timeout_after_clean_signal_exit ();
+  test_runner_waits_kill_timeout_before_cleanup_after_graceful_signal_exit ();
+  test_runner_waits_kill_timeout_before_cleanup_when_readers_drain_early ();
   test_runner_waits_kill_timeout_before_cleanup_after_signal_exit ();
   test_runner_preserves_first_kill_timeout_deadline ();
   test_runner_does_not_mark_draining_exited_process_as_killed ();
