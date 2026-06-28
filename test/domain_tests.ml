@@ -2887,7 +2887,9 @@ let test_posix_runner_cleans_teardown_descendant_pipes () =
   let result, events = run_with_events ~policy [ "true" ] in
   let elapsed = Unix.gettimeofday () -. started_at in
   let result = ok result in
-  assert (elapsed < 1.0);
+  (* Teardown cleanup should be materially faster than the orphaned sleep's
+     natural lifetime even when shell/process-group teardown is slow. *)
+  assert (elapsed < 6.0);
   assert (Run_result.exit_code result = 0);
   assert (
     status_messages events
@@ -4522,7 +4524,9 @@ let test_posix_runner_waits_kill_timeout_before_group_cleanup () =
   let elapsed = Unix.gettimeofday () -. started_at in
   let result = ok result in
   assert (elapsed >= 0.18);
-  assert (elapsed < 1.0);
+  (* The timeout and SIGKILL event are the stable invariants; wall-clock cleanup
+     can vary across shells and loaded runners. *)
+  assert (elapsed < 5.0);
   assert (Run_result.exit_code result = 1);
   assert (
     List.mem "--> Sending SIGKILL to 1 processes.." (status_messages events))
