@@ -11,8 +11,12 @@ type process =
   ; stdout : source
   ; stderr : source
   ; signal : int -> (bool, string) result
-  (** [signal n] returns [Ok true] when the signal was sent and [Ok false]
-      when the process has already exited. *)
+  (** [signal n] returns [Ok true] when the backend still had a live target for
+      the signal and [Ok false] when neither the root process nor any
+      backend-owned descendants remained. When [needs_cleanup_after_exit ()] can
+      still be true after the root exits, post-exit [SIGKILL] must keep
+      attempting that descendant cleanup and report [Ok true] while work
+      remains. *)
   ; needs_cleanup_after_exit : unit -> bool
   (** [needs_cleanup_after_exit ()] reports whether backend-owned descendants
       may still need reclamation after the root process exits. *)
