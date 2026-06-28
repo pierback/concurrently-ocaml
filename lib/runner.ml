@@ -13,6 +13,14 @@ type running_process = {
   process : Runner_backend.process;
   kind : running_process_kind;
 }
+
+type pending_teardown_signal_error = {
+  error_command_index : int;
+  error_command : Command.t;
+  failed_signal : int;
+  error_message : string;
+}
+
 type command_result = Closed of Close_event.t | Skipped | Failed of run_error
 
 exception Fatal_runner_error of run_error
@@ -170,7 +178,7 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
     let parent_signal_forwarded_command_attempts = ref [] in
     let termination_signal = ref None in
     let termination_cancelled = ref false in
-    let running_processes = ref [] in
+    let running_processes : running_process list ref = ref [] in
     let input_queue = Runner_input_queue.create ~command_count () in
     let active_command_indexes = ref [] in
     let starting_command_indexes = ref [] in
@@ -186,7 +194,10 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
     let error_mutex = Eio.Mutex.create () in
     let restart_delay_warning_emitted = ref false in
     let kill_timeout_warning_emitted = ref false in
-    let pending_teardown_signal_errors = ref [] in
+    let pending_teardown_signal_errors :
+        pending_teardown_signal_error list ref =
+      ref []
+    in
     let teardown_parent_signal_delivery_generations = ref [] in
     let run_errors = ref [] in
     let close_events =
@@ -468,7 +479,12 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
               | Main_command -> ()
               | Teardown_command ->
                   pending_teardown_signal_errors :=
-                    (running_process.command_index, running_process.command, message)
+                    {
+                      error_command_index = running_process.command_index;
+                      error_command = running_process.command;
+                      failed_signal = signal;
+                      error_message = message;
+                    }
                     :: !pending_teardown_signal_errors))
         !running_processes;
       List.rev !signaled_main_command_indexes
@@ -1241,19 +1257,36 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
     let emit_teardown_lifecycle ~command lifecycle =
       create_lifecycle_event ~command ~attempt:0 lifecycle |> emit_best_effort
     in
-    let flush_teardown_signal_errors command_index =
+    let take_teardown_signal_errors command_index =
       let matching_errors, remaining_errors =
         List.partition
-          (fun (error_command_index, _command, _message) ->
-            error_command_index = command_index)
+          (fun error -> error.error_command_index = command_index)
           !pending_teardown_signal_errors
       in
       pending_teardown_signal_errors := remaining_errors;
-      matching_errors |> List.rev
-      |> List.iter (fun (_error_command_index, command, message) ->
-             teardown_error_event ~command
-               ~message:("teardown command failed to signal: " ^ message)
-             |> emit_best_effort)
+      List.rev matching_errors
+    in
+    let emit_teardown_signal_errors errors =
+      List.iter
+        (fun error ->
+          teardown_error_event ~command:error.error_command
+            ~message:
+              ("teardown command failed to signal: " ^ error.error_message)
+          |> emit_best_effort)
+        errors
+    in
+    let flush_teardown_signal_errors command_index =
+      take_teardown_signal_errors command_index |> emit_teardown_signal_errors
+    in
+    let close_teardown_process_stdin ~command process =
+      match process.Runner_backend.close_stdin () with
+      | () -> ()
+      | exception exn ->
+          teardown_error_event ~command
+            ~message:
+              ("teardown command failed to close stdin: "
+              ^ Printexc.to_string exn)
+          |> emit_best_effort
     in
     let signal_teardown_process_best_effort ~command process signal =
       match process.Runner_backend.signal signal with
@@ -1262,6 +1295,10 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
           teardown_error_event ~command
             ~message:("teardown command failed to signal: " ^ message)
           |> emit_best_effort
+    in
+    let signal_teardown_process_silently process signal =
+      match process.Runner_backend.signal signal with
+      | Ok true | Ok false | Error _ -> ()
     in
     let run_teardown_reader ~command ~process ~stream source =
       let result =
@@ -1290,10 +1327,75 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
       | Error _ as error -> error
       | exception exn -> Error (Printexc.to_string exn)
     in
-    let await_teardown_process process =
+    let cleanup_teardown_process ~command process =
+      match process.Runner_backend.cleanup_after_exit () with
+      | () -> ()
+      | exception exn ->
+          teardown_error_event ~command
+            ~message:("teardown command cleanup failed: " ^ Printexc.to_string exn)
+          |> emit_best_effort
+    in
+    let await_teardown_process_status process =
       match process.Runner_backend.await () with
       | status -> Ok status
       | exception exn -> Error (Printexc.to_string exn)
+    in
+    let await_teardown_process ~sw ~command_index ~command ~process =
+      let process_status =
+        Eio.Fiber.fork_promise ~sw (fun () ->
+            await_teardown_process_status process)
+      in
+      let force_kill_deadline = ref None in
+      let force_kill_sent = ref false in
+      let schedule_force_kill signal =
+        if !force_kill_sent then ()
+        else if signal = Sys.sigkill then (
+          signal_teardown_process_silently process Sys.sigkill;
+          force_kill_deadline := None;
+          force_kill_sent := true)
+        else
+          match (Run_policy.kill_timeout_ms policy, !force_kill_deadline) with
+          | Some timeout_ms, None when timeout_ms > 0 ->
+              Option.iter (emit_once kill_timeout_warning_emitted)
+                (Run_policy.kill_timeout_warning policy);
+              force_kill_deadline :=
+                Some (now () +. (float_of_int timeout_ms /. 1000.0))
+          | _, Some _ -> ()
+          | _, None ->
+              signal_teardown_process_silently process Sys.sigkill;
+              force_kill_deadline := None;
+              force_kill_sent := true
+      in
+      let rec loop () =
+        if Eio.Promise.is_resolved process_status then
+          Eio.Promise.await_exn process_status
+        else (
+          let signal_errors = take_teardown_signal_errors command_index in
+          if signal_errors <> [] then (
+            emit_teardown_signal_errors signal_errors;
+            List.iter
+              (fun error -> schedule_force_kill error.failed_signal)
+              signal_errors);
+          (match !force_kill_deadline with
+          | Some deadline when not !force_kill_sent && now () >= deadline ->
+              signal_teardown_process_silently process Sys.sigkill;
+              force_kill_deadline := None;
+              force_kill_sent := true
+          | Some _ | None -> ());
+          if Eio.Promise.is_resolved process_status then
+            Eio.Promise.await_exn process_status
+          else (
+            let pause =
+              match !force_kill_deadline with
+              | Some deadline ->
+                  let remaining = deadline -. now () in
+                  if remaining <= 0.0 then 0.001 else min 0.01 remaining
+              | None -> 0.01
+            in
+            sleep pause;
+            loop ()))
+      in
+      loop ()
     in
     let teardown_reader_errors stdout_reader stderr_reader =
       [ await_teardown_reader stdout_reader; await_teardown_reader stderr_reader ]
@@ -1353,7 +1455,7 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
               |> emit_best_effort;
               emit_teardown_lifecycle ~command Output_event.Stopped
           | `Process process ->
-              close_process_stdin process;
+              close_teardown_process_stdin ~command process;
               Option.iter
                 (fun signal ->
                   signal_teardown_process_best_effort ~command process signal)
@@ -1369,11 +1471,14 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
                     run_teardown_reader ~command ~process
                       ~stream:Output_event.Stderr process.Runner_backend.stderr)
               in
-              let close_status = await_teardown_process process in
+              let close_status =
+                await_teardown_process ~sw:command_sw ~command_index ~command
+                  ~process
+              in
               (match close_status with
               | Error message ->
                   signal_teardown_process_best_effort ~command process Sys.sigkill;
-                  process.Runner_backend.cleanup_after_exit ();
+                  cleanup_teardown_process ~command process;
                   let reader_errors =
                     teardown_reader_errors stdout_reader stderr_reader
                   in
@@ -1384,7 +1489,7 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
                     ~message:("teardown command failed to await: " ^ message)
                   |> emit_best_effort
               | Ok status ->
-                  process.Runner_backend.cleanup_after_exit ();
+                  cleanup_teardown_process ~command process;
                   let reader_errors =
                     teardown_reader_errors stdout_reader stderr_reader
                   in

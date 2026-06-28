@@ -3298,6 +3298,61 @@ let test_runner_reports_teardown_spawn_failure_without_affecting_exit_code () =
   assert (
     status_messages events = [ "--> Running teardown command \"cleanup\"" ])
 
+let test_runner_reports_teardown_close_stdin_failures_without_affecting_exit_code
+    () =
+  let main_command = command 0 "main" in
+  let first_teardown = ok (Command.create ~index:1 ~raw:true "cleanup-1") in
+  let second_teardown = ok (Command.create ~index:2 ~raw:true "cleanup-2") in
+  let policy =
+    ok (Run_policy.create ~teardown:[ first_teardown; second_teardown ] ())
+  in
+  let backend =
+    {
+      Runner_backend.spawn =
+        (fun ~sw:_ ~command ->
+          match Command.text command with
+          | "main" ->
+              backend_process
+                ~stdout:(Eio.Flow.string_source "main-output\n")
+                ~await:(fun () -> Close_event.Exited 0)
+                ()
+          | "cleanup-1" ->
+              backend_process
+                ~close_stdin:(fun () -> failwith "cleanup-1 stdin boom")
+                ~await:(fun () -> Close_event.Exited 0)
+                ()
+          | "cleanup-2" ->
+              backend_process
+                ~close_stdin:(fun () -> failwith "cleanup-2 stdin boom")
+                ~await:(fun () -> Close_event.Exited 0)
+                ()
+          | _ -> assert false);
+    }
+  in
+  let result, events =
+    run_commands_with_backend_events ~backend ~policy [ main_command ]
+  in
+  let result = ok result in
+  assert (Run_result.exit_code result = 0);
+  assert (List.length (Run_result.close_events result) = 1);
+  assert (
+    output_chunks events
+    = [
+        "main-output";
+        "teardown command failed to close stdin: Failure(\"cleanup-1 stdin \
+         boom\")";
+        "teardown command failed to close stdin: Failure(\"cleanup-2 stdin \
+         boom\")";
+      ]);
+  assert (
+    status_messages events
+    = [
+        "--> Running teardown command \"cleanup-1\"";
+        "--> Teardown command \"cleanup-1\" exited with code 0";
+        "--> Running teardown command \"cleanup-2\"";
+        "--> Teardown command \"cleanup-2\" exited with code 0";
+      ])
+
 let test_runner_reports_teardown_output_reader_failure () =
   let main_command = command 0 "main" in
   let teardown_command = ok (Command.create ~index:1 ~raw:true "cleanup") in
@@ -3379,6 +3434,46 @@ let test_runner_reports_teardown_await_failure () =
   assert (output_chunks events = [ "main-output"; expected_error ]);
   assert (
     status_messages events = [ "--> Running teardown command \"cleanup\"" ]);;
+
+let test_runner_reports_teardown_cleanup_failure_without_affecting_exit_code ()
+    =
+  let main_command = command 0 "main" in
+  let teardown_command = ok (Command.create ~index:1 ~raw:true "cleanup") in
+  let policy = ok (Run_policy.create ~teardown:[ teardown_command ] ()) in
+  let backend =
+    {
+      Runner_backend.spawn =
+        (fun ~sw:_ ~command ->
+          match Command.text command with
+          | "main" ->
+              backend_process
+                ~stdout:(Eio.Flow.string_source "main-output\n")
+                ~await:(fun () -> Close_event.Exited 0)
+                ()
+          | "cleanup" ->
+              backend_process
+                ~cleanup_after_exit:(fun () -> failwith "cleanup boom")
+                ~await:(fun () -> Close_event.Exited 0)
+                ()
+          | _ -> assert false);
+    }
+  in
+  let result, events =
+    run_commands_with_backend_events ~backend ~policy [ main_command ]
+  in
+  let result = ok result in
+  let expected_error =
+    "teardown command cleanup failed: Failure(\"cleanup boom\")"
+  in
+  assert (Run_result.exit_code result = 0);
+  assert (List.length (Run_result.close_events result) = 1);
+  assert (output_chunks events = [ "main-output"; expected_error ]);
+  assert (
+    status_messages events
+    = [
+        "--> Running teardown command \"cleanup\"";
+        "--> Teardown command \"cleanup\" exited with code 0";
+      ])
 
 let test_runner_keeps_teardown_registered_while_draining_readers_after_await_failure
     () =
@@ -3493,6 +3588,76 @@ let test_runner_reports_parent_signal_failure_during_teardown_without_affecting_
         "--> Running teardown command \"cleanup\"";
         "--> Teardown command \"cleanup\" exited with code 0";
       ]);;
+
+let test_runner_force_kills_teardown_after_parent_signal_failure_timeout () =
+  let main_command = command 0 "main" in
+  let teardown_command = ok (Command.create ~index:1 ~raw:true "cleanup") in
+  let policy =
+    ok (Run_policy.create ~kill_timeout_ms:50 ~teardown:[ teardown_command ] ())
+  in
+  let sent_signals = ref [] in
+  let result, events =
+    Eio_main.run (fun env ->
+        let clock = Eio.Stdenv.clock env in
+        let events = ref [] in
+        let forced_kill_seen = ref false in
+        let backend =
+          {
+            Runner_backend.spawn =
+              (fun ~sw ~command ->
+                match Command.text command with
+                | "main" ->
+                    backend_process ~await:(fun () -> Close_event.Exited 0) ()
+                | "cleanup" ->
+                    Eio.Fiber.fork ~sw (fun () ->
+                        Eio.Time.sleep clock 0.05;
+                        Unix.kill (Unix.getpid ()) Sys.sigterm);
+                    backend_process
+                      ~signal:(fun signal ->
+                        sent_signals := signal :: !sent_signals;
+                        if signal = Sys.sigkill then (
+                          forced_kill_seen := true;
+                          Ok true)
+                        else Error "signal failed")
+                      ~await:(fun () ->
+                        let deadline = Eio.Time.now clock +. 0.4 in
+                        while
+                          not !forced_kill_seen
+                          && Eio.Time.now clock < deadline
+                        do
+                          Eio.Time.sleep clock 0.01
+                        done;
+                        if not !forced_kill_seen then
+                          failwith
+                            "timed out waiting for forced teardown kill";
+                        Close_event.Exited 0)
+                      ()
+                | _ -> assert false);
+          }
+        in
+        let spec = ok (Run_spec.create ~commands:[ main_command ] ~policy) in
+        let result =
+          Runner.run ~input:None ~input_source:None ~backend
+            ~now:(fun () -> Eio.Time.now clock)
+            ~sleep:(fun seconds -> Eio.Time.sleep clock seconds)
+            ~spec
+            ~on_output_event:(fun event -> events := event :: !events)
+        in
+        (result, List.rev !events))
+  in
+  let result = ok result in
+  let expected_error = "teardown command failed to signal: signal failed" in
+  assert (List.rev !sent_signals = [ Sys.sigterm; Sys.sigkill ]);
+  assert (Run_result.interrupted result);
+  assert (Run_result.exit_code result = 0);
+  assert (List.length (Run_result.close_events result) = 1);
+  assert (output_chunks events = [ expected_error ]);
+  assert (
+    status_messages events
+    = [
+        "--> Running teardown command \"cleanup\"";
+        "--> Teardown command \"cleanup\" exited with code 0";
+      ])
 
 let test_runner_reports_output_reader_failure () =
   let backend =
@@ -4821,12 +4986,16 @@ let () =
   test_runner_records_spawn_failure_as_close_event ();
   test_runner_retries_spawn_failure ();
   test_runner_reports_teardown_spawn_failure_without_affecting_exit_code ();
+  test_runner_reports_teardown_close_stdin_failures_without_affecting_exit_code
+    ();
   test_runner_reports_teardown_output_reader_failure ();
   test_runner_reports_teardown_await_failure ();
+  test_runner_reports_teardown_cleanup_failure_without_affecting_exit_code ();
   test_runner_keeps_teardown_registered_while_draining_readers_after_await_failure
     ();
   test_runner_reports_parent_signal_failure_during_teardown_without_affecting_exit_code
     ();
+  test_runner_force_kills_teardown_after_parent_signal_failure_timeout ();
   test_runner_reports_output_reader_failure ();
   test_runner_signals_process_when_output_emit_fails ();
   test_runner_keeps_retry_during_output_drain ();
