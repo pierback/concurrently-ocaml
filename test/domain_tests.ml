@@ -2758,6 +2758,23 @@ end
 let failing_source () =
   Eio.Resource.T ((), Eio.Flow.Pi.source (module Failing_source))
 
+module Await_signal_source = struct
+  type t = { mutable first_read : bool; wait_for_signal : unit -> unit }
+
+  let read_methods = []
+
+  let single_read t _buffer =
+    if t.first_read then (
+      t.first_read <- false;
+      t.wait_for_signal ());
+    raise End_of_file
+end
+
+let await_signal_source ~wait_for_signal =
+  Eio.Resource.T
+    ( { Await_signal_source.first_read = true; wait_for_signal },
+      Eio.Flow.Pi.source (module Await_signal_source) )
+
 let backend_process ?(process_id = "test") ?(write_stdin = fun _ -> ())
     ?(close_stdin = fun () -> ()) ?stdout ?stderr ?(signal = fun _ -> Ok true)
     ?(cleanup_after_exit = fun () -> ())
@@ -2922,6 +2939,224 @@ let test_runner_forwards_parent_signal_during_teardown () =
   assert (Run_result.interrupted result);
   assert (Run_result.exit_code result = 0)
 
+let test_runner_does_not_replay_stale_parent_signal_to_teardown () =
+  let main_command = command 0 "main" in
+  let teardown_command = ok (Command.create ~index:1 ~raw:true "cleanup") in
+  let policy = ok (Run_policy.create ~teardown:[ teardown_command ] ()) in
+  let teardown_signaled = ref None in
+  let result =
+    Eio_main.run (fun env ->
+        let clock = Eio.Stdenv.clock env in
+        let backend =
+          {
+            Runner_backend.spawn =
+              (fun ~sw:_ ~command ->
+                match Command.text command with
+                | "main" ->
+                    backend_process
+                      ~await:(fun () ->
+                        Unix.kill (Unix.getpid ()) Sys.sigterm;
+                        Eio.Time.sleep clock 0.05;
+                        Close_event.Exited 0)
+                      ()
+                | "cleanup" ->
+                    backend_process
+                      ~signal:(fun signal ->
+                        teardown_signaled := Some signal;
+                        Ok true)
+                      ~await:(fun () -> Close_event.Exited 0)
+                      ()
+                | _ -> assert false);
+          }
+        in
+        let spec = ok (Run_spec.create ~commands:[ main_command ] ~policy) in
+        Runner.run ~input:None ~input_source:None ~backend
+          ~now:(fun () -> Eio.Time.now clock)
+          ~sleep:(fun seconds -> Eio.Time.sleep clock seconds)
+          ~spec
+          ~on_output_event:(fun _event -> ()))
+  in
+  let result = ok result in
+  assert (!teardown_signaled = None);
+  assert (Run_result.interrupted result);
+  assert (Run_result.exit_code result = 0)
+
+let test_runner_forwards_parent_signal_during_teardown_spawn_race () =
+  let main_command = command 0 "main" in
+  let teardown_command = ok (Command.create ~index:1 ~raw:true "cleanup") in
+  let policy = ok (Run_policy.create ~teardown:[ teardown_command ] ()) in
+  let teardown_signaled = ref None in
+  let result =
+    Eio_main.run (fun env ->
+        let clock = Eio.Stdenv.clock env in
+        let backend =
+          {
+            Runner_backend.spawn =
+              (fun ~sw:_ ~command ->
+                match Command.text command with
+                | "main" -> backend_process ()
+                | "cleanup" ->
+                    Unix.kill (Unix.getpid ()) Sys.sigterm;
+                    backend_process
+                      ~signal:(fun signal ->
+                        teardown_signaled := Some signal;
+                        Ok true)
+                      ~await:(fun () ->
+                        let deadline = Eio.Time.now clock +. 0.4 in
+                        while
+                          Option.is_none !teardown_signaled
+                          && Eio.Time.now clock < deadline
+                        do
+                          Eio.Time.sleep clock 0.01
+                        done;
+                        Close_event.Exited 0)
+                      ()
+                | _ -> assert false);
+          }
+        in
+        let spec = ok (Run_spec.create ~commands:[ main_command ] ~policy) in
+        Runner.run ~input:None ~input_source:None ~backend
+          ~now:(fun () -> Eio.Time.now clock)
+          ~sleep:(fun seconds -> Eio.Time.sleep clock seconds)
+          ~spec
+          ~on_output_event:(fun _event -> ()))
+  in
+  let result = ok result in
+  assert (!teardown_signaled = Some Sys.sigterm);
+  assert (Run_result.interrupted result);
+  assert (Run_result.exit_code result = 0)
+
+let test_runner_does_not_double_signal_teardown_during_spawn_race () =
+  let main_command = command 0 "main" in
+  let teardown_command = ok (Command.create ~index:1 ~raw:true "cleanup") in
+  let policy = ok (Run_policy.create ~teardown:[ teardown_command ] ()) in
+  let teardown_signals = ref [] in
+  let result =
+    Eio_main.run (fun env ->
+        let clock = Eio.Stdenv.clock env in
+        let backend =
+          {
+            Runner_backend.spawn =
+              (fun ~sw:_ ~command ->
+                match Command.text command with
+                | "main" -> backend_process ()
+                | "cleanup" ->
+                    backend_process
+                      ~close_stdin:(fun () ->
+                        Unix.kill (Unix.getpid ()) Sys.sigterm)
+                      ~signal:(fun signal ->
+                        teardown_signals := signal :: !teardown_signals;
+                        Ok true)
+                      ~await:(fun () ->
+                        Eio.Time.sleep clock 0.05;
+                        Close_event.Exited 0)
+                      ()
+                | _ -> assert false);
+          }
+        in
+        let spec = ok (Run_spec.create ~commands:[ main_command ] ~policy) in
+        Runner.run ~input:None ~input_source:None ~backend
+          ~now:(fun () -> Eio.Time.now clock)
+          ~sleep:(fun seconds -> Eio.Time.sleep clock seconds)
+          ~spec
+          ~on_output_event:(fun _event -> ()))
+  in
+  let result = ok result in
+  assert (List.rev !teardown_signals = [ Sys.sigterm ]);
+  assert (Run_result.interrupted result);
+  assert (Run_result.exit_code result = 0)
+
+let test_runner_replays_latest_parent_signal_to_teardown_spawn_race () =
+  let main_command = command 0 "main" in
+  let teardown_command = ok (Command.create ~index:1 ~raw:true "cleanup") in
+  let policy = ok (Run_policy.create ~teardown:[ teardown_command ] ()) in
+  let teardown_signaled = ref None in
+  let result =
+    Eio_main.run (fun env ->
+        let clock = Eio.Stdenv.clock env in
+        let backend =
+          {
+            Runner_backend.spawn =
+              (fun ~sw:_ ~command ->
+                match Command.text command with
+                | "main" ->
+                    backend_process
+                      ~await:(fun () ->
+                        Unix.kill (Unix.getpid ()) Sys.sigint;
+                        Eio.Time.sleep clock 0.05;
+                        Close_event.Exited 0)
+                      ()
+                | "cleanup" ->
+                    Unix.kill (Unix.getpid ()) Sys.sigterm;
+                    backend_process
+                      ~signal:(fun signal ->
+                        teardown_signaled := Some signal;
+                        Ok true)
+                      ~await:(fun () ->
+                        let deadline = Eio.Time.now clock +. 0.4 in
+                        while
+                          Option.is_none !teardown_signaled
+                          && Eio.Time.now clock < deadline
+                        do
+                          Eio.Time.sleep clock 0.01
+                        done;
+                        Close_event.Exited 0)
+                      ()
+                | _ -> assert false);
+          }
+        in
+        let spec = ok (Run_spec.create ~commands:[ main_command ] ~policy) in
+        Runner.run ~input:None ~input_source:None ~backend
+          ~now:(fun () -> Eio.Time.now clock)
+          ~sleep:(fun seconds -> Eio.Time.sleep clock seconds)
+          ~spec
+          ~on_output_event:(fun _event -> ()))
+  in
+  let result = ok result in
+  assert (!teardown_signaled = Some Sys.sigterm);
+  assert (Run_result.interrupted result);
+  assert (Run_result.exit_code result = 0)
+
+let test_runner_does_not_double_signal_index_zero_teardown_during_spawn_race () =
+  let main_command = command 0 "main" in
+  let teardown_command = ok (Command.create ~index:0 ~raw:true "cleanup") in
+  let policy = ok (Run_policy.create ~teardown:[ teardown_command ] ()) in
+  let teardown_signals = ref [] in
+  let result =
+    Eio_main.run (fun env ->
+        let clock = Eio.Stdenv.clock env in
+        let backend =
+          {
+            Runner_backend.spawn =
+              (fun ~sw:_ ~command ->
+                match Command.text command with
+                | "main" -> backend_process ()
+                | "cleanup" ->
+                    backend_process
+                      ~close_stdin:(fun () ->
+                        Unix.kill (Unix.getpid ()) Sys.sigterm)
+                      ~signal:(fun signal ->
+                        teardown_signals := signal :: !teardown_signals;
+                        Ok true)
+                      ~await:(fun () ->
+                        Eio.Time.sleep clock 0.05;
+                        Close_event.Exited 0)
+                      ()
+                | _ -> assert false);
+          }
+        in
+        let spec = ok (Run_spec.create ~commands:[ main_command ] ~policy) in
+        Runner.run ~input:None ~input_source:None ~backend
+          ~now:(fun () -> Eio.Time.now clock)
+          ~sleep:(fun seconds -> Eio.Time.sleep clock seconds)
+          ~spec
+          ~on_output_event:(fun _event -> ()))
+  in
+  let result = ok result in
+  assert (List.rev !teardown_signals = [ Sys.sigterm ]);
+  assert (Run_result.interrupted result);
+  assert (Run_result.exit_code result = 0)
+
 let test_runner_executes_teardown_after_empty_expansion () =
   let teardown_command = ok (Command.create ~index:0 ~raw:true "cleanup") in
   let policy =
@@ -3062,6 +3297,202 @@ let test_runner_reports_teardown_spawn_failure_without_affecting_exit_code () =
   assert (output_chunks events = [ "main-output"; expected_error ]);
   assert (
     status_messages events = [ "--> Running teardown command \"cleanup\"" ])
+
+let test_runner_reports_teardown_output_reader_failure () =
+  let main_command = command 0 "main" in
+  let teardown_command = ok (Command.create ~index:1 ~raw:true "cleanup") in
+  let policy = ok (Run_policy.create ~teardown:[ teardown_command ] ()) in
+  let signaled = ref None in
+  let backend =
+    {
+      Runner_backend.spawn =
+        (fun ~sw:_ ~command ->
+          match Command.text command with
+          | "main" ->
+              backend_process
+                ~stdout:(Eio.Flow.string_source "main-output\n")
+                ~await:(fun () -> Close_event.Exited 0)
+                ()
+          | "cleanup" ->
+              backend_process
+                ~stdout:(failing_source ())
+                ~signal:(fun signal ->
+                  signaled := Some signal;
+                  Ok true)
+                ~await:(fun () -> Close_event.Exited 0)
+                ()
+          | _ -> assert false);
+    }
+  in
+  let result, events =
+    run_commands_with_backend_events ~backend ~policy [ main_command ]
+  in
+  let result = ok result in
+  let expected_error =
+    "teardown command output read failed: Failure(\"reader boom\")"
+  in
+  assert (!signaled = Some Sys.sigkill);
+  assert (Run_result.exit_code result = 0);
+  assert (List.length (Run_result.close_events result) = 1);
+  assert (output_chunks events = [ "main-output"; expected_error ]);
+  assert (
+    status_messages events = [ "--> Running teardown command \"cleanup\"" ]);;
+
+let test_runner_reports_teardown_await_failure () =
+  let main_command = command 0 "main" in
+  let teardown_command = ok (Command.create ~index:1 ~raw:true "cleanup") in
+  let policy = ok (Run_policy.create ~teardown:[ teardown_command ] ()) in
+  let cleanup_called = ref false in
+  let signaled = ref None in
+  let backend =
+    {
+      Runner_backend.spawn =
+        (fun ~sw:_ ~command ->
+          match Command.text command with
+          | "main" ->
+              backend_process
+                ~stdout:(Eio.Flow.string_source "main-output\n")
+                ~await:(fun () -> Close_event.Exited 0)
+                ()
+          | "cleanup" ->
+              backend_process
+                ~signal:(fun signal ->
+                  signaled := Some signal;
+                  Ok true)
+                ~cleanup_after_exit:(fun () -> cleanup_called := true)
+                ~await:(fun () -> failwith "cleanup await boom")
+                ()
+          | _ -> assert false);
+    }
+  in
+  let result, events =
+    run_commands_with_backend_events ~backend ~policy [ main_command ]
+  in
+  let result = ok result in
+  let expected_error =
+    "teardown command failed to await: Failure(\"cleanup await boom\")"
+  in
+  assert (!signaled = Some Sys.sigkill);
+  assert !cleanup_called;
+  assert (Run_result.exit_code result = 0);
+  assert (List.length (Run_result.close_events result) = 1);
+  assert (output_chunks events = [ "main-output"; expected_error ]);
+  assert (
+    status_messages events = [ "--> Running teardown command \"cleanup\"" ]);;
+
+let test_runner_keeps_teardown_registered_while_draining_readers_after_await_failure
+    () =
+  let main_command = command 0 "main" in
+  let teardown_command = ok (Command.create ~index:1 ~raw:true "cleanup") in
+  let policy = ok (Run_policy.create ~teardown:[ teardown_command ] ()) in
+  let teardown_signals = ref [] in
+  let result, events =
+    Eio_main.run (fun env ->
+        let clock = Eio.Stdenv.clock env in
+        let events = ref [] in
+        let backend =
+          {
+            Runner_backend.spawn =
+              (fun ~sw ~command ->
+                match Command.text command with
+                | "main" ->
+                    backend_process ~await:(fun () -> Close_event.Exited 0) ()
+                | "cleanup" ->
+                    Eio.Fiber.fork ~sw (fun () ->
+                        Eio.Time.sleep clock 0.05;
+                        Unix.kill (Unix.getpid ()) Sys.sigterm);
+                    backend_process
+                      ~stdout:
+                        (await_signal_source ~wait_for_signal:(fun () ->
+                             let deadline = Eio.Time.now clock +. 0.4 in
+                             while
+                               not (List.mem Sys.sigterm !teardown_signals)
+                               && Eio.Time.now clock < deadline
+                             do
+                               Eio.Time.sleep clock 0.01
+                             done;
+                             if not (List.mem Sys.sigterm !teardown_signals)
+                             then
+                               failwith
+                                 "timed out waiting for forwarded teardown \
+                                  signal"))
+                      ~signal:(fun signal ->
+                        teardown_signals := signal :: !teardown_signals;
+                        Ok true)
+                      ~await:(fun () -> failwith "cleanup await boom")
+                      ()
+                | _ -> assert false);
+          }
+        in
+        let spec = ok (Run_spec.create ~commands:[ main_command ] ~policy) in
+        let result =
+          Runner.run ~input:None ~input_source:None ~backend
+            ~now:(fun () -> Eio.Time.now clock)
+            ~sleep:(fun seconds -> Eio.Time.sleep clock seconds)
+            ~spec
+            ~on_output_event:(fun event -> events := event :: !events)
+        in
+        (result, List.rev !events))
+  in
+  let result = ok result in
+  let expected_error =
+    "teardown command failed to await: Failure(\"cleanup await boom\")"
+  in
+  assert (List.rev !teardown_signals = [ Sys.sigkill; Sys.sigterm ]);
+  assert (Run_result.interrupted result);
+  assert (Run_result.exit_code result = 0);
+  assert (List.length (Run_result.close_events result) = 1);
+  assert (output_chunks events = [ expected_error ]);
+  assert (
+    status_messages events = [ "--> Running teardown command \"cleanup\"" ]);;
+
+let test_runner_reports_parent_signal_failure_during_teardown_without_affecting_exit_code () =
+  let main_command = command 0 "main" in
+  let teardown_command = ok (Command.create ~index:1 ~raw:true "cleanup") in
+  let policy = ok (Run_policy.create ~teardown:[ teardown_command ] ()) in
+  let result, events =
+    Eio_main.run (fun env ->
+        let clock = Eio.Stdenv.clock env in
+        let events = ref [] in
+        let backend =
+          {
+            Runner_backend.spawn =
+              (fun ~sw:_ ~command ->
+                match Command.text command with
+                | "main" ->
+                    backend_process ~await:(fun () -> Close_event.Exited 0) ()
+                | "cleanup" ->
+                    backend_process
+                      ~signal:(fun _ -> Error "signal failed")
+                      ~await:(fun () ->
+                        Unix.kill (Unix.getpid ()) Sys.sigterm;
+                        Eio.Time.sleep clock 0.05;
+                        Close_event.Exited 0)
+                      ()
+                | _ -> assert false);
+          }
+        in
+        let spec = ok (Run_spec.create ~commands:[ main_command ] ~policy) in
+        let result =
+          Runner.run ~input:None ~input_source:None ~backend
+            ~now:(fun () -> Eio.Time.now clock)
+            ~sleep:(fun seconds -> Eio.Time.sleep clock seconds)
+            ~spec
+            ~on_output_event:(fun event -> events := event :: !events)
+        in
+        (result, List.rev !events))
+  in
+  let result = ok result in
+  let expected_error = "teardown command failed to signal: signal failed" in
+  assert (Run_result.interrupted result);
+  assert (Run_result.exit_code result = 0);
+  assert (output_chunks events = [ expected_error ]);
+  assert (
+    status_messages events
+    = [
+        "--> Running teardown command \"cleanup\"";
+        "--> Teardown command \"cleanup\" exited with code 0";
+      ]);;
 
 let test_runner_reports_output_reader_failure () =
   let backend =
@@ -4381,10 +4812,21 @@ let () =
   test_runner_executes_teardown_without_affecting_exit_code ();
   test_posix_runner_cleans_teardown_descendant_pipes ();
   test_runner_forwards_parent_signal_during_teardown ();
+  test_runner_does_not_replay_stale_parent_signal_to_teardown ();
+  test_runner_forwards_parent_signal_during_teardown_spawn_race ();
+  test_runner_does_not_double_signal_teardown_during_spawn_race ();
+  test_runner_replays_latest_parent_signal_to_teardown_spawn_race ();
+  test_runner_does_not_double_signal_index_zero_teardown_during_spawn_race ();
   test_runner_executes_teardown_after_empty_expansion ();
   test_runner_records_spawn_failure_as_close_event ();
   test_runner_retries_spawn_failure ();
   test_runner_reports_teardown_spawn_failure_without_affecting_exit_code ();
+  test_runner_reports_teardown_output_reader_failure ();
+  test_runner_reports_teardown_await_failure ();
+  test_runner_keeps_teardown_registered_while_draining_readers_after_await_failure
+    ();
+  test_runner_reports_parent_signal_failure_during_teardown_without_affecting_exit_code
+    ();
   test_runner_reports_output_reader_failure ();
   test_runner_signals_process_when_output_emit_fails ();
   test_runner_keeps_retry_during_output_drain ();
