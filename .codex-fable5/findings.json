@@ -1,0 +1,21 @@
+{
+  "created": "2026-06-28T11:48:32.485365+00:00",
+  "findings": [
+    {
+      "id": "F001",
+      "goal": "",
+      "title": "Teardown runner swallows backend read and await failures",
+      "severity": "high",
+      "source": "review",
+      "status": "resolved",
+      "location": "lib/runner.ml:1206-1260",
+      "evidence": "run_teardown_reader kills the process on Runner_output_reader.read failure but drops the error, process.await exceptions are converted to None, and both reader promise exceptions are ignored. The main command path records these as Unexpected_runner_error, so teardown can falsely return success after backend IO/wait failures.",
+      "resolution": "Teardown runner now preserves backend reader and await failures as stderr teardown events, keeps teardown processes explicitly marked as teardown instead of inferring by index range, and drains teardown readers before deregistering the process on await failures.",
+      "verify_cmd": "opam exec -- dune runtest test/domain_tests.exe && opam exec -- dune runtest",
+      "verify_evidence": "Focused teardown regressions and the full test suite pass, including new coverage for index-0 teardown signal races and reader-drain after teardown await failure.",
+      "created": "2026-06-28T11:48:32.487161+00:00",
+      "updated": "2026-06-28T13:29:07.738188+00:00"
+    }
+  ],
+  "updated": "2026-06-28T13:29:07.740196+00:00"
+}
