@@ -9,7 +9,7 @@ const {
   rmSync,
   writeFileSync,
 } = require("node:fs");
-const { tmpdir } = require("node:os");
+const { cpus, tmpdir } = require("node:os");
 const { delimiter, dirname, resolve, sep } = require("node:path");
 const { spawn, spawnSync } = require("node:child_process");
 const { EventEmitter } = require("node:events");
@@ -46,8 +46,6 @@ const signalReadyCommand =
 const signalTrappedSuccessCommand =
   "node -e \"process.on('SIGTERM',()=>process.exit(0)); process.stdout.write('ready\\n'); setTimeout(()=>process.exit(99),5000)\"";
 const delayedOkCommand = "sh -c 'sleep 0.05; printf ok'";
-const delayedOneCommand =
-  "node -e \"setTimeout(()=>process.stdout.write('one'),1200)\"";
 const forceColorBaseEnv = {
   CI: null,
   GITHUB_ACTIONS: null,
@@ -71,6 +69,9 @@ const forceSpacedZeroColorEnv = { ...forceColorBaseEnv, TERM: "dumb", FORCE_COLO
 const forceNanColorEnv = { ...forceColorBaseEnv, TERM: "dumb", FORCE_COLOR: "NaN" };
 const forceGithubActionsNanColorEnv = { ...forceNanColorEnv, TERM: "xterm-256color", CI: "true", GITHUB_ACTIONS: "true" };
 const forceGithubActionsNegativeColorEnv = { ...forceNanColorEnv, TERM: "xterm-256color", FORCE_COLOR: "-1", CI: "true", GITHUB_ACTIONS: "true" };
+const synchronousWaitState = new Int32Array(new SharedArrayBuffer(4));
+// deno-lint-ignore no-control-regex
+const stripAnsiColors = (text) => text.replace(/\u001b\[[0-9;]*m/g, "");
 const shortcutFixture = createShortcutFixture();
 const escapedScriptFixture = createEscapedScriptFixture();
 const literalWildcardFixture = createLiteralWildcardFixture();
@@ -79,11 +80,67 @@ const invalidDenoFixture = createInvalidDenoFixture();
 const killTimeoutFixture = createKillTimeoutFixture();
 const restartFixture = createRestartFixture();
 const inputReadyDelayMs = 2500;
+const oneSlotPercentage = `${100 / (2 * Math.max(1, cpus().length))}%`;
 const compatWatchdog = startCompatWatchdog("compat harness", 420000);
+
+const waitForSync = (predicate, timeoutMs) => {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      break;
+    }
+    Atomics.wait(synchronousWaitState, 0, 0, Math.min(2, remainingMs));
+  }
+};
 
 if (!existsSync(localBinary)) {
   throw new Error(`missing local binary: ${localBinary}; run npm run compile first`);
 }
+
+const sharedPrefixColorsRepeatCase = {
+  name: "prefix colors repeat the last explicit color",
+  upstream: "concurrently --help --prefix-colors last color repetition",
+  args: [
+    "-g",
+    "-m",
+    "1",
+    "-c",
+    "red,blue",
+    nodePrintCommand("one"),
+    nodePrintCommand("two"),
+    nodePrintCommand("three"),
+  ],
+  env: forceBasicColorEnv,
+};
+const sharedPercentageMaxProcessesCase = {
+  name: "percentage max processes deterministically serializes",
+  upstream: "concurrently --help percentage max-processes",
+  args: [
+    "--no-color",
+    "--max-processes",
+    oneSlotPercentage,
+    nodeDelayPrintCommand("slow", 100),
+    nodePrintCommand("fast"),
+  ],
+};
+const sharedRepeatedTeardownCase = {
+  name: "repeated teardown flags preserve order",
+  upstream: "concurrently --help --teardown repeatable array",
+  args: [
+    "--no-color",
+    "--teardown",
+    nodePrintCommand("first"),
+    "--teardown",
+    nodePrintCommand("second"),
+    nodePrintCommand("main"),
+  ],
+};
+const sharedFailingTeardownCase = {
+  name: "failing teardown does not change main success",
+  upstream: "concurrently --help --teardown exit status contract",
+  args: ["--no-color", "--teardown", nodeExitCommand(7), nodePrintCommand("main")],
+};
 
 const posixCases = [
   {
@@ -615,6 +672,7 @@ const posixCases = [
     args: ["-c", "#336699", "printf one"],
     env: forceTruecolorEnv,
   },
+  sharedPrefixColorsRepeatCase,
   {
     name: "colored hex prefix github actions color level",
     upstream: "supports-color GitHub Actions color level",
@@ -1318,6 +1376,8 @@ const posixCases = [
     upstream: "bin/concurrently.spec.ts --teardown",
     args: ["--no-color", "--teardown", "printf bye", "printf hey"],
   },
+  sharedRepeatedTeardownCase,
+  sharedFailingTeardownCase,
   {
     name: "env teardown logs start and exit status",
     upstream: "dist/bin/concurrently.js yargs .env('CONCURRENTLY') teardown default",
@@ -1719,6 +1779,7 @@ const posixCases = [
     upstream: "src/concurrently.spec.ts maxProcesses",
     args: ["--no-color", "-g", "-m", "1", "printf one", "printf two"],
   },
+  sharedPercentageMaxProcessesCase,
   {
     name: "compact short max processes numeric value",
     upstream: "yargs compact numeric short option value",
@@ -2031,6 +2092,7 @@ const windowsCases = [
       nodePrintCommand("fast"),
     ],
   },
+  sharedPrefixColorsRepeatCase,
   {
     name: "pad prefix uses longest label",
     upstream: "bin/concurrently.spec.ts --pad-prefix",
@@ -2103,6 +2165,7 @@ const windowsCases = [
       nodePrintCommand("two"),
     ],
   },
+  sharedPercentageMaxProcessesCase,
   {
     name: "teardown logs start and exit status",
     upstream: "bin/concurrently.spec.ts --teardown",
@@ -2113,6 +2176,8 @@ const windowsCases = [
       nodePrintCommand("hey"),
     ],
   },
+  sharedRepeatedTeardownCase,
+  sharedFailingTeardownCase,
   {
     name: "kill others default success projection",
     upstream: "bin/concurrently.spec.ts --kill-others",
@@ -2262,11 +2327,357 @@ async function runNativeApiSmoke() {
   await runNativeApiControllerIpcSmoke();
   await runNativeApiGlobalRawCommandFalseSmoke();
   await runNativeApiCommandAwareLoggerSmoke();
+  await runNativeApiDirectOptionsSmoke();
   await runNativeApiShellOptionSmoke();
   await runNativeApiCustomSpawnWithTimeout();
   await runNativeApiTeardownCustomSpawnSmoke();
   await runNativeApiNumericNameSuccessSelectorSmoke();
   await runNativeApiNumericNameDefaultInputTargetSmoke();
+}
+
+async function runNativeApiDirectOptionsSmoke() {
+  const api = require(resolve("index.js"));
+
+  await runNativeApiAdditionalArgumentsAndHideSmoke(api);
+  await runNativeApiCwdSmoke(api);
+  await runNativeApiPrefixColorSmoke(api);
+  await runNativeApiPauseInputStreamSmoke(api);
+  await runNativeApiHandleInputChildSmoke();
+  await runNativeApiLegacyKillOthersSmoke(api);
+  await runNativeApiHighLevelIpcSmoke(api);
+  await runNativeApiControllerOnFinishSmoke(api);
+  console.log("compat ok: direct native JS API options");
+}
+
+async function runNativeApiAdditionalArgumentsAndHideSmoke(api) {
+  const argumentCommand = nodeEvalCommand(
+    "process.stdout.write(process.argv.slice(1).join('|'))"
+  );
+  const expansionCases = [
+    ["{1}", "alpha beta"],
+    ["{@}", "alpha beta|gamma"],
+    ["{*}", "alpha beta gamma"],
+  ];
+
+  for (const [placeholder, expected] of expansionCases) {
+    const output = createOutputCapture();
+    await api.createConcurrently(
+      [
+        { name: "visible", command: `${argumentCommand} ${placeholder}` },
+        { name: "hidden", command: nodePrintCommand("hidden-secret") },
+      ],
+      {
+        additionalArguments: ["alpha beta", "gamma"],
+        hide: ["hidden"],
+        outputStream: output.stream,
+        prefixColors: false,
+        raw: true,
+      }
+    ).result;
+
+    assertEqual(
+      output.read(),
+      expected,
+      `native JS API additionalArguments ${placeholder} and options.hide`
+    );
+  }
+}
+
+async function runNativeApiCwdSmoke(api) {
+  const globalCwd = mkdtempSync(resolve(tmpdir(), "concurrently-ml-api-cwd-"));
+  const commandCwd = mkdtempSync(
+    resolve(tmpdir(), "concurrently-ml-api-command-cwd-")
+  );
+
+  try {
+    await api.concurrently(
+      [
+        {
+          command: nodeEvalCommand(
+            "require('node:fs').writeFileSync('global.marker','1')"
+          ),
+        },
+        {
+          command: nodeEvalCommand(
+            "require('node:fs').writeFileSync('override.marker','1')"
+          ),
+          cwd: commandCwd,
+        },
+      ],
+      {
+        cwd: globalCwd,
+        outputStream: createDiscardSink(),
+        prefixColors: false,
+        raw: true,
+      }
+    ).result;
+
+    if (!existsSync(resolve(globalCwd, "global.marker"))) {
+      throw new Error("native JS API global cwd did not reach command");
+    }
+    if (!existsSync(resolve(commandCwd, "override.marker"))) {
+      throw new Error("native JS API command cwd did not override global cwd");
+    }
+    if (existsSync(resolve(globalCwd, "override.marker"))) {
+      throw new Error("native JS API command cwd leaked back to global cwd");
+    }
+  } finally {
+    rmSync(globalCwd, { recursive: true, force: true });
+    rmSync(commandCwd, { recursive: true, force: true });
+  }
+}
+
+async function runNativeApiPrefixColorSmoke(api) {
+  const output = createOutputCapture();
+  const previousForceColor = process.env.FORCE_COLOR;
+  const previousNoColor = process.env.NO_COLOR;
+  process.env.FORCE_COLOR = "1";
+  delete process.env.NO_COLOR;
+
+  try {
+    await api.concurrently(
+      [
+        {
+          command: nodePrintCommand("prefix-color"),
+          name: "paint",
+          prefixColor: "red",
+        },
+      ],
+      { outputStream: output.stream }
+    ).result;
+  } finally {
+    restoreEnvironmentValue("FORCE_COLOR", previousForceColor);
+    restoreEnvironmentValue("NO_COLOR", previousNoColor);
+  }
+
+  if (!output.read().includes("\u001b[31m[paint]\u001b[39m prefix-color")) {
+    throw new Error(
+      `native JS API command prefixColor was ignored: ${JSON.stringify(output.read())}`
+    );
+  }
+}
+
+async function runNativeApiPauseInputStreamSmoke(api) {
+  for (const [label, pauseInputStreamOnFinish, expectedFinishPauseCalls] of [
+    ["false", false, 0],
+    ["default", undefined, 1],
+  ]) {
+    const input = new PassThrough();
+    const pause = input.pause.bind(input);
+    const unpipe = input.unpipe.bind(input);
+    let unpipeCompleted = false;
+    let finishPauseCalls = 0;
+    input.unpipe = function unpipeAndRecord(...destinations) {
+      const result = unpipe(...destinations);
+      unpipeCompleted = true;
+
+      return result;
+    };
+    input.pause = function pauseAndRecord() {
+      if (unpipeCompleted) {
+        finishPauseCalls += 1;
+      }
+
+      return pause();
+    };
+    const options = {
+      inputStream: input,
+      outputStream: createDiscardSink(),
+      prefixColors: false,
+      raw: true,
+    };
+    if (pauseInputStreamOnFinish !== undefined) {
+      options.pauseInputStreamOnFinish = pauseInputStreamOnFinish;
+    }
+
+    try {
+      await api.concurrently([nodeExitCommand(0)], options).result;
+      assertEqual(
+        finishPauseCalls,
+        expectedFinishPauseCalls,
+        `native JS API pauseInputStreamOnFinish ${label}`
+      );
+    } finally {
+      input.destroy();
+    }
+  }
+}
+
+async function runNativeApiHandleInputChildSmoke() {
+  const childSource = `
+    const api = require(${JSON.stringify(resolve("index.js"))});
+    const run = api.concurrently([${JSON.stringify(inputEchoCommand)}], {
+      handleInput: true,
+      prefixColors: false,
+      raw: true,
+    });
+    process.stdout.write("api-ready\\n");
+    run.result.then(
+      () => process.stdout.write("api-done\\n"),
+      (error) => {
+        process.stderr.write(String(error && error.stack ? error.stack : error));
+        process.exitCode = 1;
+      }
+    );
+  `;
+  const result = await run(process.execPath, ["-e", childSource], {
+    inputWrites: [{ afterStdout: "api-ready\n", input: "direct-input\n" }],
+    name: "native JS API handleInput child",
+    side: "local",
+    timeoutMs: 10000,
+  });
+
+  assertEqual(
+    result.status,
+    0,
+    `native JS API handleInput child status: ${result.stderr}`
+  );
+  if (!result.stdout.includes("direct-input") || !result.stdout.includes("api-done")) {
+    throw new Error(
+      `native JS API handleInput child missed piped input: ${JSON.stringify(result.stdout)}`
+    );
+  }
+}
+
+async function runNativeApiLegacyKillOthersSmoke(api) {
+  const events = await api.concurrently(
+    [nodeDelayPrintCommand("done", 100), nodeHangCommand()],
+    {
+      killOthers: ["success"],
+      outputStream: createDiscardSink(),
+      prefixColors: false,
+      raw: true,
+      successCondition: "first",
+    }
+  ).result;
+  const killedEvent = events.find((event) => event.index === 1);
+
+  assertEqual(events.length, 2, "native JS API legacy killOthers event count");
+  assertEqual(killedEvent?.killed, true, "native JS API legacy killOthers alias");
+}
+
+async function runNativeApiHighLevelIpcSmoke(api) {
+  const childSource =
+    "process.on('message',message=>process.send({pong:message.ping},()=>process.exit(0)));setTimeout(()=>process.exit(7),3000)";
+  const run = api.concurrently(
+    [
+      {
+        command: nodeEvalCommand(childSource),
+        ipc: 3,
+        name: "ipc",
+      },
+    ],
+    {
+      outputStream: createDiscardSink(),
+      prefixColors: false,
+      raw: true,
+    }
+  );
+  const incoming = [];
+  run.commands[0].messages.incoming.subscribe({
+    next(event) {
+      incoming.push(event.message);
+    },
+  });
+
+  await run.commands[0].send({ ping: 17 });
+  const events = await run.result;
+
+  assertEqual(events[0]?.exitCode, 0, "native JS API high-level IPC exit code");
+  if (!incoming.some((message) => message && message.pong === 17)) {
+    throw new Error(
+      `native JS API high-level IPC missing response: ${JSON.stringify(incoming)}`
+    );
+  }
+}
+
+async function runNativeApiControllerOnFinishSmoke(api) {
+  let allowOnFinish;
+  const onFinishGate = new Promise((resolveGate) => {
+    allowOnFinish = resolveGate;
+  });
+  let onFinishStarted = false;
+  let onFinishCompleted = false;
+  let resultSettled = false;
+  const result = api.concurrently([nodeExitCommand(0)], {
+    controllers: [
+      {
+        handle(commands) {
+          return {
+            commands,
+            async onFinish() {
+              onFinishStarted = true;
+              await onFinishGate;
+              onFinishCompleted = true;
+            },
+          };
+        },
+      },
+    ],
+    outputStream: createDiscardSink(),
+    prefixColors: false,
+    raw: true,
+  }).result.then((events) => {
+    resultSettled = true;
+
+    return events;
+  });
+
+  try {
+    await waitFor(
+      () => onFinishStarted,
+      5000,
+      "native JS API controller onFinish did not start"
+    );
+    await new Promise((resolveTurn) => setImmediate(resolveTurn));
+    assertEqual(
+      resultSettled,
+      false,
+      "native JS API result settled before controller onFinish"
+    );
+  } finally {
+    allowOnFinish();
+  }
+
+  await result;
+  assertEqual(
+    onFinishCompleted,
+    true,
+    "native JS API controller async onFinish completion"
+  );
+}
+
+function createOutputCapture() {
+  let output = "";
+  const stream = new Writable({
+    write(chunk, _encoding, callback) {
+      output += chunk.toString();
+      callback();
+    },
+  });
+
+  return {
+    stream,
+    read() {
+      return output;
+    },
+  };
+}
+
+function createDiscardSink() {
+  return new Writable({
+    write(_chunk, _encoding, callback) {
+      callback();
+    },
+  });
+}
+
+function restoreEnvironmentValue(name, value) {
+  if (value === undefined) {
+    delete process.env[name];
+  } else {
+    process.env[name] = value;
+  }
 }
 
 let nativeApiCustomSpawnPhase = "not started";
@@ -2614,13 +3025,9 @@ async function runNativeApiControllerTemplateIndexAndStringColorSmoke() {
       },
     ],
   });
-  if (previousForceColor === undefined) {
-    delete process.env.FORCE_COLOR;
-  } else {
-    process.env.FORCE_COLOR = previousForceColor;
-  }
+  restoreEnvironmentValue("FORCE_COLOR", previousForceColor);
   const events = await run.result;
-  const plainOutput = output.replace(/\u001b\[[0-9;]*m/g, "");
+  const plainOutput = stripAnsiColors(output);
 
   assertEqual(events.length, 1, "native JS API filtered template event count");
   assertEqual(events[0].index, 1, "native JS API filtered template event index");
@@ -2793,15 +3200,39 @@ async function runNativeApiCommandAwareLoggerSmoke() {
 
 async function runNativeApiCustomSpawnSmoke() {
   const api = require(resolve("index.js"));
+  const sink = createDiscardSink();
+
+  await runNativeApiCustomSpawnBasicOutputSmoke(api);
+  await runNativeApiCustomSpawnDefaultOutputSmoke(api);
+  await runNativeApiCustomSpawnPrefixFormatsSmoke(api);
+  await runNativeApiCustomSpawnInputAndGlobalEventsSmoke(api);
+  await runNativeApiCustomSpawnColorsSmoke(api);
+  await runNativeApiCustomSpawnCommandPrefixesSmoke(api);
+  await runNativeApiCustomSpawnGroupedOutputSmoke(api);
+  await runNativeApiCustomSpawnTimingsAndRoutingSmoke(api);
+  await runNativeApiCustomSpawnMarkerRestartSmoke(api);
+  await runNativeApiCustomSpawnRestartOptionsSmoke(api, sink);
+  await runNativeApiCustomSpawnRestartThrowSmoke(api, sink);
+  await runNativeApiCustomSpawnStartupThrowSmoke(api, sink);
+  await runNativeApiCustomSpawnCompletionPolicySmoke(api, sink);
+  await runNativeApiCustomSpawnKillPolicySmoke(api, sink);
+  await runNativeApiCustomSpawnErrorsSmoke(api, sink);
+  await runNativeApiCustomSpawnStdinForwardingSmoke(api);
+  runNativeApiCustomSpawnClosedStdinSmoke();
+  await runNativeApiCustomSpawnSchedulingSmoke(api, sink);
+  await runNativeApiCustomSpawnPendingRestartSmoke(api);
+  await runNativeApiCustomSpawnKillTimeoutSmoke(api, sink);
+  runNativeApiCustomSpawnSignalSmoke();
+  runNativeApiCustomSpawnSignalPendingRestartSmoke();
+  runNativeApiCustomSpawnRestartTimerBackstopSmoke();
+  await runNativeApiCustomSpawnHiddenCommandsSmoke(api);
+  console.log("compat ok: native JS API custom spawn");
+}
+
+async function runNativeApiCustomSpawnBasicOutputSmoke(api) {
   nativeApiCustomSpawnProgress("basic output");
-  let output = "";
+  const output = createOutputCapture();
   const calls = [];
-  const sink = new Writable({
-    write(chunk, _encoding, callback) {
-      output += chunk.toString();
-      callback();
-    },
-  });
   const run = api.concurrently(
     [
       {
@@ -2811,7 +3242,7 @@ async function runNativeApiCustomSpawnSmoke() {
       },
     ],
     {
-      outputStream: sink,
+      outputStream: output.stream,
       env: { CONCURRENTLY_ML_PRIVATE_ENV: "spawn-secret-do-not-leak" },
       shell: nativeApiExplicitShell,
       spawn(command, options) {
@@ -2843,17 +3274,20 @@ async function runNativeApiCustomSpawnSmoke() {
   if (JSON.stringify(events).includes("spawn-secret-do-not-leak")) {
     throw new Error("native JS API custom spawn leaked spawn options in close event");
   }
-  if (!output.includes("spawn-ok")) {
+  const capturedOutput = output.read();
+  if (!capturedOutput.includes("spawn-ok")) {
     throw new Error(
-      `native JS API custom spawn did not route output: ${JSON.stringify(output)}`
+      `native JS API custom spawn did not route output: ${JSON.stringify(capturedOutput)}`
     );
   }
-  if (!output.includes("[0] spawn-ok")) {
+  if (!capturedOutput.includes("[0] spawn-ok")) {
     throw new Error(
-      `native JS API custom spawn did not format output: ${JSON.stringify(output)}`
+      `native JS API custom spawn did not format output: ${JSON.stringify(capturedOutput)}`
     );
   }
+}
 
+async function runNativeApiCustomSpawnDefaultOutputSmoke(api) {
   nativeApiCustomSpawnProgress("default output");
   let defaultOutput = "";
   const originalStdoutWrite = process.stdout.write;
@@ -2879,7 +3313,9 @@ async function runNativeApiCustomSpawnSmoke() {
       `native JS API custom spawn dropped default output: ${JSON.stringify(defaultOutput)}`
     );
   }
+}
 
+async function runNativeApiCustomSpawnPrefixFormatsSmoke(api) {
   nativeApiCustomSpawnProgress("prefix formats");
   let indexPrefixOutput = "";
   const indexPrefixSink = new Writable({
@@ -2984,7 +3420,9 @@ async function runNativeApiCustomSpawnSmoke() {
       `native JS API custom spawn command-level raw changed line state: ${JSON.stringify(mixedRawOutput)}`
     );
   }
+}
 
+async function runNativeApiCustomSpawnInputAndGlobalEventsSmoke(api) {
   nativeApiCustomSpawnProgress("input and global events");
   let globalPartialOutput = "";
   const globalPartialInput = new PassThrough();
@@ -3044,16 +3482,8 @@ async function runNativeApiCustomSpawnSmoke() {
       },
     }).result;
   } finally {
-    if (previousForceColor === undefined) {
-      delete process.env.FORCE_COLOR;
-    } else {
-      process.env.FORCE_COLOR = previousForceColor;
-    }
-    if (previousNoColor === undefined) {
-      delete process.env.NO_COLOR;
-    } else {
-      process.env.NO_COLOR = previousNoColor;
-    }
+    restoreEnvironmentValue("FORCE_COLOR", previousForceColor);
+    restoreEnvironmentValue("NO_COLOR", previousNoColor);
   }
   if (!colorPrefixOutput.includes("\u001b[31m[0]\u001b[39m color-prefix")) {
     throw new Error(
@@ -3087,24 +3517,20 @@ async function runNativeApiCustomSpawnSmoke() {
     noColorGlobalInput.end("hello");
     await noColorGlobalRun.result;
   } finally {
-    if (previousForceColor === undefined) {
-      delete process.env.FORCE_COLOR;
-    } else {
-      process.env.FORCE_COLOR = previousForceColor;
-    }
-    if (previousNoColor === undefined) {
-      delete process.env.NO_COLOR;
-    } else {
-      process.env.NO_COLOR = previousNoColor;
-    }
+    restoreEnvironmentValue("FORCE_COLOR", previousForceColor);
+    restoreEnvironmentValue("NO_COLOR", previousNoColor);
   }
   if (noColorGlobalOutput.includes("\u001b[")) {
     throw new Error(
       `native JS API custom spawn no-color global output contained ANSI: ${JSON.stringify(noColorGlobalOutput)}`
     );
   }
+}
 
+async function runNativeApiCustomSpawnColorsSmoke(api) {
   nativeApiCustomSpawnProgress("colors");
+  const previousForceColor = process.env.FORCE_COLOR;
+  const previousNoColor = process.env.NO_COLOR;
   let autoColorPrefixOutput = "";
   const autoColorPrefixSink = new Writable({
     write(chunk, _encoding, callback) {
@@ -3123,16 +3549,8 @@ async function runNativeApiCustomSpawnSmoke() {
       },
     }).result;
   } finally {
-    if (previousForceColor === undefined) {
-      delete process.env.FORCE_COLOR;
-    } else {
-      process.env.FORCE_COLOR = previousForceColor;
-    }
-    if (previousNoColor === undefined) {
-      delete process.env.NO_COLOR;
-    } else {
-      process.env.NO_COLOR = previousNoColor;
-    }
+    restoreEnvironmentValue("FORCE_COLOR", previousForceColor);
+    restoreEnvironmentValue("NO_COLOR", previousNoColor);
   }
   if (!autoColorPrefixOutput.includes("\u001b[36m[0]\u001b[39m auto-color-prefix")) {
     throw new Error(
@@ -3171,16 +3589,8 @@ async function runNativeApiCustomSpawnSmoke() {
       }
     ).result;
   } finally {
-    if (previousForceColor === undefined) {
-      delete process.env.FORCE_COLOR;
-    } else {
-      process.env.FORCE_COLOR = previousForceColor;
-    }
-    if (previousNoColor === undefined) {
-      delete process.env.NO_COLOR;
-    } else {
-      process.env.NO_COLOR = previousNoColor;
-    }
+    restoreEnvironmentValue("FORCE_COLOR", previousForceColor);
+    restoreEnvironmentValue("NO_COLOR", previousNoColor);
   }
   if (!autoColorControllerOutput.includes("\u001b[36m[1]\u001b[39m second")) {
     throw new Error(
@@ -3219,16 +3629,8 @@ async function runNativeApiCustomSpawnSmoke() {
       }
     ).result;
   } finally {
-    if (previousForceColor === undefined) {
-      delete process.env.FORCE_COLOR;
-    } else {
-      process.env.FORCE_COLOR = previousForceColor;
-    }
-    if (previousNoColor === undefined) {
-      delete process.env.NO_COLOR;
-    } else {
-      process.env.NO_COLOR = previousNoColor;
-    }
+    restoreEnvironmentValue("FORCE_COLOR", previousForceColor);
+    restoreEnvironmentValue("NO_COLOR", previousNoColor);
   }
   if (!explicitColorControllerOutput.includes("\u001b[34m[1]\u001b[39m second")) {
     throw new Error(
@@ -3289,16 +3691,8 @@ async function runNativeApiCustomSpawnSmoke() {
         }
       ).result;
     } finally {
-      if (previousForceColor === undefined) {
-        delete process.env.FORCE_COLOR;
-      } else {
-        process.env.FORCE_COLOR = previousForceColor;
-      }
-      if (previousNoColor === undefined) {
-        delete process.env.NO_COLOR;
-      } else {
-        process.env.NO_COLOR = previousNoColor;
-      }
+      restoreEnvironmentValue("FORCE_COLOR", previousForceColor);
+      restoreEnvironmentValue("NO_COLOR", previousNoColor);
     }
     if (!resetPrefixOutput.includes(`\u001b[0m[0]\u001b[0m ${expectedLabel}`)) {
       throw new Error(
@@ -3328,16 +3722,8 @@ async function runNativeApiCustomSpawnSmoke() {
         },
       }).result;
     } finally {
-      if (previousForceColor === undefined) {
-        delete process.env.FORCE_COLOR;
-      } else {
-        process.env.FORCE_COLOR = previousForceColor;
-      }
-      if (previousNoColor === undefined) {
-        delete process.env.NO_COLOR;
-      } else {
-        process.env.NO_COLOR = previousNoColor;
-      }
+      restoreEnvironmentValue("FORCE_COLOR", previousForceColor);
+      restoreEnvironmentValue("NO_COLOR", previousNoColor);
     }
     if (!hexColorPrefixOutput.includes(expectedPrefix)) {
       throw new Error(
@@ -3374,16 +3760,8 @@ async function runNativeApiCustomSpawnSmoke() {
     } else {
       delete process.stdout.isTTY;
     }
-    if (previousForceColor === undefined) {
-      delete process.env.FORCE_COLOR;
-    } else {
-      process.env.FORCE_COLOR = previousForceColor;
-    }
-    if (previousNoColor === undefined) {
-      delete process.env.NO_COLOR;
-    } else {
-      process.env.NO_COLOR = previousNoColor;
-    }
+    restoreEnvironmentValue("FORCE_COLOR", previousForceColor);
+    restoreEnvironmentValue("NO_COLOR", previousNoColor);
   }
   if (capturedColorOutput.includes("\u001b[")) {
     throw new Error(
@@ -3463,7 +3841,9 @@ async function runNativeApiCustomSpawnSmoke() {
       `native JS API custom spawn ignored static prefix: ${JSON.stringify(staticPrefixOutput)}`
     );
   }
+}
 
+async function runNativeApiCustomSpawnCommandPrefixesSmoke(api) {
   nativeApiCustomSpawnProgress("command prefixes");
   let timePrefixOutput = "";
   const timePrefixSink = new Writable({
@@ -3556,7 +3936,9 @@ async function runNativeApiCustomSpawnSmoke() {
       `native JS API custom spawn ignored padded prefix: ${JSON.stringify(paddedPrefixOutput)}`
     );
   }
+}
 
+async function runNativeApiCustomSpawnGroupedOutputSmoke(api) {
   nativeApiCustomSpawnProgress("grouped output");
   let groupedOutput = "";
   const groupedSink = new Writable({
@@ -3663,7 +4045,9 @@ async function runNativeApiCustomSpawnSmoke() {
   } finally {
     rmSync(groupedRestartRoot, { recursive: true, force: true });
   }
+}
 
+async function runNativeApiCustomSpawnTimingsAndRoutingSmoke(api) {
   nativeApiCustomSpawnProgress("timings and stream routing");
   let timingsOutput = "";
   const timingsSink = new Writable({
@@ -3786,6 +4170,33 @@ async function runNativeApiCustomSpawnSmoke() {
     );
   }
 
+  let pendingWrites = 0;
+  let flushedOutput = "";
+  const flushingSink = new Writable({
+    write(chunk, _encoding, callback) {
+      pendingWrites += 1;
+      setTimeout(() => {
+        flushedOutput += chunk.toString();
+        pendingWrites -= 1;
+        callback();
+      }, 10);
+    },
+  });
+  await api.concurrently(["node -e \"process.stdout.write('flush-ok')\""], {
+    outputStream: flushingSink,
+    spawn(command, options) {
+      return spawn(command, [], options);
+    },
+  }).result;
+  assertEqual(pendingWrites, 0, "native JS API custom spawn pending output writes");
+  if (!flushedOutput.includes("flush-ok")) {
+    throw new Error(
+      `native JS API custom spawn did not flush output: ${JSON.stringify(flushedOutput)}`
+    );
+  }
+}
+
+async function runNativeApiCustomSpawnMarkerRestartSmoke(api) {
   nativeApiCustomSpawnProgress("restart policy");
   nativeApiCustomSpawnProgress("restart policy marker restart");
   const restartRoot = mkdtempSync(resolve(tmpdir(), "concurrently-ml-spawn-restart-"));
@@ -3840,7 +4251,10 @@ async function runNativeApiCustomSpawnSmoke() {
   } finally {
     rmSync(restartRoot, { recursive: true, force: true });
   }
-  nativeApiCustomSpawnProgress("restart policy exponential delay");
+}
+
+async function runNativeApiCustomSpawnRestartOptionsSmoke(api, sink) {
+  nativeApiCustomSpawnProgress("restart policy options");
   const exponentialStartedAt = Date.now();
   let exponentialCalls = 0;
   const exponentialEvents = await api.concurrently(
@@ -3869,6 +4283,31 @@ async function runNativeApiCustomSpawnSmoke() {
     throw new Error("native JS API custom spawn exponential restart did not delay");
   }
 
+  let fractionalRestartRuns = 0;
+  const fractionalRestartEvents = await api.concurrently(
+    ["node -e \"process.exit(1)\""],
+    {
+      outputStream: sink,
+      restartTries: 1.5,
+      spawn(command, options) {
+        fractionalRestartRuns += 1;
+        return spawn(command, [], options);
+      },
+    }
+  ).result;
+  assertEqual(
+    fractionalRestartRuns,
+    2,
+    "native JS API custom spawn fractional restart run count"
+  );
+  assertEqual(
+    fractionalRestartEvents.length,
+    0,
+    "native JS API custom spawn fractional restart event count"
+  );
+}
+
+async function runNativeApiCustomSpawnRestartThrowSmoke(api, sink) {
   nativeApiCustomSpawnProgress("restart policy restart throw");
   let restartThrowPid;
   let restartThrowCalls = 0;
@@ -3911,7 +4350,9 @@ async function runNativeApiCustomSpawnSmoke() {
       forceKillProcessForTest(restartThrowPid);
     }
   }
+}
 
+async function runNativeApiCustomSpawnStartupThrowSmoke(api, sink) {
   nativeApiCustomSpawnProgress("restart policy startup throw");
   const startupThrowRoot = mkdtempSync(
     resolve(tmpdir(), "concurrently-ml-spawn-startup-throw-")
@@ -3940,9 +4381,9 @@ async function runNativeApiCustomSpawnSmoke() {
             shell: false,
           });
           startupThrowPid = child.pid;
-          const startedAt = Date.now();
-          while (!existsSync(startupThrowReady) && Date.now() - startedAt < 1000) {
-          }
+
+          waitForSync(() => existsSync(startupThrowReady), 1000);
+
           return child;
         },
       }
@@ -3964,7 +4405,36 @@ async function runNativeApiCustomSpawnSmoke() {
     }
     rmSync(startupThrowRoot, { recursive: true, force: true });
   }
+}
 
+async function runNativeApiCustomSpawnCompletionPolicySmoke(api, sink) {
+  nativeApiCustomSpawnProgress("completion policy");
+  const numericSuccessEvents = await api.concurrently(
+    [
+      { name: "1", command: "node -e \"process.exit(0)\"" },
+      "node -e \"process.exit(7)\"",
+    ],
+    {
+      outputStream: sink,
+      successCondition: "command-1",
+      spawn(command, options) {
+        return spawn(command, [], options);
+      },
+    }
+  ).result.then(
+    () => {
+      throw new Error("native JS API custom spawn numeric success selector resolved");
+    },
+    (events) => events
+  );
+  assertEqual(
+    numericSuccessEvents.length,
+    2,
+    "native JS API custom spawn numeric success event count"
+  );
+}
+
+async function runNativeApiCustomSpawnKillPolicySmoke(api, sink) {
   nativeApiCustomSpawnProgress("kill policy");
   const killCalls = [];
   const killRun = api.concurrently(
@@ -4057,7 +4527,9 @@ async function runNativeApiCustomSpawnSmoke() {
       forceKillProcessForTest(invalidKillSignalPid);
     }
   }
+}
 
+async function runNativeApiCustomSpawnErrorsSmoke(api, sink) {
   nativeApiCustomSpawnProgress("spawn errors");
   const spawnErrorEvents = await api.concurrently(["ignored"], {
     raw: true,
@@ -4303,7 +4775,9 @@ async function runNativeApiCustomSpawnSmoke() {
       rmSync(killTreeNoPathRoot, { recursive: true, force: true });
     }
   }
+}
 
+async function runNativeApiCustomSpawnStdinForwardingSmoke(api) {
   nativeApiCustomSpawnProgress("stdin forwarding");
   let stdinEofOutput = "";
   const stdinEofSink = new Writable({
@@ -4575,10 +5049,7 @@ async function runNativeApiCustomSpawnSmoke() {
   );
   missingInputTarget.end("hello");
   await missingInputTargetRun.result;
-  const plainMissingInputTargetOutput = missingInputTargetOutput.replace(
-    /\u001b\[[0-9;]*m/g,
-    ""
-  );
+  const plainMissingInputTargetOutput = stripAnsiColors(missingInputTargetOutput);
   if (
     !plainMissingInputTargetOutput.includes(
       '--> Unable to find command "missing", or it has no stdin open'
@@ -4681,55 +5152,10 @@ async function runNativeApiCustomSpawnSmoke() {
       `native JS API custom spawn numeric default target used public index: ${JSON.stringify(numericDefaultInputOutput)}`
     );
   }
+}
 
-  const numericSuccessEvents = await api.concurrently(
-    [
-      { name: "1", command: "node -e \"process.exit(0)\"" },
-      "node -e \"process.exit(7)\"",
-    ],
-    {
-      outputStream: sink,
-      successCondition: "command-1",
-      spawn(command, options) {
-        return spawn(command, [], options);
-      },
-    }
-  ).result.then(
-    () => {
-      throw new Error("native JS API custom spawn numeric success selector resolved");
-    },
-    (events) => events
-  );
-  assertEqual(
-    numericSuccessEvents.length,
-    2,
-    "native JS API custom spawn numeric success event count"
-  );
-
-  let fractionalRestartRuns = 0;
-  const fractionalRestartEvents = await api.concurrently(
-    ["node -e \"process.exit(1)\""],
-    {
-      outputStream: sink,
-      restartTries: 1.5,
-      spawn(command, options) {
-        fractionalRestartRuns += 1;
-        return spawn(command, [], options);
-      },
-    }
-  ).result;
-  assertEqual(
-    fractionalRestartRuns,
-    2,
-    "native JS API custom spawn fractional restart run count"
-  );
-  assertEqual(
-    fractionalRestartEvents.length,
-    0,
-    "native JS API custom spawn fractional restart event count"
-  );
-
-  nativeApiCustomSpawnProgress("input edge cases");
+function runNativeApiCustomSpawnClosedStdinSmoke() {
+  nativeApiCustomSpawnProgress("closed stdin");
   const closedStdinCode = `
     const { spawn } = require("node:child_process");
     const { PassThrough, Writable } = require("node:stream");
@@ -4779,32 +5205,10 @@ async function runNativeApiCustomSpawnSmoke() {
     "done",
     "native JS API custom spawn closed stdin completion"
   );
+}
 
-  let pendingWrites = 0;
-  let flushedOutput = "";
-  const flushingSink = new Writable({
-    write(chunk, _encoding, callback) {
-      pendingWrites += 1;
-      setTimeout(() => {
-        flushedOutput += chunk.toString();
-        pendingWrites -= 1;
-        callback();
-      }, 10);
-    },
-  });
-  await api.concurrently(["node -e \"process.stdout.write('flush-ok')\""], {
-    outputStream: flushingSink,
-    spawn(command, options) {
-      return spawn(command, [], options);
-    },
-  }).result;
-  assertEqual(pendingWrites, 0, "native JS API custom spawn pending output writes");
-  if (!flushedOutput.includes("flush-ok")) {
-    throw new Error(
-      `native JS API custom spawn did not flush output: ${JSON.stringify(flushedOutput)}`
-    );
-  }
-
+async function runNativeApiCustomSpawnSchedulingSmoke(api, sink) {
+  nativeApiCustomSpawnProgress("scheduling");
   const percentCalls = [];
   const percentRun = api.concurrently(
     [
@@ -4848,12 +5252,18 @@ async function runNativeApiCustomSpawnSmoke() {
   const queuedEvents = await queuedRun.result.catch((events) => events);
   assertEqual(queuedCalls.length, 2, "native JS API custom spawn queued call count");
   assertEqual(queuedEvents.length, 2, "native JS API custom spawn queued event count");
+}
 
+async function runNativeApiCustomSpawnPendingRestartSmoke(api) {
   const killOthersRestartRoot = mkdtempSync(
     resolve(tmpdir(), "concurrently-ml-spawn-kill-others-restart-")
   );
   try {
     const killOthersRestartMarker = resolve(killOthersRestartRoot, "marker");
+    const killOthersRestartReadyMarker = resolve(
+      killOthersRestartRoot,
+      "restart-ready"
+    );
     let killOthersRestartOutput = "";
     const killOthersRestartSink = new Writable({
       write(chunk, _encoding, callback) {
@@ -4866,26 +5276,39 @@ async function runNativeApiCustomSpawnSmoke() {
       JSON.stringify(
         "const fs=require('node:fs');const f=process.env.CONCURRENTLY_ML_KILL_OTHERS_RESTART_MARKER;if(!fs.existsSync(f)){fs.writeFileSync(f,'1');process.exit(1)}else{process.exit(0)}"
       );
+    // Wait until the failed child's close listeners have armed its restart
+    // timer before the sibling exercises kill-others cancellation.
     const killOthersRestartSuccessCommand =
       "node -e " +
       JSON.stringify(
-        "const fs=require('node:fs');const f=process.env.CONCURRENTLY_ML_KILL_OTHERS_RESTART_MARKER;const deadline=Date.now()+2000;const poll=()=>{if(fs.existsSync(f))process.exit(0);if(Date.now()>deadline)process.exit(2);setTimeout(poll,10)};poll()"
+        "const fs=require('node:fs');const f=process.env.CONCURRENTLY_ML_KILL_OTHERS_RESTART_READY;const deadline=Date.now()+2000;const poll=()=>{if(fs.existsSync(f))process.exit(0);if(Date.now()>deadline)process.exit(2);setTimeout(poll,10)};poll()"
       );
     let killOthersRestartCalls = 0;
     const killOthersRestartRun = api.concurrently(
       [killOthersRestartCommand, killOthersRestartSuccessCommand],
       {
-        env: { CONCURRENTLY_ML_KILL_OTHERS_RESTART_MARKER: killOthersRestartMarker },
+        env: {
+          CONCURRENTLY_ML_KILL_OTHERS_RESTART_MARKER: killOthersRestartMarker,
+          CONCURRENTLY_ML_KILL_OTHERS_RESTART_READY:
+            killOthersRestartReadyMarker,
+        },
         killOthersOn: ["success"],
         maxProcesses: 2,
         outputStream: killOthersRestartSink,
         restartDelay: 1000,
         restartTries: 1,
         spawn(command, options) {
+          const child = spawn(command, [], options);
           if (command === killOthersRestartCommand) {
             killOthersRestartCalls += 1;
+            if (killOthersRestartCalls === 1) {
+              child.once("close", () =>
+                setImmediate(() => writeFileSync(killOthersRestartReadyMarker, "1"))
+              );
+            }
           }
-          return spawn(command, [], options);
+
+          return child;
         },
       }
     );
@@ -4905,10 +5328,7 @@ async function runNativeApiCustomSpawnSmoke() {
         `native JS API custom spawn skipped pending restart after kill-others: ${JSON.stringify(killOthersRestartEvents)}`
       );
     }
-    const plainKillOthersRestartOutput = killOthersRestartOutput.replace(
-      /\u001b\[[0-9;]*m/g,
-      ""
-    );
+    const plainKillOthersRestartOutput = stripAnsiColors(killOthersRestartOutput);
     if (!plainKillOthersRestartOutput.includes("--> Sending SIGTERM to other processes..")) {
       throw new Error(
         `native JS API custom spawn did not log kill-others cancellation: ${JSON.stringify(killOthersRestartOutput)}`
@@ -4917,7 +5337,9 @@ async function runNativeApiCustomSpawnSmoke() {
   } finally {
     rmSync(killOthersRestartRoot, { recursive: true, force: true });
   }
+}
 
+async function runNativeApiCustomSpawnKillTimeoutSmoke(api, sink) {
   nativeApiCustomSpawnProgress("kill timeout");
   nativeApiCustomSpawnProgress("kill timeout force kill");
   const killTimeoutRun = api.concurrently(
@@ -5044,7 +5466,9 @@ async function runNativeApiCustomSpawnSmoke() {
   } finally {
     rmSync(signalKillTimeoutBackstopRoot, { recursive: true, force: true });
   }
+}
 
+function runNativeApiCustomSpawnSignalSmoke() {
   nativeApiCustomSpawnProgress("signal restart");
   const signalRestartRoot = mkdtempSync(
     resolve(tmpdir(), "concurrently-ml-spawn-signal-restart-")
@@ -5248,7 +5672,9 @@ async function runNativeApiCustomSpawnSmoke() {
   } finally {
     rmSync(signalChildRoot, { recursive: true, force: true });
   }
+}
 
+function runNativeApiCustomSpawnSignalPendingRestartSmoke() {
   nativeApiCustomSpawnProgress("signal pending restart");
   const signalPendingRestartCode = `
     const { Writable } = require("node:stream");
@@ -5287,7 +5713,9 @@ async function runNativeApiCustomSpawnSmoke() {
     "done",
     "native JS API custom spawn signal pending restart completion"
   );
+}
 
+function runNativeApiCustomSpawnRestartTimerBackstopSmoke() {
   nativeApiCustomSpawnProgress("restart timer backstop");
   const restartTimerBackstopCode = `
     const { Writable } = require("node:stream");
@@ -5328,7 +5756,9 @@ async function runNativeApiCustomSpawnSmoke() {
     "done",
     "native JS API custom spawn restart timer completion"
   );
+}
 
+async function runNativeApiCustomSpawnHiddenCommandsSmoke(api) {
   nativeApiCustomSpawnProgress("hidden commands");
   let hiddenOutput = "";
   const hiddenSink = new Writable({
@@ -5375,7 +5805,6 @@ async function runNativeApiCustomSpawnSmoke() {
     "",
     "native JS API custom spawn hidden raw stdout"
   );
-  console.log("compat ok: native JS API custom spawn");
 }
 
 async function runNativeApiShellOptionSmoke() {
@@ -5901,6 +6330,7 @@ function forceKillProcessForTest(pid) {
   try {
     process.kill(pid, "SIGKILL");
   } catch (_error) {
+    // The process may already have exited.
   }
 }
 
@@ -6108,7 +6538,7 @@ function runAsync(command, args, testCase) {
     let stdout = "";
     let stderr = "";
     let settled = false;
-    let inputTimers = [];
+    const inputTimers = [];
     let signalTimer;
     const timeout = setTimeout(() => {
       if (settled) {
@@ -6664,13 +7094,9 @@ function normalizeKilledSleepStatus(stdout) {
       "[$1] sleep 1 exited with code <killed>"
     )
     .replace(
-      /^--> │  │ <duration> │ (?:0|SIGTERM) │ true │ sleep 1 │$/gm,
+      /^--> │[ ]{2}│ <duration> │ (?:0|SIGTERM) │ true │ sleep 1 │$/gm,
       "--> │  │ <duration> │ <killed> │ true │ sleep 1 │"
     );
-}
-
-function normalizeDurationSortedTimingsStdout(stdout) {
-  return sortNormalizedTimingsTableRows(normalizeTimingsStdout(stdout));
 }
 
 function normalizeFractionalMaxProcessesStdout(stdout) {

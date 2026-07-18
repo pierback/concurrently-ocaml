@@ -3,11 +3,7 @@
 const { constants } = require("node:os");
 const { runNative } = require("../lib/native");
 
-const signalExitCodes = new Map([
-  ["SIGHUP", 129],
-  ["SIGINT", 130],
-  ["SIGTERM", 143],
-]);
+const forwardedSignals = ["SIGHUP", "SIGINT", "SIGTERM"];
 
 const signalExitCode = (signal) => {
   const signalNumber = constants.signals[signal];
@@ -20,7 +16,7 @@ const signalExitCode = (signal) => {
 
 let child;
 try {
-  child = runForPlatform(process.argv.slice(2));
+  child = runNative(process.argv.slice(2));
 } catch (error) {
   console.error(error.message);
   process.exit(127);
@@ -34,7 +30,7 @@ const forwardSignal = (signal) => {
   }
 };
 
-for (const signal of signalExitCodes.keys()) {
+for (const signal of forwardedSignals) {
   process.on(signal, () => forwardSignal(signal));
 }
 
@@ -52,7 +48,3 @@ child.on("exit", (code, signal) => {
 
   process.exit(code ?? 1);
 });
-
-function runForPlatform(args) {
-  return runNative(args);
-}

@@ -706,7 +706,7 @@ function normalizeApiOptions(options) {
 }
 
 function runSpawnApi(commands, onFinishCallbacks, options) {
-  const output = spawnApiOutput(spawnApiOutputSink(options));
+  const output = outputWriter(spawnApiOutputSink(options));
   const closeEvents = [];
   const hiddenPositions = new Set(hiddenCommands(commands, options));
   const outputState = spawnApiOutputState(commands, options);
@@ -715,7 +715,6 @@ function runSpawnApi(commands, onFinishCallbacks, options) {
     settled: false,
     stopStarting: false,
     timers: new Set(),
-    killTimers: new Set(),
     restartTimers: new Map(),
     pendingFailure: undefined,
     signalKillScheduled: false,
@@ -927,7 +926,6 @@ function subscribeSpawnApiCommand(command, state) {
       spawnApiRestartCommand(command, {
         input,
         options,
-        output,
         outputState,
         restartFormatter: hidden ? undefined : formatter,
         restartDelay,
@@ -999,10 +997,6 @@ function spawnApiOutputSink(options) {
       process.stdout.write(chunk, callback);
     },
   };
-}
-
-function spawnApiOutput(outputSink) {
-  return outputWriter(outputSink);
 }
 
 function outputWriter(outputSink) {
@@ -1314,10 +1308,6 @@ function spawnApiNextAutoPrefixColor(availableAutoColors, lastColor) {
     nextColor = String(availableAutoColors.shift());
   }
   return nextColor;
-}
-
-function spawnApiColorsEnabled(options) {
-  return spawnApiColorLevel(options) > 0;
 }
 
 function spawnApiColorLevel(options) {
@@ -1984,7 +1974,6 @@ function spawnApiRestartCommand(command, state) {
   const {
     input,
     options,
-    output,
     outputState,
     fail,
     restartFormatter,
@@ -2129,7 +2118,7 @@ function spawnApiKillOthers(running, options, scheduler, signal, output, outputS
   if (!timeoutMs || killSignal === "SIGKILL") {
     return;
   }
-  const timer = spawnApiSetTimer(scheduler, () => {
+  spawnApiSetTimer(scheduler, () => {
     const stillKillable = killTargets
       .filter(
         (target) =>
@@ -2151,7 +2140,6 @@ function spawnApiKillOthers(running, options, scheduler, signal, output, outputS
       runningCommand.kill("SIGKILL");
     }
   }, timeoutMs);
-  scheduler.killTimers.add(timer);
 }
 
 function spawnApiCleanupKilledCommand(command) {
@@ -2245,7 +2233,6 @@ function spawnApiClearTimers(scheduler) {
     clearTimeout(timer);
   }
   scheduler.timers.clear();
-  scheduler.killTimers.clear();
   scheduler.restartTimers.clear();
 }
 
@@ -2778,16 +2765,9 @@ function runOnFinishCallbacks(result, onFinishCallbacks) {
   if (onFinishCallbacks.length === 0) {
     return result;
   }
-  const runCallbacks = () =>
-    Promise.all(onFinishCallbacks.map((onFinish) => onFinish())).then(
-      () => undefined
-    );
-  return result.then(
-    (events) => runCallbacks().then(() => events),
-    (error) =>
-      runCallbacks().then(() => {
-        throw error;
-      })
+
+  return result.finally(() =>
+    Promise.all(onFinishCallbacks.map((onFinish) => onFinish()))
   );
 }
 
@@ -2860,7 +2840,7 @@ function shortcutCommand(base, shortcut, script, verbatimScript) {
   return new Command({
     index: base.index,
     name,
-    command: shortcutCommandText(shortcut, script, verbatimScript),
+    command: shortcutCommandText(shortcut, script),
     prefixColor: base.prefixColor,
     env: base.env,
     cwd: base.cwd,
@@ -2878,7 +2858,7 @@ function shortcutCommandName(base, shortcut, script, wildcardExpanded) {
   return base.name === "" ? capture : `${base.name}:${capture}`;
 }
 
-function shortcutCommandText(shortcut, script, verbatimScript) {
+function shortcutCommandText(shortcut, script) {
   const scriptArgument = shellQuote(script);
   const suffix = shortcut.suffix ? ` ${shortcut.suffix}` : "";
   const prefix = shortcut.prefix ?? "";
@@ -3028,11 +3008,7 @@ function nativeInvocation(commands, options, eventDir) {
   pushOption(args, "--success", nativeSuccessCondition(commands, options.successCondition));
   pushOption(args, "--prefix-length", options.prefixLength);
   pushOption(args, "--timestamp-format", options.timestampFormat);
-  pushOption(
-    args,
-    "--default-input-target",
-    nativeCommandIdentifier(commands, options.defaultInputTarget)
-  );
+  pushOption(args, "--default-input-target", options.defaultInputTarget);
   pushOption(args, "--restart-tries", options.restartTries);
   pushOption(args, "--restart-after", options.restartDelay);
   pushOption(args, "--kill-signal", options.killSignal);
@@ -3403,7 +3379,7 @@ function nativeCommandSelector(commands, successCondition, prefix, selectorStart
   if (!/^[0-9]+$/.test(selector)) {
     return successCondition;
   }
-  if (commandNames(commands).includes(selector)) {
+  if (commands.some((command) => command.name === selector)) {
     return successCondition;
   }
   const selectedIndex = Number(selector);
@@ -3411,18 +3387,9 @@ function nativeCommandSelector(commands, successCondition, prefix, selectorStart
     command.index === selectedIndex ? [String(position)] : []
   );
   if (nativePositions.length !== 1) {
-    return commandNames(commands).includes(selector)
-      ? successCondition
-      : `${prefix}${commands.length}`;
+    return `${prefix}${commands.length}`;
   }
   return `${prefix}${nativePositions[0]}`;
-}
-
-function nativeCommandIdentifier(commands, identifier) {
-  if (identifier === undefined) {
-    return undefined;
-  }
-  return String(identifier);
 }
 
 function needsPublicIndexLabels(options, positionMatchesPublicIndex) {
@@ -3461,10 +3428,6 @@ function closeEventsSucceeded(events, successCondition = "all") {
     targetEvents.length > 0 &&
     targetEvents.every((event) => event.exitCode === 0)
   );
-}
-
-function commandNames(commands) {
-  return commands.map((command) => command.name);
 }
 
 function invocationCwd(options) {

@@ -35,6 +35,11 @@
  (libraries concurrentlyocaml))
 
 (test
+ (name reentrant_serializer_tests)
+ (modules reentrant_serializer_tests)
+ (libraries unix concurrentlyocaml))
+
+(test
  (name runner_input_reader_tests)
  (modules runner_input_reader_tests)
  (libraries eio_main eio concurrentlyocaml))

@@ -16,7 +16,6 @@ const { isAbsolute, join, relative, resolve } = require("node:path");
 const { spawnSync } = require("node:child_process");
 
 const packageRoot = resolve(".");
-const rootPackage = readJson(resolve("package.json"));
 const publicPackageName = "concurrently";
 const upstreamPackageName = "upstream-concurrently";
 const upstreamVersion = "10.0.0";
