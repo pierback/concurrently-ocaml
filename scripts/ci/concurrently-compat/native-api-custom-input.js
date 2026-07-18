@@ -62,6 +62,7 @@ async function runNativeApiCustomInput({
         },
       }
     );
+    inputRun.result.catch(() => {});
     input.end("hello");
     await inputRun.result;
     if (!inputOutput.includes("input:hello")) {
@@ -95,6 +96,7 @@ async function runNativeApiCustomInput({
         },
       }
     );
+    inputChunkRun.result.catch(() => {});
     inputChunk.write("hello");
     await inputChunkRun.result;
     if (!inputChunkOutput.includes("chunk:hello")) {
@@ -129,6 +131,7 @@ async function runNativeApiCustomInput({
         },
       }
     );
+    numericNameInputRun.result.catch(() => {});
     numericNameInput.end("1:hello");
     await numericNameInputRun.result;
     if (
@@ -161,6 +164,7 @@ async function runNativeApiCustomInput({
         },
       }
     );
+    multilineInputRun.result.catch(() => {});
     multilineInput.end("1:hello\n0:world\n");
     await multilineInputRun.result;
     if (
@@ -193,6 +197,7 @@ async function runNativeApiCustomInput({
         },
       }
     );
+    splitInputRun.result.catch(() => {});
     splitInput.write("1:hel");
     splitInput.end("lo\n0:world\n");
     await splitInputRun.result;
@@ -225,6 +230,7 @@ async function runNativeApiCustomInput({
         },
       }
     );
+    inputEofRun.result.catch(() => {});
     inputEof.end("hello");
     await inputEofRun.result;
     if (!inputEofOutput.includes("eof:hello")) {
@@ -254,6 +260,7 @@ async function runNativeApiCustomInput({
         },
       }
     );
+    blankTargetInputRun.result.catch(() => {});
     setTimeout(() => blankTargetInput.end("target"), 25);
     await blankTargetInputRun.result;
     if (!blankTargetInputOutput.includes("blank:target")) {
@@ -281,6 +288,7 @@ async function runNativeApiCustomInput({
         },
       }
     );
+    missingInputTargetRun.result.catch(() => {});
     missingInputTarget.end("hello");
     await missingInputTargetRun.result;
     const plainMissingInputTargetOutput = stripAnsiColors(missingInputTargetOutput);
@@ -327,6 +335,7 @@ async function runNativeApiCustomInput({
         },
       }
     );
+    numericInputRun.result.catch(() => {});
     numericInput.end("1:hello");
     await numericInputRun.result;
     if (!numericInputOutput.includes("indexed:hello")) {
@@ -374,6 +383,7 @@ async function runNativeApiCustomInput({
         },
       }
     );
+    numericDefaultInputRun.result.catch(() => {});
     numericDefaultInput.end("hello");
     await numericDefaultInputRun.result;
     if (!numericDefaultInputOutput.includes("named:hello")) {

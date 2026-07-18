@@ -239,6 +239,7 @@ async function runNativeApiShell({
               teardown: ["echo shell-env-snapshot-cleanup"],
             }
           );
+          run.result.catch(() => {});
           process.env[npmScriptShellEnv] = nativeApiMissingShell;
           await run.result;
           const shellEnvSnapshotInvocations = readShellInvocations();

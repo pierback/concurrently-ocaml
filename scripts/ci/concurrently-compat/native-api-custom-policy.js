@@ -65,6 +65,7 @@ async function runNativeApiCustomPolicy({
           },
         }
       );
+      restartRun.result.catch(() => {});
       const restartPublicCloses = [];
       restartRun.commands[0].close.subscribe((event) => {
         restartPublicCloses.push(event.exitCode);
@@ -171,6 +172,7 @@ async function runNativeApiCustomPolicy({
         },
       }
     );
+    restartThrowRun.result.catch(() => {});
     try {
       const restartThrowError = await restartThrowRun.result.catch((error) => error);
       assertEqual(
@@ -226,6 +228,7 @@ async function runNativeApiCustomPolicy({
           },
         }
       );
+      startupThrowRun.result.catch(() => {});
       const startupThrowError = await startupThrowRun.result.catch((error) => error);
       assertEqual(
         startupThrowError.message,
@@ -288,6 +291,7 @@ async function runNativeApiCustomPolicy({
         },
       }
     );
+    killRun.result.catch(() => {});
     setTimeout(() => killRun.commands[0].kill("SIGTERM"), 25);
     await killRun.result.catch((events) => events);
     assertEqual(killCalls.length, 1, "native JS API custom spawn kill call count");
@@ -308,6 +312,7 @@ async function runNativeApiCustomPolicy({
         },
       }
     );
+    killedRestartRun.result.catch(() => {});
     await waitFor(
       () => api.Command.canKill(killedRestartRun.commands[0]),
       1000,
@@ -345,6 +350,7 @@ async function runNativeApiCustomPolicy({
         },
       }
     );
+    invalidKillSignalRun.result.catch(() => {});
     try {
       const invalidKillSignalResult = await Promise.race([
         invalidKillSignalRun.result.catch((error) => error),
@@ -502,6 +508,7 @@ async function runNativeApiCustomPolicy({
         },
       }
     );
+    throwingSpawnRun.result.catch(() => {});
     try {
       const spawnError = await throwingSpawnRun.result.catch((error) => error);
       assertEqual(
@@ -539,6 +546,7 @@ async function runNativeApiCustomPolicy({
           },
         }
       );
+      killTreeRun.result.catch(() => {});
       try {
         await waitFor(
           () => existsSync(killTreePidFile) && api.Command.canKill(killTreeRun.commands[0]),
@@ -583,6 +591,7 @@ async function runNativeApiCustomPolicy({
           return spawn(command, [], options);
         },
       });
+      killTreeNoPathRun.result.catch(() => {});
       const originalPath = process.env.PATH;
       try {
         await waitFor(

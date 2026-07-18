@@ -49,6 +49,7 @@ async function runNativeApiCore({ assertEqual, cliCommandRunner, commands }) {
       outputStream: sink,
       prefixColors: false,
     });
+    run.result.catch(() => {});
 
     await waitFor(
       () => run.commands.every((command) => api.Command.canKill(command)),
@@ -89,6 +90,7 @@ async function runNativeApiCore({ assertEqual, cliCommandRunner, commands }) {
       outputStream: sink,
       prefixColors: false,
     });
+    run.result.catch(() => {});
     const command = run.commands[0];
 
     if (api.Command.canKill(command)) {
@@ -133,6 +135,7 @@ async function runNativeApiCore({ assertEqual, cliCommandRunner, commands }) {
       outputStream: sink,
       prefixColors: false,
     });
+    run.result.catch(() => {});
     const result = run.result.catch((events) => events);
 
     try {
@@ -176,6 +179,7 @@ async function runNativeApiCore({ assertEqual, cliCommandRunner, commands }) {
         process.kill(-pid, signal);
       },
     });
+    run.result.catch(() => {});
 
     const events = await run.result.catch((error) => error);
     if (!Array.isArray(events)) {
@@ -199,6 +203,7 @@ async function runNativeApiCore({ assertEqual, cliCommandRunner, commands }) {
       outputStream: sink,
       prefixColors: false,
     });
+    run.result.catch(() => {});
 
     await waitFor(
       () => api.Command.canKill(run.commands[1]),
@@ -288,6 +293,7 @@ async function runNativeApiCore({ assertEqual, cliCommandRunner, commands }) {
         },
       ],
     });
+    run.result.catch(() => {});
     const events = await run.result;
 
     assertEqual(events.length, 1, "native JS API filtered controller event count");
@@ -336,6 +342,7 @@ async function runNativeApiCore({ assertEqual, cliCommandRunner, commands }) {
         },
       ],
     });
+    run.result.catch(() => {});
     restoreEnvironmentValue("FORCE_COLOR", previousForceColor);
     const events = await run.result;
     const plainOutput = stripAnsiColors(output);
@@ -397,6 +404,7 @@ async function runNativeApiCore({ assertEqual, cliCommandRunner, commands }) {
         },
       ],
     });
+    run.result.catch(() => {});
     const incoming = [];
     run.commands[0].messages.incoming.subscribe({
       next(event) {
@@ -748,6 +756,7 @@ async function runNativeApiCore({ assertEqual, cliCommandRunner, commands }) {
         raw: true,
       }
     );
+    run.result.catch(() => {});
     const incoming = [];
     run.commands[0].messages.incoming.subscribe({
       next(event) {

@@ -30,6 +30,7 @@ async function runNativeApiTeardownSelectors({ assertEqual, commands }) {
       },
       teardown: [nodePrintCommand("teardown")],
     });
+    run.result.catch(() => {});
     const events = await run.result;
 
     assertEqual(events.length, 1, "native JS API custom spawn teardown event count");
@@ -74,6 +75,7 @@ async function runNativeApiTeardownSelectors({ assertEqual, commands }) {
         ],
       }
     );
+    run.result.catch(() => {});
     const events = await run.result;
 
     assertEqual(
@@ -105,6 +107,7 @@ async function runNativeApiTeardownSelectors({ assertEqual, commands }) {
         ],
       }
     );
+    publicIndexRun.result.catch(() => {});
     const publicIndexEvents = await publicIndexRun.result;
     assertEqual(
       publicIndexEvents.some((event) => event.index === 1 && event.exitCode === 0),
@@ -147,6 +150,7 @@ async function runNativeApiTeardownSelectors({ assertEqual, commands }) {
         ],
       }
     );
+    run.result.catch(() => {});
     input.end("hello\n");
     await run.result;
 
@@ -194,6 +198,7 @@ async function runNativeApiTeardownSelectors({ assertEqual, commands }) {
         ],
       }
     );
+    publicIndexRun.result.catch(() => {});
     publicIndexInput.end("hello\n");
     await publicIndexRun.result;
     if (!publicIndexOutput.includes("one:hello")) {

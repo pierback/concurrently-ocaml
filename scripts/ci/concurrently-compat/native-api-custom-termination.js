@@ -43,6 +43,7 @@ async function runNativeApiCustomTermination({
         },
       }
     );
+    percentRun.result.catch(() => {});
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 50));
     assertEqual(
       percentCalls.length,
@@ -68,6 +69,7 @@ async function runNativeApiCustomTermination({
         },
       }
     );
+    queuedRun.result.catch(() => {});
     const queuedEvents = await queuedRun.result.catch((events) => events);
     assertEqual(queuedCalls.length, 2, "native JS API custom spawn queued call count");
     assertEqual(queuedEvents.length, 2, "native JS API custom spawn queued event count");
@@ -131,6 +133,7 @@ async function runNativeApiCustomTermination({
           },
         }
       );
+      killOthersRestartRun.result.catch(() => {});
       const killOthersRestartEvents = await killOthersRestartRun.result;
       assertEqual(
         killOthersRestartCalls,
@@ -186,6 +189,7 @@ async function runNativeApiCustomTermination({
         },
       }
     );
+    killTimeoutRun.result.catch(() => {});
     const killTimeoutEvents = await killTimeoutRun.result.catch((events) => events);
     if (!killTimeoutEvents.some((event) => event.exitCode === "SIGKILL")) {
       throw new Error(

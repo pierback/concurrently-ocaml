@@ -52,6 +52,7 @@ async function runNativeApiCustomOutput({
         },
       }
     );
+    run.result.catch(() => {});
     const events = await run.result;
 
     assertEqual(calls.length, 1, "native JS API custom spawn call count");
@@ -245,6 +246,7 @@ async function runNativeApiCustomOutput({
         },
       }
     );
+    globalPartialRun.result.catch(() => {});
     await waitFor(
       () => globalPartialOutput.includes("[0] partial"),
       1000,
@@ -315,6 +317,7 @@ async function runNativeApiCustomOutput({
           },
         }
       );
+      noColorGlobalRun.result.catch(() => {});
       noColorGlobalInput.end("hello");
       await noColorGlobalRun.result;
     } finally {
@@ -761,6 +764,7 @@ async function runNativeApiCustomOutput({
         },
       }
     );
+    groupedRun.result.catch(() => {});
     await waitFor(
       () => groupedOutput.includes("[0] grouped-slow"),
       300,
