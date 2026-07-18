@@ -1,6 +1,17 @@
 (test
  (name domain_tests)
- (modules domain_tests)
+ (modules
+  domain_test_support
+  domain_contract_tests
+  output_formatter_integration_tests
+  run_result_contract_tests
+  cli_config_contract_tests
+  runner_test_support
+  runner_teardown_tests
+  runner_fault_tests
+  runner_termination_tests
+  runner_execution_tests
+  domain_tests)
  (enabled_if (<> %{os_type} "Win32"))
  (libraries unix eio_main eio concurrentlyocaml concurrentlyocaml_posix))
 

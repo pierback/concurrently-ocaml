@@ -131,7 +131,20 @@ try {
   assertFile(join(installedRootDir, "index.d.ts"));
   assertFile(join(installedRootDir, "index.d.mts"));
   assertFile(join(installedRootDir, "npm", "lib", "api.js"));
+  assertFile(join(installedRootDir, "npm", "lib", "command.js"));
+  assertFile(join(installedRootDir, "npm", "lib", "command-preparation.js"));
+  assertFile(join(installedRootDir, "npm", "lib", "execution-context.js"));
+  assertFile(join(installedRootDir, "npm", "lib", "logger.js"));
+  assertFile(join(installedRootDir, "npm", "lib", "native-backend.js"));
   assertFile(join(installedRootDir, "npm", "lib", "native.js"));
+  assertFile(join(installedRootDir, "npm", "lib", "output-destination.js"));
+  assertFile(join(installedRootDir, "npm", "lib", "output-rendering.js"));
+  assertFile(join(installedRootDir, "npm", "lib", "output-writer.js"));
+  assertFile(join(installedRootDir, "npm", "lib", "run-policy.js"));
+  assertFile(join(installedRootDir, "npm", "lib", "run-result.js"));
+  assertFile(join(installedRootDir, "npm", "lib", "shell-command.js"));
+  assertFile(join(installedRootDir, "npm", "lib", "spawn-backend.js"));
+  assertFile(join(installedRootDir, "npm", "lib", "spawn-output-session.js"));
   assertNoUpstreamFallbackDependency(projectDir, installedRootDir);
   assertNoPackedSourceTree(installedRootDir);
 
@@ -530,6 +543,7 @@ try {
       const { fork, spawn, spawnSync } = require("node:child_process");
       const { tmpdir } = require("node:os");
       const { delimiter, join } = require("node:path");
+      const { createRequire } = require("node:module");
       const { PassThrough, Writable } = require("node:stream");
       const { runInNewContext } = require("node:vm");
       const waitFor = (predicate, timeoutMs, label) => new Promise((resolve, reject) => {
@@ -581,20 +595,29 @@ try {
       if (timingInfo.duration !== "400") {
         throw new Error("LogTimings duration did not match upstream milliseconds: " + JSON.stringify(timingInfo));
       }
-      const apiSource = readFileSync(
-        join(process.cwd(), "node_modules", "concurrently", "npm", "lib", "api.js"),
-        "utf8"
+      const preparationPath = join(
+        process.cwd(),
+        "node_modules",
+        "concurrently",
+        "npm",
+        "lib",
+        "command-preparation.js"
       );
-      const apiSandbox = {
+      const preparationSource = readFileSync(preparationPath, "utf8");
+      const preparationRequire = createRequire(preparationPath);
+      const preparationSandbox = {
         require(id) {
-          return id === "./native" ? { runNative() { throw new Error("unexpected native run"); } } : require(id);
+          return preparationRequire(id);
         },
         module: { exports: {} },
         exports: {},
         process,
       };
-      runInNewContext(apiSource + "\\nmodule.exports.__windowsShellQuote = windowsShellQuote;", apiSandbox);
-      const quotedPercent = apiSandbox.module.exports.__windowsShellQuote("%PATH%");
+      runInNewContext(
+        preparationSource + "\\nmodule.exports.__windowsShellQuote = windowsShellQuote;",
+        preparationSandbox
+      );
+      const quotedPercent = preparationSandbox.module.exports.__windowsShellQuote("%PATH%");
       if (quotedPercent.includes("%PATH%") || !quotedPercent.includes("^%PATH^%")) {
         throw new Error("Windows shell quote did not escape percent signs: " + quotedPercent);
       }

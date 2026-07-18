@@ -1,5 +1,10 @@
 (library
  (name concurrentlyocaml)
+ (private_modules
+  runner_output
+  runner_parent_signals
+  runner_kill_timeout
+  runner_teardown)
  (modules
   (:standard \ posix_process_group posix_runner_backend windows_runner_backend))
  (libraries eio str unix))
