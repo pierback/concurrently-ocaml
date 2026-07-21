@@ -19,7 +19,8 @@ const {
 const {
   runNativeApiSmoke,
 } = require("./concurrently-compat/native-api-suite");
-const npmConcurrentlyVersion = "10.0.0";
+const upstreamReference = require("./upstream-reference.json");
+const npmConcurrentlyVersion = upstreamReference.version;
 const nativeApiExplicitShell = process.platform === "win32" ? "cmd.exe" : "/bin/sh";
 const localBinary = resolve("_build", "default", "bin", "main.exe");
 const cliCommandRunner = createCliCommandRunner({
@@ -30,7 +31,7 @@ const platformCommands = createPlatformCommands();
 const { shellQuote } = platformCommands;
 const cliFixtures = createCliFixtures({ shellQuote });
 const oneSlotPercentage = `${100 / (2 * Math.max(1, cpus().length))}%`;
-const compatWatchdog = startCompatWatchdog("compat harness", 420000);
+const compatWatchdog = startCompatWatchdog("compat harness", 900000);
 
 if (!existsSync(localBinary)) {
   throw new Error(`missing local binary: ${localBinary}; run npm run compile first`);

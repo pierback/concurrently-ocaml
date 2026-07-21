@@ -2,7 +2,7 @@ type t
 
 type create_error =
   [ `Attempt_after_success of int * int
-  | `Attempt_exceeds_restart_tries of int * int
+  | `Attempt_exceeds_restart_limit of int * int
   | `Duplicate_close_event_attempt of int * int
   | `Incomplete_restart_attempt of int * int
   | `Missing_close_event_attempt of int * int
@@ -17,7 +17,6 @@ val create :
   spec:Run_spec.t ->
   close_events:Close_event.t list ->
   output_event_count:int ->
-  interrupted:bool ->
   (t, create_error) result
 
 val create_interrupted_by_signal :

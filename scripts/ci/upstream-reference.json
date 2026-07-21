@@ -1,0 +1,9 @@
+{
+  "package": "concurrently",
+  "version": "10.0.0",
+  "gitRepository": "https://github.com/open-cli-tools/concurrently.git",
+  "gitCommit": "cf2eaa2b0fd36cc9f1eaf1f8c56de8d21bd0a42c",
+  "npmIntegrity": "sha512-DRrk10z3sVPpguNe8od2cGNqZGqbT15rwAnxD4dG3b78mdNNb/gJyr8T834Oj518WcBmTktrt4FhdwZn09ZWSg==",
+  "unitTests": 630,
+  "smokeTests": 4
+}

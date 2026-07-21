@@ -32,8 +32,7 @@ type output = {
   trailing_newline : bool;
 }
 
-type create_error =
-  [ `Label_count_mismatch of int * int | `Non_positive_command_count ]
+type create_error = [ `Label_count_mismatch of int * int ]
 
 type pending_status_message = {
   command_index : int;
@@ -64,14 +63,7 @@ type t = {
   mutable next_group_command_index : int;
 }
 
-let default_labels command_count =
-  if command_count < 0 then Error `Non_positive_command_count
-  else
-    let rec build index labels =
-      if index = command_count then Ok (List.rev labels)
-      else build (index + 1) (string_of_int index :: labels)
-    in
-    build 0 []
+let default_labels command_count = List.init command_count string_of_int
 
 let validate_labels ~command_count labels =
   let label_count = List.length labels in
@@ -86,7 +78,7 @@ let create ~now ~wall_now ~commands (options : options) =
         match validate_labels ~command_count labels with
         | Ok () -> Ok labels
         | Error error -> Error error)
-    | None -> default_labels command_count
+    | None -> Ok (default_labels command_count)
   in
   let index_labels_result =
     match options.index_labels with
@@ -639,8 +631,7 @@ let handle_lifecycle t event lifecycle =
             handle_stopped t event command command_index None
         | Output_event.Stopped_with_status { status; killed } ->
             handle_stopped t event command command_index (Some (status, killed))
-        | Output_event.Restarting _ -> handle_restarting t command_index
-        | Output_event.Stopping -> [])
+        | Output_event.Restarting _ -> handle_restarting t command_index)
 
 let handle_event t event =
   match Output_event.payload event with
@@ -651,11 +642,8 @@ let handle_event t event =
       handle_lifecycle t event lifecycle
   | Output_event.Status_message_payload { stream; chunk; after_command } ->
       handle_status_message t ~stream ~chunk ~after_command
-  | Output_event.Runtime_warning_payload { stream; chunk } ->
-      [ { stream; text = chunk; trailing_newline = false } ]
 
 let error_message = function
   | `Label_count_mismatch (label_count, command_count) ->
       Printf.sprintf "number of labels (%d) must match number of commands (%d)"
         label_count command_count
-  | `Non_positive_command_count -> "command count must be positive"

@@ -1,7 +1,6 @@
 type t = {
   argv : string array;
   passthrough_arguments : string list;
-  deprecated_name_separator_used : bool;
 }
 
 type passthrough_extraction = {
@@ -367,17 +366,6 @@ let extract_passthrough_arguments argv =
           passthrough_arguments;
         }
 
-let is_name_separator_argument argument =
-  argument = "--name-separator"
-  || argument_has_prefix ~prefix:"--name-separator=" argument
-
-let uses_deprecated_name_separator argv =
-  let rec loop index =
-    if index >= Array.length argv || argv.(index) = "--" then false
-    else is_name_separator_argument argv.(index) || loop (index + 1)
-  in
-  loop 1
-
 let normalize_negative_option_name option_name =
   match Cli_options.emitted_value_option option_name with
   | Some emitted_option -> emitted_option
@@ -421,12 +409,10 @@ let normalize_with_env ~env argv =
     |> normalize_negative_option_values_argv |> drop_unknown_options_argv
     |> normalize_boolean_options_argv
   in
-  let deprecated_name_separator_used = uses_deprecated_name_separator argv in
   let passthrough = extract_passthrough_arguments argv in
   {
     argv = passthrough.normalized_argv;
     passthrough_arguments = passthrough.passthrough_arguments;
-    deprecated_name_separator_used;
   }
 
 let normalize argv = normalize_with_env ~env:Sys.getenv_opt argv

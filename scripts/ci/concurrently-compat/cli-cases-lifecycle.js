@@ -1,6 +1,4 @@
 const {
-  normalizeNodeTimerWarningAndShellDiagnosticStderr,
-  normalizeNodeTimerWarningPid,
   normalizeShellSignalDiagnosticAndTrapCleanupStdout,
   normalizeShellSignalDiagnosticStdout,
   normalizeShellTrapStatus,
@@ -45,8 +43,8 @@ function createLifecycleCases({
     args: ["--no-color", "--restart-after", "bogus", "printf one"],
   },
   {
-    name: "restart after invalid warning is emitted once when used",
-    upstream: "dist/src/flow-control/restart-process.js Rx timer NaN warning",
+    name: "restart after invalid retries without stderr noise",
+    upstream: "dist/src/flow-control/restart-process.js Rx timer NaN coercion on Node 22",
     args: [
       "--no-color",
       "--restart-tries",
@@ -55,11 +53,10 @@ function createLifecycleCases({
       "bogus",
       "exit 1",
     ],
-    normalizeStderr: normalizeNodeTimerWarningAndShellDiagnosticStderr,
   },
   {
-    name: "restart after invalid warning is emitted in raw mode",
-    upstream: "dist/src/flow-control/restart-process.js Node warning bypasses logger raw mode",
+    name: "restart after invalid stays quiet in raw mode",
+    upstream: "dist/src/flow-control/restart-process.js Rx timer NaN coercion on Node 22",
     args: [
       "--no-color",
       "--raw",
@@ -69,7 +66,6 @@ function createLifecycleCases({
       "bogus",
       "exit 1",
     ],
-    normalizeStderr: normalizeNodeTimerWarningPid,
   },
   {
     name: "restart after negative retries immediately",
@@ -486,8 +482,8 @@ function createLifecycleCases({
     normalizeStdout: normalizeShellSignalDiagnosticStdout,
   },
   {
-    name: "kill timeout negative warning is emitted when used",
-    upstream: "dist/src/flow-control/kill-others.js setTimeout negative warning",
+    name: "kill timeout negative force kills without stderr noise",
+    upstream: "dist/src/flow-control/kill-others.js setTimeout negative coercion on Node 22",
     args: [
       "--no-color",
       "--kill-timeout",
@@ -497,11 +493,10 @@ function createLifecycleCases({
       killTimeoutFixture.successCommand("negative"),
     ],
     normalizeStdout: normalizeShellSignalDiagnosticStdout,
-    normalizeStderr: normalizeNodeTimerWarningPid,
   },
   {
-    name: "kill timeout negative warning is emitted in raw mode",
-    upstream: "dist/src/flow-control/kill-others.js Node warning bypasses logger raw mode",
+    name: "kill timeout negative stays quiet in raw mode",
+    upstream: "dist/src/flow-control/kill-others.js setTimeout negative coercion on Node 22",
     args: [
       "--no-color",
       "--raw",
@@ -511,7 +506,6 @@ function createLifecycleCases({
       killTimeoutFixture.finiteTrapCommand("negative-raw"),
       killTimeoutFixture.successCommand("negative-raw"),
     ],
-    normalizeStderr: normalizeNodeTimerWarningPid,
   },
   {
     name: "kill timeout invalid is accepted when unused",

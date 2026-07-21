@@ -58,17 +58,20 @@ let test_run_policy_validation () =
        ());
   expect_error `Max_processes_less_than_one
     (Run_policy.create ~max_processes:0 ());
-  let infinite_policy = ok (Run_policy.create ~restart_tries:(-1) ()) in
+  expect_error `Negative_restart_limit
+    (Run_policy.create ~restart_limit:(Run_policy.Finite_restarts (-1)) ());
+  let infinite_policy =
+    ok (Run_policy.create ~restart_limit:Run_policy.Infinite_restarts ())
+  in
   assert (
     Run_policy.restart_limit infinite_policy = Run_policy.Infinite_restarts);
-  assert (Run_policy.restart_tries infinite_policy = -1);
   assert (not (Run_policy.collect_retry_close_events infinite_policy));
   assert (Result.is_ok (Run_policy.create ~kill_timeout_ms:(-1) ()));
   assert (
     Result.is_ok
       (Run_policy.create ~restart_delay:(Run_policy.Fixed_delay_ms (-1)) ()));
   expect_error `Exponential_restart_delay_overflow
-    (Run_policy.create ~restart_tries:max_int
+    (Run_policy.create ~restart_limit:(Run_policy.Finite_restarts max_int)
        ~restart_delay:Run_policy.Exponential_backoff ());
   expect_error `Empty_signal
     (Run_policy.create ~kill_signal:(Run_policy.Named_signal " ") ());
@@ -91,7 +94,8 @@ let test_run_policy_decisions () =
   assert (not (Run_policy.run_succeeded policy [ success; failure ]));
   let retrying_kill_policy =
     ok
-      (Run_policy.create ~kill_others_on:[ Run_policy.Failure ] ~restart_tries:1
+      (Run_policy.create ~kill_others_on:[ Run_policy.Failure ]
+         ~restart_limit:(Run_policy.Finite_restarts 1)
          ())
   in
   let retryable_failure =
@@ -100,12 +104,16 @@ let test_run_policy_decisions () =
   let exhausted_failure =
     close_event ~attempt:1 ~status:(Close_event.Exited 1) first_command
   in
+  assert (Run_policy.retry_remaining retrying_kill_policy ~attempt:0);
+  assert (not (Run_policy.retry_remaining retrying_kill_policy ~attempt:1));
   assert (
     not
       (Run_policy.should_kill_after_close retrying_kill_policy retryable_failure));
   assert (
     Run_policy.should_kill_after_close retrying_kill_policy exhausted_failure);
-  let infinite_retry_policy = ok (Run_policy.create ~restart_tries:(-1) ()) in
+  let infinite_retry_policy =
+    ok (Run_policy.create ~restart_limit:Run_policy.Infinite_restarts ())
+  in
   assert (Run_policy.should_retry infinite_retry_policy retryable_failure);
   assert (
     not
@@ -180,7 +188,7 @@ let test_run_policy_decisions () =
   assert (Run_policy.run_succeeded filtered_failure_policy []);
   let delayed_policy =
     ok
-      (Run_policy.create ~restart_tries:3
+      (Run_policy.create ~restart_limit:(Run_policy.Finite_restarts 3)
          ~restart_delay:Run_policy.Exponential_backoff ())
   in
   assert (Run_policy.restart_delay_ms delayed_policy ~next_attempt:1 = 1000);
@@ -195,12 +203,22 @@ let test_run_spec_validation () =
     (Run_spec.create
        ~commands:[ command 0 "echo a"; command 2 "echo b" ]
        ~policy:Run_policy.default);
-  let overflowing_policy = ok (Run_policy.create ~restart_tries:max_int ()) in
+  let overflowing_policy =
+    ok
+      (Run_policy.create
+         ~restart_limit:(Run_policy.Finite_restarts max_int)
+         ())
+  in
   expect_error `Close_event_capacity_overflow
     (Run_spec.create
        ~commands:[ command 0 "echo a" ]
        ~policy:overflowing_policy);
-  let policy = ok (Run_policy.create ~restart_tries:2 ()) in
+  let policy =
+    ok
+      (Run_policy.create
+         ~restart_limit:(Run_policy.Finite_restarts 2)
+         ())
+  in
   let spec =
     ok
       (Run_spec.create
@@ -209,7 +227,9 @@ let test_run_spec_validation () =
   in
   assert (Run_spec.command_count spec = 2);
   assert (Run_spec.close_event_capacity spec = 6);
-  let infinite_policy = ok (Run_policy.create ~restart_tries:(-1) ()) in
+  let infinite_policy =
+    ok (Run_policy.create ~restart_limit:Run_policy.Infinite_restarts ())
+  in
   let infinite_spec =
     ok
       (Run_spec.create
@@ -299,9 +319,8 @@ let test_input_router_routes_default_and_prefixed_input () =
     ]
   in
   let router =
-    ok
-      (Input_router.create ~commands ~index_labels:None
-         ~default_input_target:"worker")
+    Input_router.create ~commands ~index_labels:None
+      ~default_input_target:"worker"
   in
   assert (
     Input_router.route router "rs\n"
@@ -332,9 +351,8 @@ let test_input_router_routes_default_and_prefixed_input () =
         payload = "missing:reload\n";
       });
   let missing_default_router =
-    ok
-      (Input_router.create ~commands ~index_labels:None
-         ~default_input_target:"missing")
+    Input_router.create ~commands ~index_labels:None
+      ~default_input_target:"missing"
   in
   assert (
     Input_router.route missing_default_router "reload\n"
@@ -344,9 +362,7 @@ let test_input_router_routes_default_and_prefixed_input () =
         payload = "reload\n";
       });
   let empty_default_router =
-    ok
-      (Input_router.create ~commands ~index_labels:None
-         ~default_input_target:"")
+    Input_router.create ~commands ~index_labels:None ~default_input_target:""
   in
   assert (
     Input_router.route empty_default_router "reload\n"
@@ -362,9 +378,8 @@ let test_input_router_routes_default_and_prefixed_input () =
     ]
   in
   let public_index_router =
-    ok
-      (Input_router.create ~commands:reordered_commands
-         ~index_labels:(Some [ "1"; "0" ]) ~default_input_target:"1")
+    Input_router.create ~commands:reordered_commands
+      ~index_labels:(Some [ "1"; "0" ]) ~default_input_target:"1"
   in
   assert (
     Input_router.route public_index_router "reload\n"
@@ -374,14 +389,13 @@ let test_input_router_routes_default_and_prefixed_input () =
         payload = "reload\n";
       });
   let unnamed_reordered_router =
-    ok
-      (Input_router.create
-         ~commands:
-           [
-             ok (Command.create ~index:0 "npm run public-one");
-             ok (Command.create ~index:1 "npm run public-zero");
-           ]
-         ~index_labels:(Some [ "1"; "0" ]) ~default_input_target:"1")
+    Input_router.create
+      ~commands:
+        [
+          ok (Command.create ~index:0 "npm run public-one");
+          ok (Command.create ~index:1 "npm run public-zero");
+        ]
+      ~index_labels:(Some [ "1"; "0" ]) ~default_input_target:"1"
   in
   assert (
     Input_router.route unnamed_reordered_router "reload\n"

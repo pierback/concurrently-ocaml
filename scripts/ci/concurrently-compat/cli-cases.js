@@ -104,6 +104,13 @@ function createCliCases({ commands, fixtures, oneSlotPercentage }) {
       normalizeStdout: normalizeVersionStdout,
     },
     {
+      name: "environment version option",
+      upstream: "bin/index.ts yargs .env('CONCURRENTLY') version binding",
+      args: [],
+      env: { CONCURRENTLY_VERSION: "true" },
+      normalizeStdout: normalizeVersionStdout,
+    },
+    {
       name: "help long option",
       upstream: "bin/concurrently.spec.ts --help",
       args: ["--help"],
@@ -113,6 +120,13 @@ function createCliCases({ commands, fixtures, oneSlotPercentage }) {
       name: "help short option",
       upstream: "bin/concurrently.spec.ts -h",
       args: ["-h"],
+      normalizeStdout: normalizeHelpStdout,
+    },
+    {
+      name: "environment help option",
+      upstream: "bin/index.ts yargs .env('CONCURRENTLY') help binding",
+      args: [],
+      env: { CONCURRENTLY_HELP: "true" },
       normalizeStdout: normalizeHelpStdout,
     },
     {
@@ -129,6 +143,12 @@ function createCliCases({ commands, fixtures, oneSlotPercentage }) {
       name: "custom posix shell runs command",
       upstream: "bin/concurrently.spec.ts --shell",
       args: ["--no-color", "--shell", "/bin/bash", "printf \"$0\""],
+    },
+    {
+      name: "environment posix shell runs command",
+      upstream: "bin/index.ts yargs .env('CONCURRENTLY') shell binding",
+      args: ["--no-color", "printf \"$0\""],
+      env: { CONCURRENTLY_SHELL: "/bin/bash" },
     },
     {
       name: "no commands prints help",
@@ -461,8 +481,8 @@ function createCliCases({ commands, fixtures, oneSlotPercentage }) {
       },
     },
     {
-      name: "deprecated name separator warning",
-      upstream: "bin/concurrently.spec.ts --name-separator deprecation warning",
+      name: "removed name separator is treated as unknown",
+      upstream: "concurrently@10.0.0 unknown option parsing",
       args: [
         "--no-color",
         "-g",
@@ -475,8 +495,8 @@ function createCliCases({ commands, fixtures, oneSlotPercentage }) {
       ],
     },
     {
-      name: "empty name separator splits names into characters",
-      upstream: "published concurrently@9.2.1 yargs string split semantics",
+      name: "removed empty name separator is treated as unknown",
+      upstream: "concurrently@10.0.0 unknown option parsing",
       args: [
         "--no-color",
         "-g",
@@ -486,6 +506,16 @@ function createCliCases({ commands, fixtures, oneSlotPercentage }) {
         "",
         "printf one",
         "printf two",
+      ],
+    },
+    {
+      name: "removed kill-others-on-success is treated as unknown",
+      upstream: "concurrently@10.0.0 unknown option parsing",
+      args: [
+        "--no-color",
+        "--kill-others-on-success",
+        "printf skipped",
+        "printf visible",
       ],
     },
     {

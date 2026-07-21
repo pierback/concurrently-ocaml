@@ -1,14 +1,15 @@
+type interruption = Completed | Interrupted_by_signal of int
+
 type t =
   { spec : Run_spec.t
   ; close_events : Close_event.t list
   ; output_event_count : int
-  ; interrupted : bool
-  ; interrupted_signal : int option
+  ; interruption : interruption
   }
 
 type create_error =
   [ `Attempt_after_success of int * int
-  | `Attempt_exceeds_restart_tries of int * int
+  | `Attempt_exceeds_restart_limit of int * int
   | `Duplicate_close_event_attempt of int * int
   | `Incomplete_restart_attempt of int * int
   | `Missing_close_event_attempt of int * int
@@ -70,7 +71,7 @@ let validate_close_events ~commands ~policy close_events =
       else if not (Command.equal command commands.(index)) then
         Error (`Unexpected_command index)
       else if Run_policy.attempt_exceeds_restart_limit policy ~attempt then
-        Error (`Attempt_exceeds_restart_tries (index, attempt))
+        Error (`Attempt_exceeds_restart_limit (index, attempt))
       else
         let seen_close_events = close_events_by_command.(index) in
         if
@@ -130,15 +131,15 @@ let validate_complete_close_events ~command_count ~policy close_events =
   in
   validate 0
 
-let create_internal ~interrupted_signal ~spec ~close_events ~output_event_count
-    ~interrupted =
+let create_internal ~interruption ~spec ~close_events ~output_event_count =
   let close_event_count = List.length close_events in
   let commands = Array.of_list (Run_spec.commands spec) in
   let command_count = Array.length commands in
   let policy = Run_spec.policy spec in
-  let interrupted_signal =
-    if interrupted then interrupted_signal else None
+  let completed =
+    match interruption with Completed -> true | Interrupted_by_signal _ -> false
   in
+  let result = { spec; close_events; output_event_count; interruption } in
   if output_event_count < 0 then Error `Negative_output_event_count
   else if close_event_count > Run_spec.close_event_capacity spec then
     Error `Too_many_close_events
@@ -147,7 +148,7 @@ let create_internal ~interrupted_signal ~spec ~close_events ~output_event_count
     | Error error -> Error error
     | Ok () ->
       if
-        (not interrupted)
+        completed
         && not
              (has_cancelling_complete_close_event policy close_events)
       then
@@ -155,36 +156,21 @@ let create_internal ~interrupted_signal ~spec ~close_events ~output_event_count
           ~command_count
           ~policy
           close_events
-        |> Result.map (fun () ->
-          {
-            spec;
-            close_events;
-            output_event_count;
-            interrupted;
-            interrupted_signal;
-          })
-      else
-        Ok
-          {
-            spec;
-            close_events;
-            output_event_count;
-            interrupted;
-            interrupted_signal;
-          }
+        |> Result.map (fun () -> result)
+      else Ok result
 
 let spec t = t.spec
 let close_events t = t.close_events
 let output_event_count t = t.output_event_count
-let interrupted t = t.interrupted
+let interrupted t =
+  match t.interruption with Completed -> false | Interrupted_by_signal _ -> true
 
-let create ~spec ~close_events ~output_event_count ~interrupted =
-  create_internal ~interrupted_signal:None ~spec ~close_events
-    ~output_event_count ~interrupted
+let create ~spec ~close_events ~output_event_count =
+  create_internal ~interruption:Completed ~spec ~close_events ~output_event_count
 
 let create_interrupted_by_signal ~signal ~spec ~close_events ~output_event_count =
-  create_internal ~interrupted_signal:(Some signal) ~spec ~close_events
-    ~output_event_count ~interrupted:true
+  create_internal ~interruption:(Interrupted_by_signal signal) ~spec
+    ~close_events ~output_event_count
 
 let close_events_for_exit t =
   let policy = Run_spec.policy t.spec in
@@ -202,20 +188,12 @@ let close_events_for_exit t =
       t.close_events
 
 let exit_code t =
-  if t.interrupted then
-    match t.interrupted_signal with
-    | Some signal when signal = Sys.sigint -> 0
-    | Some _ ->
-        if
-          Run_policy.run_succeeded
-            (Run_spec.policy t.spec)
-            (close_events_for_exit t)
-        then 0
-        else 1
-    | None -> 1
-  else if
-    Run_policy.run_succeeded
-      (Run_spec.policy t.spec)
-      (close_events_for_exit t)
-  then 0
-  else 1
+  match t.interruption with
+  | Interrupted_by_signal signal when signal = Sys.sigint -> 0
+  | Completed | Interrupted_by_signal _ ->
+      if
+        Run_policy.run_succeeded
+          (Run_spec.policy t.spec)
+          (close_events_for_exit t)
+      then 0
+      else 1

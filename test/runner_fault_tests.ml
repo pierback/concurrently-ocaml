@@ -42,8 +42,7 @@ let test_runner_uses_backend_boundary () =
         | Output_event.Output_chunk_payload { process_id; _ } ->
             process_id = Some "test"
         | Output_event.Lifecycle_payload _
-        | Output_event.Status_message_payload _
-        | Output_event.Runtime_warning_payload _ ->
+        | Output_event.Status_message_payload _ ->
             true)
       events)
 
@@ -86,7 +85,12 @@ let test_runner_retries_spawn_failure () =
               ());
     }
   in
-  let policy = ok (Run_policy.create ~restart_tries:1 ()) in
+  let policy =
+    ok
+      (Run_policy.create
+         ~restart_limit:(Run_policy.Finite_restarts 1)
+         ())
+  in
   let result, events =
     run_commands_with_backend_events ~backend ~policy [ command 0 "retry" ]
   in
@@ -175,7 +179,8 @@ let test_runner_signals_process_when_output_emit_fails () =
 let test_runner_keeps_retry_during_output_drain () =
   let policy =
     ok
-      (Run_policy.create ~kill_others_on:[ Run_policy.Failure ] ~restart_tries:1
+      (Run_policy.create ~kill_others_on:[ Run_policy.Failure ]
+         ~restart_limit:(Run_policy.Finite_restarts 1)
          ())
   in
   let commands = [ command 0 "retrying"; command 1 "failing" ] in

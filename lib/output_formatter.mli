@@ -24,10 +24,7 @@ type output =
   ; trailing_newline : bool
   }
 
-type create_error =
-  [ `Label_count_mismatch of int * int
-  | `Non_positive_command_count
-  ]
+type create_error = [ `Label_count_mismatch of int * int ]
 
 type t
 
@@ -39,5 +36,5 @@ val create :
   (t, create_error) result
 
 val handle_event : t -> Output_event.t -> output list
-val default_labels : int -> (string list, create_error) result
+val default_labels : int -> string list
 val error_message : create_error -> string

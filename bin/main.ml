@@ -23,12 +23,6 @@ let print_output output =
 
 let print_outputs outputs = List.iter print_output outputs
 
-let print_deprecation_warnings deprecated_name_separator_used =
-  if deprecated_name_separator_used then
-    prerr_endline
-      "[concurrently] name-separator is deprecated. Use commas as name \
-       separators instead."
-
 let configure_default_eio_backend () =
   if (not Sys.win32) && Option.is_none (Sys.getenv_opt "EIO_BACKEND") then
     Unix.putenv "EIO_BACKEND" "posix"
@@ -257,13 +251,12 @@ let run_config env config =
                 print_runner_error error;
                 1))
 
-let run ~passthrough_argv_arguments ~deprecated_name_separator_used
-    command_texts display_command_texts names_csv api_empty_expansion
-    name_separator api_name_separator timings group raw hide_csv api_hide_indexes_csv
+let run ~passthrough_argv_arguments command_texts display_command_texts names_csv
+    api_empty_expansion api_name_separator timings group raw hide_csv api_hide_indexes_csv
     api_raw_indexes_csv api_formatted_indexes_csv api_index_labels_csv no_color
     passthrough_arguments handle_input shell default_input_target success prefix
     prefix_colors_csv prefix_length timestamp_format pad_prefix kill_others
-    kill_others_on_success kill_others_on_fail kill_signal kill_timeout_ms
+    api_kill_others_on_success kill_others_on_fail kill_signal kill_timeout_ms
     max_processes restart_tries restart_after teardown_texts =
   let prefix_length =
     match float_of_string_opt (String.trim prefix_length) with
@@ -278,30 +271,24 @@ let run ~passthrough_argv_arguments ~deprecated_name_separator_used
         (if passthrough_arguments then Some passthrough_argv_arguments else None)
       ~teardown_texts ~command_texts ~display_command_texts ~names_csv
       ~force_empty_expansion:api_empty_expansion
-      ~name_separator:(Option.value api_name_separator ~default:name_separator)
+      ~name_separator:(Option.value api_name_separator ~default:",")
       ~spacious:false ~timings ~group ~raw ~hide_csv ~no_color ~prefix
       ~api_hide_indexes_csv ~api_raw_indexes_csv ~api_formatted_indexes_csv
       ~api_index_labels_csv ~prefix_colors_csv ~prefix_length ~pad_prefix
-      ~timestamp_format ~handle_input ~default_input_target ~success ~kill_others_on_success
-      ~kill_others ~kill_others_on_fail ~kill_signal ~kill_timeout_ms
-      ~max_processes ~restart_tries ~restart_after
+      ~timestamp_format ~handle_input ~default_input_target ~success
+      ~kill_others_on_success:api_kill_others_on_success ~kill_others
+      ~kill_others_on_fail ~kill_signal ~kill_timeout_ms ~max_processes
+      ~restart_tries ~restart_after
   with
   | Error error ->
       Printf.eprintf "Error: %s\n" (Cli_config.error_message error);
       1
-  | Ok config ->
-      print_deprecation_warnings deprecated_name_separator_used;
-      Eio_main.run (fun env -> run_config env config)
+  | Ok config -> Eio_main.run (fun env -> run_config env config)
 
 let names =
   let doc = "Comma-separated command names. Count must match command count." in
   Cmdliner.Arg.(
     value & opt (some string) None & info [ "n"; "names" ] ~docv:"NAMES" ~doc)
-
-let name_separator =
-  let doc = "Character or string used to split --names." in
-  Cmdliner.Arg.(
-    value & opt string "," & info [ "name-separator" ] ~docv:"SEPARATOR" ~doc)
 
 let api_name_separator =
   let doc = "Internal API facade name separator." in
@@ -437,9 +424,9 @@ let kill_others_on_fail =
   let doc = "Cancel sibling commands when one command fails." in
   Cmdliner.Arg.(value & flag & info [ "kill-others-on-fail" ] ~doc)
 
-let kill_others_on_success =
-  let doc = "Cancel sibling commands when one command succeeds." in
-  Cmdliner.Arg.(value & flag & info [ "kill-others-on-success" ] ~doc)
+let api_kill_others_on_success =
+  let doc = "Internal API facade success-only cancellation policy." in
+  Cmdliner.Arg.(value & flag & info [ "api-kill-others-on-success" ] ~doc)
 
 let kill_signal =
   let doc = "Signal to send when cancelling sibling commands." in
@@ -499,20 +486,20 @@ let api_empty_expansion =
   let doc = "Internal API facade empty expansion marker." in
   Cmdliner.Arg.(value & flag & info [ "api-empty-expansion" ] ~doc)
 
-let command ~passthrough_argv_arguments ~deprecated_name_separator_used =
+let command ~passthrough_argv_arguments =
   let doc = "Run several shell commands and prefix their output." in
   let info =
     Cmdliner.Cmd.info "concurrentlyocaml" ~doc ~version:Version.current
   in
   Cmdliner.Cmd.v info
     Cmdliner.Term.(
-      const (run ~passthrough_argv_arguments ~deprecated_name_separator_used)
+      const (run ~passthrough_argv_arguments)
       $ command_texts $ api_display_commands $ names $ api_empty_expansion
-      $ name_separator $ api_name_separator $ timings $ group $ raw $ hide
+      $ api_name_separator $ timings $ group $ raw $ hide
       $ api_hide_indexes $ api_raw_indexes $ api_formatted_indexes
       $ api_index_labels $ no_color $ passthrough_arguments $ handle_input
       $ shell $ default_input_target $ success $ prefix $ prefix_colors $ prefix_length
-      $ timestamp_format $ pad_prefix $ kill_others $ kill_others_on_success
+      $ timestamp_format $ pad_prefix $ kill_others $ api_kill_others_on_success
       $ kill_others_on_fail $ kill_signal $ kill_timeout $ max_processes
       $ restart_tries $ restart_after $ teardown)
 
@@ -531,7 +518,5 @@ let () =
     exit 0);
   let cmd =
     command ~passthrough_argv_arguments:cli_argv.Cli_argv.passthrough_arguments
-      ~deprecated_name_separator_used:
-        cli_argv.Cli_argv.deprecated_name_separator_used
   in
   exit (Cmdliner.Cmd.eval' ~argv:cli_argv.Cli_argv.argv cmd)

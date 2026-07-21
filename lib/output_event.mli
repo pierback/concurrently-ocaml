@@ -8,7 +8,6 @@ type lifecycle =
       { next_attempt : int
       ; delay_ms : int option
       }
-  | Stopping
   | Stopped
   | Stopped_with_status of
       { status : Close_event.exit_status
@@ -29,10 +28,6 @@ type payload =
       { stream : stream
       ; chunk : string
       ; after_command : Command.t option
-      }
-  | Runtime_warning_payload of
-      { stream : stream
-      ; chunk : string
       }
 
 type create_error =
@@ -65,8 +60,6 @@ val lifecycle_with_process_id :
 
 val status_message :
   after_command:Command.t option -> stream:stream -> chunk:string -> t
-
-val runtime_warning : stream:stream -> chunk:string -> t
 
 val command : t -> Command.t option
 val attempt : t -> int

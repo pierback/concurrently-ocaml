@@ -6,6 +6,7 @@ const {
   forceColorLevel,
   formatDate: spawnApiFormatDate,
   shortenText: spawnApiShortenText,
+  timingInfoFromCloseEvent,
   writeTable: spawnApiWriteTable,
 } = require("./output-rendering");
 const { arrayOption } = require("./run-policy");
@@ -21,6 +22,7 @@ const AUTO_PREFIX_COLORS = [
 function spawnApiOutputState(commands, options) {
   return {
     activeGroupPosition: 0,
+    colorLevel: spawnApiColorLevel(options),
     groupBuffers: options.group
       ? new Map(commands.map((command) => [command, []]))
       : undefined,
@@ -206,7 +208,7 @@ function spawnApiTemplatePrefix(command, options, prefix) {
 }
 
 function spawnApiColorizePrefix(prefix, command, options, outputState) {
-  const colorLevel = spawnApiColorLevel(options);
+  const colorLevel = outputState.colorLevel;
   if (colorLevel === 0 || options.prefixColors === false) {
     return prefix;
   }
@@ -571,16 +573,7 @@ function spawnApiWriteTimings(events, options, output) {
         (left, right) =>
           right.timings.durationSeconds - left.timings.durationSeconds
       )
-      .map((event) => ({
-        name: event.command.name,
-        duration: (
-          new Date(event.timings.endDate).getTime() -
-          new Date(event.timings.startDate).getTime()
-        ).toLocaleString(),
-        "exit code": event.exitCode,
-        killed: event.killed,
-        command: event.command.command,
-      })),
+      .map(timingInfoFromCloseEvent),
     output
   );
 }
@@ -593,7 +586,10 @@ function spawnApiLogGlobalEvent(message, options, outputState, output) {
   if (options.prefixColors === false) {
     text = `--> ${message}\n`;
   } else {
-    const reset = spawnApiAnsiColor("reset", spawnApiColorLevel(options));
+    const reset = spawnApiAnsiColor(
+      "reset",
+      outputState.colorLevel
+    );
     text = reset
       ? `${reset.open}-->${reset.close} ${reset.open}${message}${reset.close}\n`
       : `--> ${message}\n`;

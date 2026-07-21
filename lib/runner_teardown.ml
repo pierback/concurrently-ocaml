@@ -159,9 +159,6 @@ let await_process t ~sw ~command ~process =
         force_kill_state := Sent
   in
   let arm_force_kill_deadline delay_seconds =
-    Option.iter
-      (Runner_output.warn_once t.output Runner_output.Kill_timeout)
-      (Run_policy.kill_timeout_warning t.policy);
     force_kill_state := Armed (t.now () +. delay_seconds)
   in
   let schedule_force_kill outcome signal =

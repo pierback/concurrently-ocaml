@@ -6,7 +6,7 @@ Accepted.
 
 ## Context
 
-The project aims to match npm `concurrently` v9 while being faster and simpler
+The project aims to match npm `concurrently` v10 while being faster and simpler
 through OCaml. The current repository links `eio` from `bin/dune`, but the
 implementation still uses blocking Unix process APIs and immediate `waitpid`,
 which makes command execution sequential rather than truly concurrent.

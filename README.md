@@ -5,7 +5,8 @@ An OCaml 5 command runner targeting feature parity with npm `concurrently`.
 See:
 
 - [Project context](CONTEXT.md)
-- [Feature parity architecture plan](docs/architecture/feature-parity-plan.md)
+- [Feature parity map](docs/architecture/feature-parity-plan.md)
+- [Upstream parity authority and final gate](docs/architecture/upstream-parity.md)
 - [ADR 0001: Latest practical OCaml and Eio](docs/adr/0001-latest-practical-ocaml-and-eio.md)
 
 ## Local Development
@@ -31,6 +32,7 @@ npm run compile
 npm run audit:npm-api
 npm run compat:concurrently
 npm run smoke:npm-install:host
+npm run test:parity
 ```
 
 ## Current Packaging State
@@ -123,7 +125,7 @@ per-command Node child-process context without routing to upstream JavaScript.
 ## Implemented CLI Surface
 
 The current native CLI covers the core process-supervision path: multiple
-commands, names, `--name-separator`, prefixes, prefix colors, raw output,
+commands, comma-separated names, prefixes, prefix colors, raw output,
 hidden output, `-m`/`--max-processes`, success conditions, restart tries and delays,
 process-group kill policies, `--ks`/`--kill-signal`, `--kill-timeout`, PID
 prefixes, `--timings`, `--group`, `-i`/`--handle-input`,

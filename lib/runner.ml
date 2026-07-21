@@ -55,7 +55,7 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
   let stdin_should_follow_input =
     Option.is_some input && Option.is_some input_source
   in
-  let run_after_validation () =
+  begin
     let max_processes =
       match Run_policy.max_processes policy with
       | None -> max 1 command_count
@@ -216,7 +216,9 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
     in
     let pending_force_kill_completion command_index =
       Eio.Mutex.use_ro state_mutex (fun () ->
-          Hashtbl.find_opt pending_force_kill_completions command_index)
+          match Hashtbl.find_opt pending_force_kill_completions command_index with
+          | None -> None
+          | Some (completion, _initial_signal) -> Some completion)
     in
     let remove_pending_force_kill command_index =
       Eio.Mutex.use_rw ~protect:true state_mutex (fun () ->
@@ -227,11 +229,6 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
           match Hashtbl.find_opt pending_force_kill_completions command_index with
           | Some (current_completion, _) -> current_completion == completion
           | None -> false)
-    in
-    let pending_force_kill_for_status ~process_status:_ command_index =
-      match pending_force_kill_completion command_index with
-      | None -> None
-      | Some (completion, _initial_signal) -> Some completion
     in
     let command_is_closed command_index =
       Eio.Mutex.use_ro state_mutex (fun () ->
@@ -363,8 +360,6 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
       | [], _ | _, Runner_kill_timeout.Do_nothing
       | _, Runner_kill_timeout.Kill_now -> ()
       | _, Runner_kill_timeout.Kill_after delay_seconds ->
-          Option.iter (Runner_output.warn_once output Runner_output.Kill_timeout)
-            (Run_policy.kill_timeout_warning policy);
           let pending_force_kills =
             Eio.Mutex.use_rw ~protect:true state_mutex (fun () ->
                 running_processes
@@ -697,11 +692,8 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
     in
     let close_event_can_retry_after_parent_signal close_event =
       (not (Close_event.is_success close_event))
-      &&
-      match Run_policy.restart_limit policy with
-      | Run_policy.Infinite_restarts -> true
-      | Run_policy.Finite_restarts restart_tries ->
-          Close_event.attempt close_event < restart_tries
+      && Run_policy.retry_remaining policy
+           ~attempt:(Close_event.attempt close_event)
     in
     let close_event_was_parent_signaled close_event =
       let command_index = Command.index (Close_event.command close_event) in
@@ -760,8 +752,6 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
           ~attempt:(Close_event.attempt close_event)
           (Output_event.Restarting
              { next_attempt; delay_ms = Some (max 0 delay_ms) });
-        Option.iter (Runner_output.warn_once output Runner_output.Restart_delay)
-          (Run_policy.restart_delay_warning policy);
         `Retry (next_attempt, delay_ms))
       else (
         add_close_event close_event;
@@ -933,8 +923,7 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
                     mark_exited command_index;
                     let pending_force_kill =
                       if killed then
-                        pending_force_kill_for_status ~process_status
-                          command_index
+                        pending_force_kill_completion command_index
                       else None
                     in
                     if Option.is_none pending_force_kill then
@@ -1168,22 +1157,10 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
       Runner_teardown.run_all teardown ~parent_signals;
       main_result
     in
-    let create_run_result ?interrupted_signal ~spec ~interrupted close_events =
+    let create_run_result create =
       match recorded_failure () with
       | Some error -> Error error
-      | None -> (
-          match
-            match interrupted_signal with
-            | None ->
-                Run_result.create ~spec ~close_events
-                  ~output_event_count:(Runner_output.count output) ~interrupted
-            | Some signal ->
-                assert interrupted;
-                Run_result.create_interrupted_by_signal ~signal ~spec
-                  ~close_events ~output_event_count:(Runner_output.count output)
-          with
-          | Ok result -> Ok result
-          | Error error -> Error (`Run_result_error error))
+      | None -> Result.map_error (fun error -> `Run_result_error error) (create ())
     in
     match
       Runner_parent_signals.protect
@@ -1231,15 +1208,17 @@ let run ~input ~input_source ~backend ~now ~sleep ~spec ~on_output_event =
     with
     | `Interrupted (_, Error error) -> Error error
     | `Interrupted (signal, Ok close_events) ->
-        create_run_result ~spec ~interrupted:true
-          ~interrupted_signal:signal close_events
+        create_run_result (fun () ->
+            Run_result.create_interrupted_by_signal ~signal ~spec ~close_events
+              ~output_event_count:(Runner_output.count output))
     | `Completed (Error error) -> Error error
     | `Completed (Ok close_events) ->
-        create_run_result ~spec ~interrupted:false close_events
+        create_run_result (fun () ->
+            Run_result.create ~spec ~close_events
+              ~output_event_count:(Runner_output.count output))
     | exception Fatal_runner_error error -> Error error
     | exception exn -> Error (`Unexpected_runner_error (Printexc.to_string exn))
-  in
-  run_after_validation ()
+  end
 
 let close_event_error_message = function
   | `Empty_signal -> "close event signal must not be empty"
@@ -1259,8 +1238,8 @@ let run_result_error_message = function
   | `Attempt_after_success (command_index, attempt) ->
       Printf.sprintf "command %d has attempt %d after success" command_index
         attempt
-  | `Attempt_exceeds_restart_tries (command_index, attempt) ->
-      Printf.sprintf "command %d attempt %d exceeds restart tries" command_index
+  | `Attempt_exceeds_restart_limit (command_index, attempt) ->
+      Printf.sprintf "command %d attempt %d exceeds restart limit" command_index
         attempt
   | `Duplicate_close_event_attempt (command_index, attempt) ->
       Printf.sprintf "command %d has duplicate close event for attempt %d"

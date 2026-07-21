@@ -8,7 +8,6 @@ type lifecycle =
       { next_attempt : int
       ; delay_ms : int option
       }
-  | Stopping
   | Stopped
   | Stopped_with_status of
       { status : Close_event.exit_status
@@ -35,10 +34,6 @@ type t =
       ; chunk : string
       ; after_command : Command.t option
       }
-  | Runtime_warning of
-      { stream : stream
-      ; chunk : string
-      }
 
 type payload =
   | Output_chunk_payload of
@@ -52,10 +47,6 @@ type payload =
       { stream : stream
       ; chunk : string
       ; after_command : Command.t option
-      }
-  | Runtime_warning_payload of
-      { stream : stream
-      ; chunk : string
       }
 
 type create_error =
@@ -79,7 +70,7 @@ let validate_lifecycle ~attempt = function
     else if next_attempt <> attempt + 1 then
       Error (`Invalid_next_attempt (attempt, next_attempt))
     else Ok ()
-  | Started | Stopping | Stopped | Stopped_with_status _ -> Ok ()
+  | Started | Stopped | Stopped_with_status _ -> Ok ()
 
 let output_chunk ~command ~attempt ~process_id ~stream ~chunk ~line_terminated =
   match validate_attempt attempt with
@@ -110,15 +101,13 @@ let lifecycle_with_process_id ~process_id ~command ~attempt ~lifecycle =
 let status_message ~after_command ~stream ~chunk =
   Status_message { stream; chunk; after_command }
 
-let runtime_warning ~stream ~chunk = Runtime_warning { stream; chunk }
-
 let command = function
   | Output_chunk { command; _ } | Lifecycle { command; _ } -> Some command
-  | Status_message _ | Runtime_warning _ -> None
+  | Status_message _ -> None
 
 let attempt = function
   | Output_chunk { attempt; _ } | Lifecycle { attempt; _ } -> attempt
-  | Status_message _ | Runtime_warning _ -> 0
+  | Status_message _ -> 0
 
 let payload = function
   | Output_chunk { process_id; stream; chunk; line_terminated; _ } ->
@@ -126,9 +115,8 @@ let payload = function
   | Lifecycle { lifecycle; _ } -> Lifecycle_payload lifecycle
   | Status_message { stream; chunk; after_command } ->
     Status_message_payload { stream; chunk; after_command }
-  | Runtime_warning { stream; chunk } -> Runtime_warning_payload { stream; chunk }
 
 let process_id = function
   | Output_chunk { process_id; _ } -> process_id
   | Lifecycle { process_id; _ } -> process_id
-  | Status_message _ | Runtime_warning _ -> None
+  | Status_message _ -> None

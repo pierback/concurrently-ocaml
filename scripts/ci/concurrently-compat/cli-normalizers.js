@@ -147,17 +147,6 @@ function normalizePidStdout(stdout) {
     .replace(/^\d+:/gm, "<pid>:");
 }
 
-function normalizeNodeTimerWarningPid(stderr) {
-  return stderr.replace(/^\(node:\d+\)/gm, "(node:<pid>)");
-}
-
-function normalizeNodeTimerWarningAndShellDiagnosticStderr(stderr) {
-  return normalizeNodeTimerWarningPid(stderr).replace(
-    /^sh: line \d+:\s+\d+ Killed: 9\s+sleep 0\.01\n/gm,
-    ""
-  );
-}
-
 function normalizeInvalidWildcardOmissionStderr(stderr) {
   if (stderr.includes("Invalid regular expression: /[/")) {
     return "<invalid wildcard omission>\n";
@@ -257,8 +246,6 @@ module.exports = {
   normalizeHelpStdout,
   normalizeInvalidWildcardOmissionStderr,
   normalizeLineOrderStdout,
-  normalizeNodeTimerWarningAndShellDiagnosticStderr,
-  normalizeNodeTimerWarningPid,
   normalizeNpmLogPaths,
   normalizePartialInputTargetStdout,
   normalizePidStdout,

@@ -89,7 +89,12 @@ let test_runner_preserves_retry_after_parent_signal_spawn_race () =
                 else backend_process ~await:(fun () -> Close_event.Exited 0) ());
           }
         in
-        let policy = ok (Run_policy.create ~restart_tries:1 ()) in
+        let policy =
+          ok
+            (Run_policy.create
+               ~restart_limit:(Run_policy.Finite_restarts 1)
+               ())
+        in
         let spec =
           ok
             (Run_spec.create
@@ -205,7 +210,12 @@ let test_runner_parent_signal_does_not_mark_unsignaled_exit_as_killed () =
   assert (Run_result.exit_code result = 0)
 
 let test_runner_parent_sigint_completes_restartable_running_command () =
-  let policy = ok (Run_policy.create ~restart_tries:1 ()) in
+  let policy =
+    ok
+      (Run_policy.create
+         ~restart_limit:(Run_policy.Finite_restarts 1)
+         ())
+  in
   let signaled = ref false in
   let spawn_count = ref 0 in
   let result =

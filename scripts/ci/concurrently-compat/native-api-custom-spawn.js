@@ -10,7 +10,7 @@ const { createDiscardSink } = require("./native-api-support");
 let nativeApiCustomSpawnPhase = "not started";
 
 async function runNativeApiCustomSpawnWithTimeout(context) {
-  const defaultTimeoutMs = process.platform === "win32" ? 120000 : 30000;
+  const defaultTimeoutMs = process.platform === "win32" ? 120000 : 60000;
   const timeoutMs = Number(
     process.env.CONCURRENTLY_ML_COMPAT_TIMEOUT_MS ?? defaultTimeoutMs
   );

@@ -21,13 +21,13 @@
   ],
   "bin": {
     "concurrently": "npm/bin/concurrently-ml.js",
-    "conc": "npm/bin/concurrently-ml.js",
-    "concml": "npm/bin/concurrently-ml.js"
+    "conc": "npm/bin/concurrently-ml.js"
   },
   "scripts": {
     "setup:opam": "sh scripts/dev/setup-opam-switch.sh",
     "build": "opam exec -- dune build @install",
-    "test": "opam exec -- dune runtest",
+    "test": "npm run test:api && opam exec -- dune runtest",
+    "test:api": "node --test npm/test/*.test.js",
     "compile": "opam exec -- dune build bin/main.exe",
     "package:platform": "node scripts/ci/package-platform.js",
     "smoke:npm-install": "node scripts/ci/smoke-npm-install.js",
@@ -35,6 +35,7 @@
     "smoke:windows-native": "node scripts/ci/smoke-windows-native.js",
     "audit:npm-api": "node scripts/ci/audit-npm-api-surface.js",
     "compat:concurrently": "node scripts/ci/compat-concurrently.js",
+    "test:parity": "npm run test:api && opam exec -- dune build @install @runtest && npm run audit:npm-api && npm run compat:concurrently && npm run smoke:npm-install:host",
     "perf:concurrently": "node scripts/ci/perf-concurrently.js"
   },
   "keywords": [

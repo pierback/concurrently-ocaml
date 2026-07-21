@@ -252,7 +252,7 @@ let expand_wildcard ~script_catalog command_input =
                      match wildcard_match ~pattern ~wildcard_position script with
                      | None -> None
                      | Some match_text ->
-                         (* Published concurrently@9.2.1 applies omissions to the
+                         (* Published concurrently@10.0.0 applies omissions to the
                             full script name and appends that name verbatim to the
                             shell command, including spaces and metacharacters. *)
                          if

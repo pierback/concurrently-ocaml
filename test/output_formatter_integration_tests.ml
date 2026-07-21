@@ -61,8 +61,8 @@ let status_message ?after_command stream chunk =
   Output_event.status_message ~after_command ~stream ~chunk
 
 let test_output_formatter_validation () =
-  assert (Output_formatter.default_labels 3 = Ok [ "0"; "1"; "2" ]);
-  assert (Output_formatter.default_labels 0 = Ok []);
+  assert (Output_formatter.default_labels 3 = [ "0"; "1"; "2" ]);
+  assert (Output_formatter.default_labels 0 = []);
   assert (Result.is_ok (create_formatter []));
   assert (
     Result.is_ok (create_formatter ~prefix_length:(-1.0) [ command 0 "echo api" ]));

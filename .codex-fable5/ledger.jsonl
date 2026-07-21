@@ -1,2 +1,0 @@
-{"ts": "2026-06-28T11:48:32.488391+00:00", "event": "finding_added", "id": "F001", "goal": "", "severity": "high", "source": "review", "title": "Teardown runner swallows backend read and await failures"}
-{"ts": "2026-06-28T13:29:07.746839+00:00", "event": "finding_resolved", "id": "F001", "goal": "", "verify_cmd": "opam exec -- dune runtest test/domain_tests.exe && opam exec -- dune runtest", "verify_evidence": "Focused teardown regressions and the full test suite pass, including new coverage for index-0 teardown signal races and reader-drain after teardown await failure."}

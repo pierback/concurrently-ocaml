@@ -1,7 +1,6 @@
 type t = {
   argv : string array;
   passthrough_arguments : string list;
-  deprecated_name_separator_used : bool;
 }
 
 val requests_help_before_separator : string array -> bool

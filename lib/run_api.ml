@@ -17,7 +17,6 @@ type t = {
 
 type create_error =
   [ `Command_error of int * Command.create_error
-  | `Input_router_error of Input_router.create_error
   | `Run_spec_error of Run_spec.create_error ]
 
 let command ?name ?cwd ?(env = []) ?prefix_color ?raw ?(hidden = false)
@@ -51,13 +50,10 @@ let create_commands ~cwd ~global_raw inputs =
   loop 0 [] inputs
 
 let create_input_router ~handle_input ~commands ~default_input_target =
-  if not handle_input then Ok None
+  if not handle_input then None
   else
-    match
-      Input_router.create ~commands ~index_labels:None ~default_input_target
-    with
-    | Ok router -> Ok (Some router)
-    | Error error -> Error (`Input_router_error error)
+    Some
+      (Input_router.create ~commands ~index_labels:None ~default_input_target)
 
 let create ?cwd ?(policy = Run_policy.default) ?labels ?prefix
     ?(prefix_length = 10.0) ?(pad_prefix = false)
@@ -68,33 +64,31 @@ let create ?cwd ?(policy = Run_policy.default) ?labels ?prefix
   match create_commands ~cwd ~global_raw:raw inputs with
   | Error _ as error -> error
   | Ok commands -> (
-      match
+      let input =
         create_input_router ~handle_input ~commands ~default_input_target
-      with
-      | Error _ as error -> error
-      | Ok input -> (
-          match Run_spec.create ~commands ~policy with
-          | Error error -> Error (`Run_spec_error error)
-          | Ok spec ->
-              Ok
+      in
+      match Run_spec.create ~commands ~policy with
+      | Error error -> Error (`Run_spec_error error)
+      | Ok spec ->
+          Ok
+            {
+              spec;
+              input;
+              formatter_options =
                 {
-                  spec;
-                  input;
-                  formatter_options =
-                    {
-                      labels;
-                      index_labels = None;
-                      prefix;
-                      prefix_length;
-                      pad_prefix;
-                      timestamp_format;
-                      spacious;
-                      timings;
-                      group;
-                      raw;
-                      color_mode;
-                    };
-                }))
+                  labels;
+                  index_labels = None;
+                  prefix;
+                  prefix_length;
+                  pad_prefix;
+                  timestamp_format;
+                  spacious;
+                  timings;
+                  group;
+                  raw;
+                  color_mode;
+                };
+            })
 
 let run t ~input_source ~backend ~now ~sleep ~on_output_event =
   Runner.run ~input:t.input ~input_source ~backend ~now ~sleep ~spec:t.spec
@@ -122,5 +116,4 @@ let error_message = function
   | `Command_error (index, error) ->
       Printf.sprintf "command %d is invalid: %s" index
         (command_error_message error)
-  | `Input_router_error error -> Input_router.error_message error
   | `Run_spec_error error -> run_spec_error_message error

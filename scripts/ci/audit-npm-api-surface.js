@@ -14,11 +14,12 @@ const {
 const { tmpdir } = require("node:os");
 const { isAbsolute, join, relative, resolve } = require("node:path");
 const { spawnSync } = require("node:child_process");
+const upstreamReference = require("./upstream-reference.json");
 
 const packageRoot = resolve(".");
 const publicPackageName = "concurrently";
 const upstreamPackageName = "upstream-concurrently";
-const upstreamVersion = "10.0.0";
+const upstreamVersion = upstreamReference.version;
 const tempDir = mkdtempSync(join(tmpdir(), "concurrently-ml-api-surface-"));
 const npmCacheDir = join(tempDir, "npm-cache");
 
@@ -46,6 +47,7 @@ try {
   const localPackageJson = readJson(join(localPackageDir, "package.json"));
   const upstreamPackageJson = readJson(join(upstreamPackageDir, "package.json"));
 
+  assertUpstreamPackage(projectDir, upstreamPackageJson);
   assertNoUpstreamRuntimeDependency(localPackageJson);
   assertBinSurface(localPackageJson.bin, upstreamPackageJson.bin, localPackageDir);
   assertExportsSurface(
@@ -66,6 +68,14 @@ try {
   console.log(`api surface audit ok: concurrently@${upstreamVersion}`);
 } finally {
   rmSync(tempDir, { recursive: true, force: true });
+}
+
+function assertUpstreamPackage(projectDir, packageJson) {
+  assertEqual(packageJson.name, upstreamReference.package, "upstream package name");
+  assertEqual(packageJson.version, upstreamReference.version, "upstream package version");
+  const installLock = readJson(join(projectDir, "node_modules", ".package-lock.json"));
+  const lockEntry = installLock.packages?.[`node_modules/${upstreamPackageName}`];
+  assertEqual(lockEntry?.integrity, upstreamReference.npmIntegrity, "upstream npm integrity");
 }
 
 function assertNoUpstreamRuntimeDependency(packageJson) {
@@ -631,10 +641,11 @@ function assertBinSurface(localBin, upstreamBin, localPackageDir) {
       throw new Error(`missing upstream bin alias: ${binName}`);
     }
   }
-  const extraBinNames = Object.keys(localBin)
-    .filter((binName) => !Object.prototype.hasOwnProperty.call(upstreamBin, binName))
-    .sort();
-  assertJsonEqual(extraBinNames, ["concml"], "extra bin aliases");
+  assertJsonEqual(
+    Object.keys(localBin).sort(),
+    Object.keys(upstreamBin).sort(),
+    "bin aliases"
+  );
   for (const [binName, binPath] of Object.entries(localBin)) {
     assertPackageFile(localPackageDir, binPath, `bin.${binName}`);
     if (typeof binName !== "string" || binName.length === 0) {

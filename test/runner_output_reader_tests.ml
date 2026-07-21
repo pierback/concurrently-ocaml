@@ -10,9 +10,7 @@ let output_chunks events =
   |> List.filter_map (fun event ->
       match Output_event.payload event with
       | Output_event.Output_chunk_payload { chunk; _ } -> Some chunk
-      | Output_event.Lifecycle_payload _ | Output_event.Status_message_payload _
-      | Output_event.Runtime_warning_payload _
-        ->
+      | Output_event.Lifecycle_payload _ | Output_event.Status_message_payload _ ->
           None)
 
 let output_line_terminated events =
@@ -21,9 +19,7 @@ let output_line_terminated events =
       match Output_event.payload event with
       | Output_event.Output_chunk_payload { line_terminated; _ } ->
           Some line_terminated
-      | Output_event.Lifecycle_payload _ | Output_event.Status_message_payload _
-      | Output_event.Runtime_warning_payload _
-        ->
+      | Output_event.Lifecycle_payload _ | Output_event.Status_message_payload _ ->
           None)
 
 let read_events command source_text =

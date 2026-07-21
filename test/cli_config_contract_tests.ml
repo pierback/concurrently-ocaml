@@ -58,7 +58,8 @@ let test_cli_config_validation () =
   assert (Run_policy.kill_timeout_ms policy = Some 250);
   assert (Run_policy.success_condition policy = Run_policy.Commands [ 1 ]);
   assert (Run_policy.max_processes policy = Some 2);
-  assert (Run_policy.restart_tries policy = 2);
+  assert (
+    Run_policy.restart_limit policy = Run_policy.Finite_restarts 2);
   assert (not (Run_policy.drop_failed_close_events_for_success policy));
   assert (Run_policy.restart_delay policy = Run_policy.Exponential_backoff);
   assert (Cli_config.input config = None);
@@ -93,13 +94,17 @@ let test_cli_config_validation () =
   let fractional_restart_policy =
     Cli_config.policy (ok (restart_tries_config "1.5"))
   in
-  assert (Run_policy.restart_tries fractional_restart_policy = 1);
+  assert (
+    Run_policy.restart_limit fractional_restart_policy
+    = Run_policy.Finite_restarts 1);
   assert (
     Run_policy.drop_failed_close_events_for_success fractional_restart_policy);
   let invalid_restart_policy =
     Cli_config.policy (ok (restart_tries_config "bogus"))
   in
-  assert (Run_policy.restart_tries invalid_restart_policy = 0);
+  assert (
+    Run_policy.restart_limit invalid_restart_policy
+    = Run_policy.Finite_restarts 0);
   assert (Run_policy.drop_failed_close_events_for_success invalid_restart_policy);
   let kill_signal_policy kill_signal =
     Cli_config.policy
@@ -128,7 +133,9 @@ let test_cli_config_validation () =
   let infinite_restart_policy =
     Cli_config.policy (ok (restart_tries_config "Infinity"))
   in
-  assert (Run_policy.restart_tries infinite_restart_policy = -1);
+  assert (
+    Run_policy.restart_limit infinite_restart_policy
+    = Run_policy.Infinite_restarts);
   assert (
     not
       (Run_policy.drop_failed_close_events_for_success infinite_restart_policy));
@@ -147,8 +154,8 @@ let test_cli_config_validation () =
             ~restart_after:"bogus" ~teardown_texts:[]))
   in
 	  assert (
-	    Run_policy.restart_delay_warning invalid_restart_after_policy
-	    = Some Run_policy.Timeout_nan);
+	    Run_policy.restart_delay invalid_restart_after_policy
+	    = Run_policy.Fixed_delay_ms 0);
 	  let blank_restart_after_policy =
 	    Cli_config.policy
 	      (ok
@@ -166,11 +173,12 @@ let test_cli_config_validation () =
 	  assert (
 	    Run_policy.restart_delay blank_restart_after_policy
 	    = Run_policy.Fixed_delay_ms 0);
-	  assert (Run_policy.restart_delay_warning blank_restart_after_policy = None);
   let negative_restart_policy =
     Cli_config.policy (ok (restart_tries_config "-1"))
   in
-  assert (Run_policy.restart_tries negative_restart_policy = -1);
+  assert (
+    Run_policy.restart_limit negative_restart_policy
+    = Run_policy.Infinite_restarts);
   assert (
     not
       (Run_policy.drop_failed_close_events_for_success negative_restart_policy));
@@ -199,9 +207,9 @@ let test_cli_config_validation () =
       (Cli_config.policy (ok (kill_timeout_config "-1")))
     = Some (-1));
   assert (
-    Run_policy.kill_timeout_warning
+    Run_policy.kill_timeout_ms
       (Cli_config.policy (ok (kill_timeout_config "-1.5")))
-    = Some (Run_policy.Timeout_negative "-1.5"));
+    = Some (-1));
   assert (
     Run_policy.kill_timeout_ms
       (Cli_config.policy (ok (kill_timeout_config "bogus")))

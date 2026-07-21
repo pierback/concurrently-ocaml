@@ -11,9 +11,6 @@ type t =
   ; default_target_index : int option
   }
 
-type create_error =
-  [ `Empty_default_input_target ]
-
 let command_index_label index_labels command_index =
   match index_labels with
   | Some labels when command_index < Array.length labels -> labels.(command_index)
@@ -43,13 +40,12 @@ let create ~commands ~index_labels ~default_input_target =
   let target = String.trim default_input_target in
   let target = if String.equal target "" then "0" else target in
   let index_labels = Option.map Array.of_list index_labels in
-  Ok
-    {
-      commands;
-      index_labels;
-      default_target = target;
-      default_target_index = resolve_target ?index_labels commands target;
-    }
+  {
+    commands;
+    index_labels;
+    default_target = target;
+    default_target_index = resolve_target ?index_labels commands target;
+  }
 
 let split_target_prefix input =
   match String.index_opt input ':' with
@@ -77,6 +73,3 @@ let route t input =
     ; target_label = t.default_target
     ; payload = input
     }
-
-let error_message = function
-  | `Empty_default_input_target -> "default input target must not be empty"

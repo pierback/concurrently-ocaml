@@ -89,6 +89,19 @@ function spawnApiFormatDate(date, format = "yyyy-MM-dd HH:mm:ss.SSS") {
   );
 }
 
+function timingInfoFromCloseEvent({ command, timings, killed, exitCode }) {
+  return {
+    name: command.name,
+    duration: (
+      new Date(timings.endDate).getTime() -
+      new Date(timings.startDate).getTime()
+    ).toLocaleString(),
+    "exit code": exitCode,
+    killed,
+    command: command.command,
+  };
+}
+
 function spawnApiPad2(value) {
   return String(value).padStart(2, "0");
 }
@@ -121,5 +134,6 @@ module.exports = {
   forceColorLevel,
   formatDate: spawnApiFormatDate,
   shortenText: spawnApiShortenText,
+  timingInfoFromCloseEvent,
   writeTable: spawnApiWriteTable,
 };

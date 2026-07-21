@@ -209,33 +209,65 @@ export declare class Logger {
 }
 
 export declare class InputHandler implements FlowController {
-  constructor(options: unknown);
-  handle(commands: Command[]): { commands: Command[] };
+  constructor(options: {
+    inputStream?: Readable;
+    logger: Logger;
+    defaultInputTarget?: CommandIdentifier;
+    pauseInputStreamOnFinish?: boolean;
+  });
+  handle(commands: Command[]): {
+    commands: Command[];
+    onFinish?: () => void;
+  };
 }
 export declare class KillOnSignal implements FlowController {
-  constructor(options: unknown);
+  constructor(options: {
+    process: EventEmitter;
+    abortController?: AbortController;
+  });
   handle(commands: Command[]): { commands: Command[] };
 }
 export declare class KillOthers implements FlowController {
-  constructor(options: unknown);
-  handle(commands: Command[]): { commands: Command[] };
+  constructor(options: {
+    logger: Logger;
+    abortController?: AbortController;
+    conditions: ProcessCloseCondition | ProcessCloseCondition[];
+    killSignal?: string;
+    timeoutMs?: number;
+  });
+  handle(commands: Command[]): {
+    commands: Command[];
+    onFinish?: () => void;
+  };
   maybeForceKill(commands: Command[]): void;
 }
 export declare class LogError implements FlowController {
-  constructor(options: unknown);
-  handle(commands: Command[]): { commands: Command[] };
+  constructor(options: { logger: Logger });
+  handle(commands: Command[]): {
+    commands: Command[];
+    onFinish?: () => void;
+  };
 }
 export declare class LogExit implements FlowController {
-  constructor(options: unknown);
-  handle(commands: Command[]): { commands: Command[] };
+  constructor(options: { logger: Logger });
+  handle(commands: Command[]): {
+    commands: Command[];
+    onFinish?: () => void;
+  };
 }
 export declare class LogOutput implements FlowController {
-  constructor(options: unknown);
-  handle(commands: Command[]): { commands: Command[] };
+  constructor(options: { logger: Logger });
+  handle(commands: Command[]): {
+    commands: Command[];
+    onFinish?: () => void;
+  };
 }
 export declare class LogTimings implements FlowController {
-  constructor(options: unknown);
-  handle(commands: Command[]): { commands: Command[] };
+  constructor(options: { logger?: Logger; timestampFormat?: string });
+  handle(commands: Command[]): {
+    commands: Command[];
+    onFinish?: () => void;
+  };
   printExitInfoTimingTable(exitInfos: CloseEvent[]): CloseEvent[];
   static mapCloseEventToTimingInfo(event: CloseEvent): {
     name: string;
@@ -247,7 +279,12 @@ export declare class LogTimings implements FlowController {
 }
 export declare class RestartProcess implements FlowController {
   readonly tries: number;
-  constructor(options: unknown);
+  constructor(options: {
+    delay?: RestartDelay;
+    tries?: number;
+    logger: Logger;
+    scheduler?: Rx.SchedulerLike;
+  });
   handle(commands: Command[]): { commands: Command[] };
 }
 

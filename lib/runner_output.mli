@@ -1,7 +1,5 @@
 type t
 
-type warning = Restart_delay | Kill_timeout
-
 val create_error_message : Output_event.create_error -> string
 
 val create :
@@ -52,5 +50,4 @@ val output_chunk_best_effort :
   line_terminated:bool ->
   unit
 
-val warn_once : t -> warning -> Run_policy.timer_warning -> unit
 val count : t -> int

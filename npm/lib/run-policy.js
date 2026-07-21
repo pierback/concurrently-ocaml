@@ -25,6 +25,7 @@ function isNonEmptyString(value) {
 function requiresSpawnBackend(commands, options) {
   return Boolean(
     options.spawn !== undefined ||
+    arrayOption(options.controllers).length > 0 ||
     commandsNeedSpawnApi(commands) ||
     loggerNeedsCommandContext(options.logger) ||
     teardownNeedsSpawnApiShell(options) ||

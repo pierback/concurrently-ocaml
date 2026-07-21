@@ -10,19 +10,16 @@ type success_condition =
 
 type restart_delay = Fixed_delay_ms of int | Exponential_backoff
 type restart_limit = Finite_restarts of int | Infinite_restarts
-type timer_warning = Timeout_nan | Timeout_negative of string
 
 type t = {
   kill_others_on : kill_condition list;
   kill_signal : kill_signal;
   kill_timeout_ms : int option;
-  kill_timeout_warning : timer_warning option;
   max_processes : int option;
   success_condition : success_condition;
   drop_failed_close_events_for_success : bool;
   restart_limit : restart_limit;
   restart_delay : restart_delay;
-  restart_delay_warning : timer_warning option;
   teardown : Command.t list;
 }
 
@@ -31,6 +28,7 @@ type create_error =
   | `Empty_signal
   | `Exponential_restart_delay_overflow
   | `Max_processes_less_than_one
+  | `Negative_restart_limit
   | `Negative_success_command_index ]
 
 let default =
@@ -38,13 +36,11 @@ let default =
     kill_others_on = [];
     kill_signal = Sigterm;
     kill_timeout_ms = None;
-    kill_timeout_warning = None;
     max_processes = None;
     success_condition = All;
     drop_failed_close_events_for_success = false;
     restart_limit = Finite_restarts 0;
     restart_delay = Fixed_delay_ms 0;
-    restart_delay_warning = None;
     teardown = [];
   }
 
@@ -74,12 +70,11 @@ let validate_restart_delay_bounds ~restart_tries = function
         | Some _ -> Ok ()
         | None -> Error `Exponential_restart_delay_overflow)
 
-let restart_limit_of_tries restart_tries =
-  if restart_tries < 0 then Infinite_restarts else Finite_restarts restart_tries
-
 let validate_restart_limit_delay_bounds restart_limit restart_delay =
   match restart_limit with
   | Infinite_restarts -> Ok ()
+  | Finite_restarts restart_tries when restart_tries < 0 ->
+      Error `Negative_restart_limit
   | Finite_restarts restart_tries ->
       validate_restart_delay_bounds ~restart_tries restart_delay
 
@@ -93,9 +88,9 @@ let validate_success_condition = function
 let create ?(kill_others_on = []) ?(kill_signal = default.kill_signal)
     ?kill_timeout_ms ?max_processes
     ?(success_condition = default.success_condition)
-    ?(drop_failed_close_events_for_success = false) ?(restart_tries = 0)
-    ?(restart_delay = default.restart_delay) ?restart_delay_warning
-    ?kill_timeout_warning ?(teardown = []) () =
+    ?(drop_failed_close_events_for_success = false)
+    ?(restart_limit = default.restart_limit)
+    ?(restart_delay = default.restart_delay) ?(teardown = []) () =
   if has_duplicates kill_others_on then Error `Duplicate_kill_condition
   else
     match validate_signal kill_signal with
@@ -107,7 +102,6 @@ let create ?(kill_others_on = []) ?(kill_signal = default.kill_signal)
             match validate_success_condition success_condition with
             | Error error -> Error error
             | Ok () -> (
-                let restart_limit = restart_limit_of_tries restart_tries in
                 match
                   validate_restart_limit_delay_bounds restart_limit
                     restart_delay
@@ -119,13 +113,11 @@ let create ?(kill_others_on = []) ?(kill_signal = default.kill_signal)
                         kill_others_on;
                         kill_signal;
                         kill_timeout_ms;
-                        kill_timeout_warning;
                         max_processes;
                         success_condition;
                         drop_failed_close_events_for_success;
                         restart_limit;
                         restart_delay;
-                        restart_delay_warning;
                         teardown;
                       })))
 
@@ -138,15 +130,8 @@ let success_condition t = t.success_condition
 let drop_failed_close_events_for_success t =
   t.drop_failed_close_events_for_success
 
-let restart_tries t =
-  match t.restart_limit with
-  | Finite_restarts restart_tries -> restart_tries
-  | Infinite_restarts -> -1
-
 let restart_limit t = t.restart_limit
 let restart_delay t = t.restart_delay
-let restart_delay_warning t = t.restart_delay_warning
-let kill_timeout_warning t = t.kill_timeout_warning
 
 let restart_delay_ms t ~next_attempt =
   match t.restart_delay with
@@ -163,23 +148,20 @@ let attempt_exceeds_restart_limit t ~attempt =
   | Infinite_restarts -> false
   | Finite_restarts restart_tries -> attempt > restart_tries
 
+let retry_remaining t ~attempt =
+  match t.restart_limit with
+  | Infinite_restarts -> true
+  | Finite_restarts restart_tries -> attempt < restart_tries
+
 let should_retry t close_event =
   (not (Close_event.killed close_event))
   && (not (Close_event.is_success close_event))
-  &&
-  match t.restart_limit with
-  | Infinite_restarts -> true
-  | Finite_restarts restart_tries ->
-      Close_event.attempt close_event < restart_tries
+  && retry_remaining t ~attempt:(Close_event.attempt close_event)
 
 let close_event_completes_command t close_event =
   Close_event.killed close_event
   || Close_event.is_success close_event
-  ||
-  match t.restart_limit with
-  | Infinite_restarts -> false
-  | Finite_restarts restart_tries ->
-      Close_event.attempt close_event >= restart_tries
+  || not (retry_remaining t ~attempt:(Close_event.attempt close_event))
 
 let collect_retry_close_events t =
   match t.restart_limit with

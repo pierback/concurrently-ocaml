@@ -34,6 +34,19 @@ const {
 const { closeEventsSucceeded } = require("./run-result");
 
 const SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"];
+const SIGNAL_SUBSCRIBERS = new Map(
+  SIGNALS.map((signal) => [signal, new Set()])
+);
+const SIGNAL_DISPATCHERS = new Map(
+  SIGNALS.map((signal) => [
+    signal,
+    () => {
+      for (const listener of [...SIGNAL_SUBSCRIBERS.get(signal)]) {
+        listener(signal);
+      }
+    },
+  ])
+);
 const SIGNAL_VALIDATION_PID = 2147483647;
 const KILLED_COMMAND_CLEANUP_RETRY_DELAYS_MS = [25, 100, 500, 1000, 2500];
 
@@ -113,6 +126,9 @@ function runSpawnBackend(commands, options) {
     };
     scheduler.settle = settle;
     const startNext = () => {
+      if (spawnApiAbortRequested(options)) {
+        scheduler.stopStarting = true;
+      }
       while (
         !scheduler.settled &&
         !scheduler.stopStarting &&
@@ -165,6 +181,15 @@ function runSpawnBackend(commands, options) {
   });
 
   return result;
+}
+
+function spawnApiAbortRequested(options) {
+  return Boolean(
+    options.abortSignal?.aborted ||
+      arrayOption(options.controllers).some(
+        (controller) => controller?.abortController?.signal?.aborted
+      )
+  );
 }
 
 function subscribeSpawnApiCommand(command, state) {
@@ -653,15 +678,31 @@ function spawnApiAttachSignals(commands, running, scheduler, options) {
     });
   };
   for (const signal of SIGNALS) {
-    process.on(signal, signalListener);
+    spawnApiSubscribeSignal(signal, signalListener);
   }
   return {
     finish() {
       for (const signal of SIGNALS) {
-        process.off(signal, signalListener);
+        spawnApiUnsubscribeSignal(signal, signalListener);
       }
     },
   };
+}
+
+function spawnApiSubscribeSignal(signal, listener) {
+  const subscribers = SIGNAL_SUBSCRIBERS.get(signal);
+  if (subscribers.size === 0) {
+    process.on(signal, SIGNAL_DISPATCHERS.get(signal));
+  }
+  subscribers.add(listener);
+}
+
+function spawnApiUnsubscribeSignal(signal, listener) {
+  const subscribers = SIGNAL_SUBSCRIBERS.get(signal);
+  subscribers.delete(listener);
+  if (subscribers.size === 0) {
+    process.off(signal, SIGNAL_DISPATCHERS.get(signal));
+  }
 }
 
 function spawnApiMarkRunningCommandsKilled(running, signal) {

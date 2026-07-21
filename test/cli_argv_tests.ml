@@ -48,8 +48,7 @@ let test_extracts_passthrough_arguments () =
     [| "conc"; "--passthrough-arguments"; "echo {1}" |]
     normalized.Cli_argv.argv;
   assert (
-    normalized.Cli_argv.passthrough_arguments = [ "--watch"; "client build" ]);
-  assert (not normalized.Cli_argv.deprecated_name_separator_used)
+    normalized.Cli_argv.passthrough_arguments = [ "--watch"; "client build" ])
 
 let test_passthrough_separator_before_commands_leaves_no_commands () =
   let normalized = Cli_argv.normalize [| "conc"; "-P"; "--"; "--watch" |] in
@@ -74,7 +73,6 @@ let test_treats_removed_name_separator_as_unknown () =
   let normalized =
     Cli_argv.normalize [| "conc"; "--name-separator"; "|"; "echo ok" |]
   in
-  assert (not normalized.Cli_argv.deprecated_name_separator_used);
   assert_array_equal [| "conc"; "echo ok" |] normalized.Cli_argv.argv;
   let normalized =
     Cli_argv.normalize
@@ -92,6 +90,30 @@ let test_treats_removed_name_separator_as_unknown () =
     [| "conc"; "--names"; "a,b"; "printf one"; "printf two" |]
     normalized.Cli_argv.argv;
   assert (normalized.Cli_argv.passthrough_arguments = [])
+
+let test_keeps_success_only_kill_policy_internal () =
+  let normalized =
+    Cli_argv.normalize
+      [| "conc"; "--kill-others-on-success"; "printf one"; "printf two" |]
+  in
+  assert_array_equal [| "conc"; "printf two" |] normalized.Cli_argv.argv;
+  let normalized =
+    Cli_argv.normalize
+      [|
+        "conc";
+        "--api-kill-others-on-success";
+        "printf one";
+        "printf two";
+      |]
+  in
+  assert_array_equal
+    [|
+      "conc";
+      "--api-kill-others-on-success";
+      "printf one";
+      "printf two";
+    |]
+    normalized.Cli_argv.argv
 
 let test_normalizes_negative_option_values () =
   let normalized =
@@ -413,6 +435,7 @@ let () =
   test_extracts_passthrough_arguments ();
   test_passthrough_separator_before_commands_leaves_no_commands ();
   test_treats_removed_name_separator_as_unknown ();
+  test_keeps_success_only_kill_policy_internal ();
   test_normalizes_negative_option_values ();
   test_drops_dangling_value_options_before_unknown_options ();
   test_drops_dangling_value_options_before_boolean_options ();

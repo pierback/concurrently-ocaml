@@ -78,10 +78,12 @@ let specs =
       ~env_names:[ "CONCURRENTLY_MAX_PROCESSES"; "CONCURRENTLY_M" ]
       ~env_order:1 ~accepts_negative_number_value:true
       ~accepts_negative_percent_value:true ~emitted_option:"--max-processes";
-    boolean [ "-h"; "--help" ] ~negated_names:[ "--no-help" ]
+    boolean [ "-h"; "--help" ] ~env_names:[ "CONCURRENTLY_HELP" ]
+      ~env_order:26 ~negated_names:[ "--no-help" ]
       ~emitted_boolean_option:"--help" ~boolean_order:1;
     boolean
       [ "-v"; "-V"; "--version" ]
+      ~env_names:[ "CONCURRENTLY_VERSION" ] ~env_order:27
       ~negated_names:[ "--no-version" ] ~emitted_boolean_option:"--version"
       ~boolean_order:2;
     value [ "-n"; "--names" ]
@@ -128,7 +130,8 @@ let specs =
     boolean [ "--timings" ] ~env_names:[ "CONCURRENTLY_TIMINGS" ] ~env_order:9
       ~negated_names:[ "--no-timings" ] ~emitted_boolean_option:"--timings"
       ~boolean_order:10;
-    value [ "--shell" ] ~emitted_option:"--shell";
+    value [ "--shell" ] ~env_names:[ "CONCURRENTLY_SHELL" ] ~env_order:3
+      ~emitted_option:"--shell";
     boolean [ "--pad-prefix" ]
       ~env_names:[ "CONCURRENTLY_PAD_PREFIX" ]
       ~env_order:15 ~negated_names:[ "--no-pad-prefix" ]
@@ -149,11 +152,8 @@ let specs =
       ~env_names:[ "CONCURRENTLY_KILL_OTHERS"; "CONCURRENTLY_K" ]
       ~env_order:19 ~negated_names:[ "--no-kill-others" ]
       ~emitted_boolean_option:"--kill-others" ~boolean_order:8;
-    boolean [ "--kill-others-on-success" ]
-      ~env_names:[ "CONCURRENTLY_KILL_OTHERS_ON_SUCCESS" ]
-      ~env_order:20
-      ~negated_names:[ "--no-kill-others-on-success" ]
-      ~emitted_boolean_option:"--kill-others-on-success" ~boolean_order:9;
+    boolean [ "--api-kill-others-on-success" ] ~negated_names:[]
+      ~emitted_boolean_option:"--api-kill-others-on-success" ~boolean_order:98;
     boolean
       [ "--kill-others-on-fail" ]
       ~env_names:[ "CONCURRENTLY_KILL_OTHERS_ON_FAIL" ]

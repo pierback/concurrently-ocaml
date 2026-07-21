@@ -6,14 +6,10 @@ type route =
 
 type t
 
-type create_error =
-  [ `Empty_default_input_target ]
-
 val create :
   commands:Command.t list ->
   index_labels:string list option ->
   default_input_target:string ->
-  (t, create_error) result
+  t
 
 val route : t -> string -> route
-val error_message : create_error -> string

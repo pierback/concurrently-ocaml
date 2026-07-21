@@ -84,6 +84,20 @@ let test_env_boolean_values_match_yargs_true_only_coercion () =
   in
   assert_array_equal [| "conc"; "--timings"; "printf one" |] actual
 
+let test_adds_builtin_and_shell_env_options () =
+  let actual =
+    add
+      [
+        ("CONCURRENTLY_SHELL", "/bin/bash");
+        ("CONCURRENTLY_HELP", "true");
+        ("CONCURRENTLY_VERSION", "true");
+      ]
+      [| "conc" |]
+  in
+  assert_array_equal
+    [| "conc"; "--shell=/bin/bash"; "--help"; "--version" |]
+    actual
+
 let test_empty_argv_receives_env_arguments () =
   let actual =
     add
@@ -98,4 +112,5 @@ let () =
   test_env_aliases_match_yargs_aliases ();
   test_env_full_names_override_aliases ();
   test_env_boolean_values_match_yargs_true_only_coercion ();
+  test_adds_builtin_and_shell_env_options ();
   test_empty_argv_receives_env_arguments ()

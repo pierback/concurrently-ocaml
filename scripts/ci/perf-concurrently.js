@@ -4,7 +4,7 @@ const { existsSync } = require("node:fs");
 const { resolve, sep } = require("node:path");
 const { spawnSync } = require("node:child_process");
 
-const npmConcurrentlyVersion = "10.0.0";
+const { version: npmConcurrentlyVersion } = require("./upstream-reference.json");
 const localBinary = resolve("_build", "default", "bin", "main.exe");
 
 const options = parseOptions(process.argv.slice(2));

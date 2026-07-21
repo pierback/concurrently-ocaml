@@ -504,14 +504,6 @@ async function runNativeApiCustomTermination({
       const { spawn } = require("node:child_process");
       const api = require(${JSON.stringify(resolve("index.js"))});
       const sink = new Writable({ write(_chunk, _encoding, callback) { callback(); } });
-      api.concurrently([${JSON.stringify("node -e \"process.exit(1)\"")}], {
-        outputStream: sink,
-        restartDelay: 5000,
-        restartTries: 1,
-        spawn(command, options) {
-          return spawn(command, [], options);
-        },
-      }).result.catch(() => {}).then(() => process.stdout.write("done"));
       const sendSelfSigterm = () => {
         if (process.platform === "win32") {
           process.emit("SIGTERM", "SIGTERM");
@@ -519,7 +511,27 @@ async function runNativeApiCustomTermination({
         }
         process.kill(process.pid, "SIGTERM");
       };
-      setTimeout(sendSelfSigterm, 100);
+      let signalSent = false;
+      const run = api.concurrently([${JSON.stringify("node -e \"process.exit(1)\"")}], {
+        controllers: [{
+          handle(commands) {
+            const subscription = commands[0].timer.subscribe((event) => {
+              if (event.endDate && !signalSent) {
+                signalSent = true;
+                setImmediate(sendSelfSigterm);
+              }
+            });
+            return { commands, onFinish: () => subscription.unsubscribe() };
+          },
+        }],
+        outputStream: sink,
+        restartDelay: 5000,
+        restartTries: 1,
+        spawn(command, options) {
+          return spawn(command, [], options);
+        },
+      });
+      run.result.catch(() => {}).then(() => process.stdout.write("done"));
     `;
     const signalPendingRestart = spawnSync(
       process.execPath,

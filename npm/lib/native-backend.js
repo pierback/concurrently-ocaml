@@ -640,7 +640,7 @@ function applyKillOthers(args, options) {
   if (wantsSuccess && wantsFailure) {
     args.push("--kill-others");
   } else if (wantsSuccess) {
-    args.push("--kill-others-on-success");
+    args.push("--api-kill-others-on-success");
   } else if (wantsFailure) {
     args.push("--kill-others-on-fail");
   }

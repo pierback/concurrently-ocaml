@@ -18,7 +18,6 @@ type create_error =
   [ `Command_error of int * Command.create_error
   | `Command_input_error of Cli_command_inputs.expand_error
   | `Display_command_count_mismatch of int * int
-  | `Input_router_error of Input_router.create_error
   | `Run_policy_error of Run_policy.create_error
   | `Run_spec_error of Run_spec.create_error ]
 

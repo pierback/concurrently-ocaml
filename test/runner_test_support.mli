@@ -1,6 +1,5 @@
 val output_chunks : Concurrentlyocaml.Output_event.t list -> string list
 val status_messages : Concurrentlyocaml.Output_event.t list -> string list
-val runtime_warnings : Concurrentlyocaml.Output_event.t list -> string list
 val stopped_command_indexes : Concurrentlyocaml.Output_event.t list -> int list
 
 val run_with_events :

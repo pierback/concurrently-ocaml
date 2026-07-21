@@ -13,7 +13,6 @@ type t
 
 type create_error =
   [ `Command_error of int * Command.create_error
-  | `Input_router_error of Input_router.create_error
   | `Run_spec_error of Run_spec.create_error ]
 
 val command :

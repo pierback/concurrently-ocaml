@@ -1,11 +1,13 @@
 module Command = Concurrentlyocaml.Command
 module Close_event = Concurrentlyocaml.Close_event
 module Output_event = Concurrentlyocaml.Output_event
+module Run_api = Concurrentlyocaml.Run_api
 module Run_policy = Concurrentlyocaml.Run_policy
 module Run_result = Concurrentlyocaml.Run_result
 module Runner_backend = Concurrentlyocaml.Runner_backend
 module Runner = Concurrentlyocaml.Runner
 module Run_spec = Concurrentlyocaml.Run_spec
+module Posix_runner_backend = Concurrentlyocaml_posix.Posix_runner_backend
 
 open Domain_test_support
 open Runner_test_support
@@ -94,6 +96,33 @@ let test_runner_applies_command_cwd () =
         ~finally:(fun () -> close_in input)
         (fun () -> assert (input_line input = "from-cwd")))
 
+let test_run_api_executes_structured_commands () =
+  let request =
+    ok
+      (Run_api.create
+         [
+           Run_api.command ~name:"api"
+             ~env:[ ("CONCURRENTLY_TEST_VALUE", "from-run-api") ]
+             "printf \"$CONCURRENTLY_TEST_VALUE\"";
+         ])
+  in
+  let result, events =
+    Eio_main.run (fun env ->
+        let clock = Eio.Stdenv.clock env in
+        let events = ref [] in
+        let result =
+          Run_api.run request ~input_source:None
+            ~backend:Posix_runner_backend.backend
+            ~now:(fun () -> Eio.Time.now clock)
+            ~sleep:(fun seconds -> Eio.Time.sleep clock seconds)
+            ~on_output_event:(fun event -> events := event :: !events)
+        in
+        (result, List.rev !events))
+  in
+  let result = ok result in
+  assert (Run_result.exit_code result = 0);
+  assert (output_chunks events = [ "from-run-api" ])
+
 let test_runner_drains_oversized_output_lines () =
   let policy = Run_policy.default in
   let result, events =
@@ -126,7 +155,12 @@ let test_runner_respects_max_processes () =
 let test_runner_retries_failed_commands () =
   let marker = Filename.temp_file "concurrently-retry" ".state" in
   Sys.remove marker;
-  let policy = ok (Run_policy.create ~restart_tries:1 ()) in
+  let policy =
+    ok
+      (Run_policy.create
+         ~restart_limit:(Run_policy.Finite_restarts 1)
+         ())
+  in
   let command =
     Printf.sprintf
       "if [ ! -f %s ]; then touch %s; exit 1; else printf retry-ok; fi"
@@ -157,7 +191,9 @@ let test_runner_retries_failed_commands () =
 let test_runner_infinite_restart_keeps_result_bounded () =
   let marker = Filename.temp_file "concurrently-infinite-retry" ".state" in
   Sys.remove marker;
-  let policy = ok (Run_policy.create ~restart_tries:(-1) ()) in
+  let policy =
+    ok (Run_policy.create ~restart_limit:Run_policy.Infinite_restarts ())
+  in
   let command =
     Printf.sprintf
       "if [ ! -f %s ]; then touch %s; exit 1; else printf retry-ok; fi"
@@ -181,7 +217,7 @@ let test_runner_infinite_restart_keeps_result_bounded () =
 let test_runner_applies_restart_delay () =
   let policy =
     ok
-      (Run_policy.create ~restart_tries:2
+      (Run_policy.create ~restart_limit:(Run_policy.Finite_restarts 2)
          ~restart_delay:Run_policy.Exponential_backoff ())
   in
   let command = command 0 "flaky" in
@@ -233,7 +269,8 @@ let test_runner_applies_restart_delay () =
 let test_runner_holds_process_slot_until_restart_exhaustion () =
   let policy =
     ok
-      (Run_policy.create ~max_processes:1 ~restart_tries:1
+      (Run_policy.create ~max_processes:1
+         ~restart_limit:(Run_policy.Finite_restarts 1)
          ~restart_delay:(Run_policy.Fixed_delay_ms 1000) ())
   in
   let commands = [ command 0 "flaky"; command 1 "queued" ] in
@@ -282,7 +319,8 @@ let test_runner_holds_process_slot_until_restart_exhaustion () =
 let test_runner_keeps_retry_delay_after_sibling_success () =
   let policy =
     ok
-      (Run_policy.create ~kill_others_on:[ Run_policy.Success ] ~restart_tries:1
+      (Run_policy.create ~kill_others_on:[ Run_policy.Success ]
+         ~restart_limit:(Run_policy.Finite_restarts 1)
          ~restart_delay:(Run_policy.Fixed_delay_ms 50) ())
   in
   let commands = [ command 0 "retrying"; command 1 "successful" ] in
@@ -342,6 +380,7 @@ let run_execution_and_restart_contracts () =
   test_runner_preserves_raw_output_bytes ();
   test_runner_applies_command_environment ();
   test_runner_applies_command_cwd ();
+  test_run_api_executes_structured_commands ();
   test_runner_drains_oversized_output_lines ();
   test_runner_respects_max_processes ();
   test_runner_retries_failed_commands ();

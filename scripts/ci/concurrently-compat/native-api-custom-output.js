@@ -753,7 +753,7 @@ async function runNativeApiCustomOutput({
     });
     const groupedRun = api.concurrently(
       [
-        "node -e \"process.stdout.write('grouped-slow');setTimeout(()=>process.exit(0),500)\"",
+        "node -e \"process.stdout.write('grouped-slow');setTimeout(()=>process.exit(0),2000)\"",
         "node -e \"process.stdout.write('grouped-fast')\"",
       ],
       {
@@ -764,11 +764,19 @@ async function runNativeApiCustomOutput({
         },
       }
     );
-    groupedRun.result.catch(() => {});
+    let groupedRunSettled = false;
+    groupedRun.result.finally(() => {
+      groupedRunSettled = true;
+    }).catch(() => {});
     await waitFor(
       () => groupedOutput.includes("[0] grouped-slow"),
-      300,
+      1500,
       `native JS API custom spawn did not stream active grouped output: ${JSON.stringify(groupedOutput)}`
+    );
+    assertEqual(
+      groupedRunSettled,
+      false,
+      "native JS API custom spawn streamed grouped output before completion"
     );
     await groupedRun.result;
     const slowIndex = groupedOutput.indexOf("[0] grouped-slow");

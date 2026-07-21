@@ -4,10 +4,10 @@
 
 `concurrently-ocaml` is a command runner for starting, supervising, and
 formatting output from multiple shell commands. The target behavior is feature
-parity with npm `concurrently` v9 while using OCaml 5 and Eio to keep process
-supervision fast, explicit, and testable. The core domain model is OS-neutral;
-platform-specific behavior belongs behind runner backends and native
-distribution packaging.
+parity with npm `concurrently@10.0.0` while using OCaml 5 and Eio to keep
+process supervision fast, explicit, and testable. The core domain model is
+OS-neutral; platform-specific behavior belongs behind runner backends and
+native distribution packaging.
 
 ## Terms
 
@@ -21,9 +21,11 @@ distribution packaging.
 - Run API: validated programmatic input for OCaml callers. It accepts
   structured commands and run/display/input options, then produces the same
   command model, run spec, input router, and formatter options as the CLI path.
-- Npm binary package: the JavaScript launcher and optional native platform
-  packages that make `concurrently` and `conc` resolve to the OCaml binary after
-  npm install. JavaScript is packaging glue only, not a programmatic API.
+- Npm package: the JavaScript launcher, native-backed programmatic facade, and
+  optional native platform packages. CLI calls resolve to the OCaml binary.
+  Programmatic calls use the native backend when possible and the package-owned
+  JavaScript scheduler when a public extension hook needs Node child-process
+  context. Neither path falls back to upstream `concurrently` at runtime.
 - Runner: the module that owns command lifecycle: spawn, stream, restart, kill,
   wait, and close-event collection.
 - Runner backend: the platform-specific adapter that owns process spawning,
@@ -31,7 +33,7 @@ distribution packaging.
   identity, and platform error mapping for one OS family.
 - Run policy: immutable configuration that decides max parallelism, restart
   behavior, kill behavior, success condition, teardown, and signal handling.
-- Output event: a bounded chunk of stdout, stderr, lifecycle, timing, or error
+- Output event: a bounded chunk of stdout, stderr, lifecycle, or status
   information emitted by a command.
 - Output formatter: the module that turns output events into bytes written to
   the selected output stream.

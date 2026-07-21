@@ -31,3 +31,4 @@ _opam/
 concurrently-ml
 dist/
 node_modules/
+.codex-fable5/

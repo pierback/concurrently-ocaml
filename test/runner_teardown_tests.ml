@@ -74,11 +74,10 @@ let teardown_parent_signal_statuses =
     "--> Teardown command \"cleanup\" exited with code 0";
   ]
 
-let teardown_parent_signal_policy ?kill_timeout_warning kill_timeout_ms =
+let teardown_parent_signal_policy kill_timeout_ms =
   let teardown_command = ok (Command.create ~index:1 ~raw:true "cleanup") in
   ok
-    (Run_policy.create ~kill_timeout_ms ?kill_timeout_warning
-       ~teardown:[ teardown_command ] ())
+    (Run_policy.create ~kill_timeout_ms ~teardown:[ teardown_command ] ())
 
 let run_teardown_parent_signal_scenario ~policy ~spawn_cleanup =
   Eio_main.run (fun env ->
@@ -783,10 +782,7 @@ let test_runner_force_kills_replayed_parent_signal_after_teardown_spawn_race_tim
   assert_teardown_parent_signal_result result events
 
 let test_runner_force_kills_teardown_after_negative_parent_signal_timeout () =
-  let warning = Run_policy.Timeout_negative "-1" in
-  let policy =
-    teardown_parent_signal_policy ~kill_timeout_warning:warning (-1)
-  in
+  let policy = teardown_parent_signal_policy (-1) in
   let sent_signals = ref [] in
   let sigterm_sent_at = ref None in
   let sigkill_sent_at = ref None in
@@ -810,17 +806,9 @@ let test_runner_force_kills_teardown_after_negative_parent_signal_timeout () =
   in
   let sigterm_sent_at = require_timestamp !sigterm_sent_at in
   let sigkill_sent_at = require_timestamp !sigkill_sent_at in
-  let expected_warning =
-    Printf.sprintf
-      "(node:%d) TimeoutNegativeWarning: -1 is a negative number.\n\
-       Timeout duration was set to 1.\n\
-       (Use `node --trace-warnings ...` to show where the warning was created)\n"
-      (Unix.getpid ())
-  in
   assert (List.rev !sent_signals = [ Sys.sigterm; Sys.sigkill ]);
   assert (sigkill_sent_at -. sigterm_sent_at >= 0.0005);
   assert (sigkill_sent_at -. sigterm_sent_at < 0.04);
-  assert (runtime_warnings events = [ expected_warning ]);
   assert_teardown_parent_signal_result result events
 
 let test_runner_waits_kill_timeout_before_teardown_cleanup_after_parent_signal_exit

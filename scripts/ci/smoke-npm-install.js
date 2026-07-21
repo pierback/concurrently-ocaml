@@ -2355,7 +2355,10 @@ function assertNoUpstreamFallbackDependency(projectDir, packageDir) {
   const packageJson = readJson(join(packageDir, "package.json"));
   for (const field of ["dependencies", "optionalDependencies", "peerDependencies"]) {
     for (const [name, version] of Object.entries(packageJson[field] ?? {})) {
-      if (name === "concurrently-js" || version === "npm:concurrently@9.2.1") {
+      if (
+        name === "concurrently-js" ||
+        String(version).startsWith("npm:concurrently@")
+      ) {
         throw new Error(`${field}.${name} still routes to upstream concurrently`);
       }
     }
