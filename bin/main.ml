@@ -4,6 +4,7 @@ module Output_event = Concurrentlyocaml.Output_event
 module Output_formatter = Concurrentlyocaml.Output_formatter
 module Runner = Concurrentlyocaml.Runner
 module Runner_backend = Concurrentlyocaml.Runner_backend
+module Run_result = Concurrentlyocaml.Run_result
 module Version = Concurrentlyocaml.Version
 
 let configure_binary_stdio () =
@@ -201,8 +202,34 @@ For documentation and more examples, visit:
 https://github.com/open-cli-tools/concurrently/tree/v10.0.0/docs
 |help}
 
-let run_config env config =
-  if Cli_config.is_no_op config then 0
+let write_api_result path outcome =
+  match path with
+  | None -> true
+  | Some path -> (
+      try
+        let channel = open_out_bin path in
+        Fun.protect
+          ~finally:(fun () -> close_out_noerr channel)
+          (fun () ->
+            output_string channel outcome;
+            flush channel);
+        true
+      with Sys_error message ->
+        Printf.eprintf "Error: unable to write API result: %s\n" message;
+        false)
+
+let finish_api_result path result =
+  let exit_code = Run_result.exit_code result in
+  let outcome =
+    if Run_result.interrupted result then "interrupted"
+    else if exit_code = 0 then "success"
+    else "failure"
+  in
+  if write_api_result path outcome then exit_code else 1
+
+let run_config ~api_result_file env config =
+  if Cli_config.is_no_op config then
+    if write_api_result api_result_file "success" then 0 else 1
   else
     let display = Cli_config.display config in
     let spec = Cli_config.spec config in
@@ -246,18 +273,19 @@ let run_config env config =
                 ~backend ~now ~sleep ~spec ~on_output_event:(fun event ->
                   Output_formatter.handle_event formatter event |> print_outputs)
             with
-            | Ok result -> Concurrentlyocaml.Run_result.exit_code result
+            | Ok result -> finish_api_result api_result_file result
             | Error error ->
                 print_runner_error error;
                 1))
 
 let run ~passthrough_argv_arguments command_texts display_command_texts names_csv
-    api_empty_expansion api_name_separator timings group raw hide_csv api_hide_indexes_csv
-    api_raw_indexes_csv api_formatted_indexes_csv api_index_labels_csv no_color
-    passthrough_arguments handle_input shell default_input_target success prefix
-    prefix_colors_csv prefix_length timestamp_format pad_prefix kill_others
-    api_kill_others_on_success kill_others_on_fail kill_signal kill_timeout_ms
-    max_processes restart_tries restart_after teardown_texts =
+    api_empty_expansion api_result_file api_name_separator timings group raw hide_csv
+    api_hide_indexes_csv api_raw_indexes_csv api_formatted_indexes_csv
+    api_index_labels_csv no_color passthrough_arguments handle_input shell
+    default_input_target success prefix prefix_colors_csv prefix_length
+    timestamp_format pad_prefix kill_others api_kill_others_on_success
+    kill_others_on_fail kill_signal kill_timeout_ms max_processes restart_tries
+    restart_after teardown_texts =
   let prefix_length =
     match float_of_string_opt (String.trim prefix_length) with
     | Some value
@@ -283,7 +311,7 @@ let run ~passthrough_argv_arguments command_texts display_command_texts names_cs
   | Error error ->
       Printf.eprintf "Error: %s\n" (Cli_config.error_message error);
       1
-  | Ok config -> Eio_main.run (fun env -> run_config env config)
+  | Ok config -> Eio_main.run (fun env -> run_config ~api_result_file env config)
 
 let names =
   let doc = "Comma-separated command names. Count must match command count." in
@@ -486,6 +514,11 @@ let api_empty_expansion =
   let doc = "Internal API facade empty expansion marker." in
   Cmdliner.Arg.(value & flag & info [ "api-empty-expansion" ] ~doc)
 
+let api_result_file =
+  let doc = "Internal API facade logical result file." in
+  Cmdliner.Arg.(
+    value & opt (some string) None & info [ "api-result-file" ] ~docv:"PATH" ~doc)
+
 let command ~passthrough_argv_arguments =
   let doc = "Run several shell commands and prefix their output." in
   let info =
@@ -495,7 +528,7 @@ let command ~passthrough_argv_arguments =
     Cmdliner.Term.(
       const (run ~passthrough_argv_arguments)
       $ command_texts $ api_display_commands $ names $ api_empty_expansion
-      $ api_name_separator $ timings $ group $ raw $ hide
+      $ api_result_file $ api_name_separator $ timings $ group $ raw $ hide
       $ api_hide_indexes $ api_raw_indexes $ api_formatted_indexes
       $ api_index_labels $ no_color $ passthrough_arguments $ handle_input
       $ shell $ default_input_target $ success $ prefix $ prefix_colors $ prefix_length

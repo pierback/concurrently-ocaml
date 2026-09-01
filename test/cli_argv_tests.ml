@@ -285,6 +285,15 @@ let test_api_ignore_env_options_flag_removes_env_defaults () =
     [| "conc"; "--success=first"; "--"; "--api-ignore-env-options" |]
     normalized.argv
 
+let test_keeps_api_result_file () =
+  let normalized =
+    Cli_argv.normalize
+      [| "conc"; "--api-result-file=/tmp/run-result"; "printf one" |]
+  in
+  assert_array_equal
+    [| "conc"; "--api-result-file=/tmp/run-result"; "printf one" |]
+    normalized.argv
+
 let test_negated_boolean_options_use_last_value () =
   let normalized =
     Cli_argv.normalize
@@ -444,6 +453,7 @@ let () =
   test_preserves_single_dash_string_option_values ();
   test_cli_options_override_env_defaults ();
   test_api_ignore_env_options_flag_removes_env_defaults ();
+  test_keeps_api_result_file ();
   test_negated_boolean_options_use_last_value ();
   test_positive_boolean_options_consume_separate_true_false_values ();
   test_no_color_preserves_separate_true_false_commands ();

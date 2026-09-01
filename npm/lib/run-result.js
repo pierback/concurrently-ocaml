@@ -28,6 +28,37 @@ function closeEventsSucceeded(events, successCondition = "all") {
   );
 }
 
+function nativeRunSucceeded(
+  exitCode,
+  events,
+  { killOthersOn = [], nativeOutcome, successCondition = "all" } = {}
+) {
+  // A native kill decision precedes event-file serialization, so a killed
+  // sibling can receive an earlier timestamp than the command that triggered it.
+  return (
+    closeEventsSucceeded(events, successCondition) ||
+    (exitCode === 0 &&
+      nativeOutcome === "success" &&
+      killOrderingCanUseNativeOutcome(events, successCondition, killOthersOn))
+  );
+}
+
+function killOrderingCanUseNativeOutcome(events, successCondition, killOthersOn) {
+  if (successCondition !== "first" && successCondition !== "last") {
+    return false;
+  }
+  const selectedEvent =
+    successCondition === "first" ? events[0] : events[events.length - 1];
+  if (!selectedEvent?.killed) {
+    return false;
+  }
+  return events.some(
+    (event) =>
+      !event.killed &&
+      killOthersOn.includes(event.exitCode === 0 ? "success" : "failure")
+  );
+}
+
 function closeEventsForSelector(events, selector) {
   const selectedIndex = Number(selector);
   if (Number.isNaN(selectedIndex)) {
@@ -48,4 +79,8 @@ function runOnFinishCallbacks(result, onFinishCallbacks) {
   );
 }
 
-module.exports = { closeEventsSucceeded, runOnFinishCallbacks };
+module.exports = {
+  closeEventsSucceeded,
+  nativeRunSucceeded,
+  runOnFinishCallbacks,
+};

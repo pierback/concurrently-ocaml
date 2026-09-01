@@ -29,6 +29,7 @@ async function runNativeApiCore({ assertEqual, cliCommandRunner, commands }) {
     nodePrintCommand,
   } = commands;
 
+  runNativeApiResultFileSmoke();
   await runNativeApiPerCommandKillSmoke();
   await runNativeApiImmediateKillSmoke();
   await runNativeApiNativeKillPolicyManualKillSmoke();
@@ -41,6 +42,37 @@ async function runNativeApiCore({ assertEqual, cliCommandRunner, commands }) {
   await runNativeApiGlobalRawCommandFalseSmoke();
   await runNativeApiCommandAwareLoggerSmoke();
   await runNativeApiDirectOptionsSmoke();
+
+  function runNativeApiResultFileSmoke() {
+    const fixture = mkdtempSync(resolve(tmpdir(), "concurrently-ml-api-result-"));
+    const resultPath = resolve(fixture, "run-result");
+
+    try {
+      const result = spawnSync(
+        resolve("_build", "default", "bin", "main.exe"),
+        [
+          "--api-ignore-env-options",
+          `--api-result-file=${resultPath}`,
+          "--no-color",
+          "--raw",
+          nodeExitCommand(0),
+        ],
+        { encoding: "utf8" }
+      );
+      if (result.error) {
+        throw result.error;
+      }
+      assertEqual(result.status, 0, "native API result-file process status");
+      assertEqual(
+        readFileSync(resultPath, "utf8"),
+        "success",
+        "native API result-file outcome"
+      );
+      console.log("compat ok: native API logical result file");
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  }
 
   async function runNativeApiPerCommandKillSmoke() {
     const api = require(resolve("index.js"));

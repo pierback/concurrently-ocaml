@@ -177,6 +177,7 @@ let specs =
       ~env_order:25 ~accepts_negative_number_value:true
       ~emitted_option:"--restart-after";
     value [ "--api-display-command" ] ~emitted_option:"--api-display-command";
+    value [ "--api-result-file" ] ~emitted_option:"--api-result-file";
     value [ "--api-name-separator" ] ~emitted_option:"--api-name-separator";
     value [ "--api-hide-indexes" ] ~emitted_option:"--api-hide-indexes";
     value [ "--api-raw-indexes" ] ~emitted_option:"--api-raw-indexes";

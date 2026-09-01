@@ -33,7 +33,7 @@ const {
   apiShellOptions,
   resolveApiShell,
 } = require("./shell-command");
-const { closeEventsSucceeded } = require("./run-result");
+const { nativeRunSucceeded } = require("./run-result");
 const { runNative } = require("./native");
 
 function runNativeBackend(commands, options) {
@@ -136,10 +136,17 @@ function runNativeBackend(commands, options) {
         startedAt,
         missingEventIsKilled: invocation.missingEventIsKilled,
       });
+      const nativeOutcome = readNativeOutcome(invocation.resultPath);
       waitForOutput().then(
         () => {
           cleanupEventDir();
-          if (closeEventsSucceeded(events, options.successCondition)) {
+          if (
+            nativeRunSucceeded(exitCode, events, {
+              killOthersOn: killOthersConditions(options),
+              nativeOutcome,
+              successCondition: options.successCondition,
+            })
+          ) {
             resolve(events);
           } else {
             reject(events);
@@ -191,8 +198,10 @@ function nativeInvocation(commands, options, eventDir) {
   const shell = resolveApiShell(options);
   const rawValues = commandRawValues(commands, options);
   const inheritedCommandEnv = {};
+  const resultPath = join(eventDir, "run-result");
 
   args.push("--api-ignore-env-options");
+  pushOption(args, "--api-result-file", resultPath);
   if (commands.length === 0) args.push("--api-empty-expansion");
   pushOption(args, "--max-processes", options.maxProcesses);
   pushOption(args, "--success", nativeSuccessCondition(commands, options.successCondition));
@@ -300,6 +309,7 @@ function nativeInvocation(commands, options, eventDir) {
     env,
     killPaths: commands.map((command) => killPath(eventDir, command.index)),
     missingEventIsKilled: nativeKillPolicyMayStopCommands(options),
+    resultPath,
     stdio: stdioFor(options),
   };
 }
@@ -472,6 +482,17 @@ function readCommandEvent(path) {
   try {
     const content = readFileSync(path, "utf8");
     return content.trim() === "" ? undefined : JSON.parse(content);
+  } catch (_error) {
+    return undefined;
+  }
+}
+
+function readNativeOutcome(path) {
+  try {
+    const outcome = readFileSync(path, "utf8").trim();
+    return ["failure", "interrupted", "success"].includes(outcome)
+      ? outcome
+      : undefined;
   } catch (_error) {
     return undefined;
   }
