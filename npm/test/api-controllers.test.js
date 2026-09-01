@@ -238,6 +238,21 @@ test("controllers observe live child output through the spawn backend", async ()
   assert.strictEqual(logger.logCommandText.calls[0][1], run.commands[0]);
 });
 
+test("Command closes IPC after a synchronous spawn failure", async () => {
+  const spawnError = new Error("synchronous spawn failure");
+  const command = new Command(
+    { command: "missing", index: 0, ipc: 3, name: "missing" },
+    { stdio: ["ignore", "pipe", "pipe", "ipc"] },
+    () => {
+      throw spawnError;
+    }
+  );
+
+  assert.throws(() => command.start(), spawnError);
+  assert.equal(command.state, "errored");
+  await assert.rejects(command.send({ ping: 1 }), /Command IPC channel is closed/);
+});
+
 test("KillOthers stops live siblings and prevents queued commands from spawning", async () => {
   const spawnedCommands = [];
   const abortController = new AbortController();

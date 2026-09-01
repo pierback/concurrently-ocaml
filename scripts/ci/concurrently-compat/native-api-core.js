@@ -523,6 +523,7 @@ async function runNativeApiCore({ assertEqual, cliCommandRunner, commands }) {
     await runNativeApiPauseInputStreamSmoke(api);
     await runNativeApiHandleInputChildSmoke();
     await runNativeApiLegacyKillOthersSmoke(api);
+    await runNativeApiWindowsDefaultShellIpcFailureSmoke(api);
     await runNativeApiHighLevelIpcSmoke(api);
     await runNativeApiControllerOnFinishSmoke(api);
     console.log("compat ok: direct native JS API options");
@@ -742,6 +743,13 @@ async function runNativeApiCore({ assertEqual, cliCommandRunner, commands }) {
   async function runNativeApiHighLevelIpcSmoke(api) {
     const childSource =
       "process.on('message',message=>process.send({pong:message.ping},()=>process.exit(0)));setTimeout(()=>process.exit(7),3000)";
+    const directWindowsSpawn =
+      process.platform === "win32"
+        ? (_command, options) => {
+            const { shell: _shell, ...spawnOptions } = options;
+            return spawn(process.execPath, ["-e", childSource], spawnOptions);
+          }
+        : undefined;
     const run = api.concurrently(
       [
         {
@@ -754,6 +762,7 @@ async function runNativeApiCore({ assertEqual, cliCommandRunner, commands }) {
         outputStream: createDiscardSink(),
         prefixColors: false,
         raw: true,
+        spawn: directWindowsSpawn,
       }
     );
     run.result.catch(() => {});
@@ -773,6 +782,36 @@ async function runNativeApiCore({ assertEqual, cliCommandRunner, commands }) {
         `native JS API high-level IPC missing response: ${JSON.stringify(incoming)}`
       );
     }
+  }
+
+  async function runNativeApiWindowsDefaultShellIpcFailureSmoke(api) {
+    if (process.platform !== "win32") {
+      return;
+    }
+
+    const run = api.concurrently(
+      [{ command: nodeExitCommand(0), ipc: 3, name: "ipc-shell" }],
+      {
+        outputStream: createDiscardSink(),
+        prefixColors: false,
+        raw: true,
+      }
+    );
+    run.result.catch(() => {});
+    const error = await run.result.then(
+      () => new Error("native JS API Windows shell IPC unexpectedly succeeded"),
+      (reason) => reason
+    );
+
+    if (
+      !(error instanceof Error) ||
+      !error.message.includes("command IPC on Windows requires options.spawn")
+    ) {
+      throw new Error(
+        `native JS API Windows shell IPC returned the wrong error: ${String(error)}`
+      );
+    }
+    console.log("compat ok: native JS API Windows shell IPC fails fast");
   }
 
   async function runNativeApiControllerOnFinishSmoke(api) {

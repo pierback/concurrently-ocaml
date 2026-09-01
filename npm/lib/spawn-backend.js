@@ -29,6 +29,7 @@ const {
 } = require("./run-policy");
 const {
   apiShellInvocation,
+  assertApiShellSupportsIpc,
   resolveApiShell,
 } = require("./shell-command");
 const { closeEventsSucceeded } = require("./run-result");
@@ -882,6 +883,7 @@ function spawnApiTeardownOptions(options) {
 }
 
 function spawnApiDefaultSpawn(command, options) {
+  assertApiShellSupportsIpc(options);
   const { shell, ...spawnOptions } = options;
   const invocation = apiShellInvocation(resolveApiShell({ shell }), command);
   return spawnChildProcess(invocation.file, invocation.args, {

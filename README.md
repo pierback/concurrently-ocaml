@@ -135,6 +135,9 @@ the upstream JavaScript API shape. High-level runs with `options.spawn`,
 command-level `ipc`, command-aware logger callbacks, custom kill callbacks,
 and teardown commands use the package-owned JavaScript scheduler so callers get
 per-command Node child-process context without routing to upstream JavaScript.
+On Windows, command-level IPC requires `options.spawn` to launch the IPC-aware
+process directly. The default shell-backed launcher fails fast because an
+intermediate Windows shell cannot serve as the Node IPC endpoint.
 
 ## Implemented CLI Surface
 

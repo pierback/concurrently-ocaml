@@ -92,7 +92,9 @@ The JavaScript facade is deliberately narrower than upstream internals:
 - signal and restart controllers are not composable over the current public
   command-close stream and therefore fail explicitly;
 - OCaml IPC support exposes process metadata but does not reproduce the full
-  Node child-process IPC channel.
+  Node child-process IPC channel;
+- high-level command IPC on Windows requires `options.spawn` to launch the
+  IPC-aware process directly; the default shell launcher fails fast.
 
 These are open parity work, not accepted divergences. Their upstream specs are
 part of the final coverage inventory described in

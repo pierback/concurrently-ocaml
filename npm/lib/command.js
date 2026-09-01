@@ -55,7 +55,13 @@ class Command {
     this.runId += 1;
     const runId = this.runId;
     this.spawnApiCompleted = false;
-    const child = this.spawn(this.command, this.spawnOpts);
+    let child;
+    try {
+      child = this.spawn(this.command, this.spawnOpts);
+    } catch (error) {
+      this.changeState("errored");
+      throw error;
+    }
     this.process = child;
     this.pid = child.pid;
     this.processGroupId = processGroupId(child.pid);

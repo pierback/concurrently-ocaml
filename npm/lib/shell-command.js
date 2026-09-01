@@ -58,10 +58,23 @@ function apiShellKind(shellPath) {
   return "posix";
 }
 
+function assertApiShellSupportsIpc(options, platform = process.platform) {
+  if (
+    platform === "win32" &&
+    Array.isArray(options?.stdio) &&
+    options.stdio.includes("ipc")
+  ) {
+    throw new Error(
+      "[concurrently] command IPC on Windows requires options.spawn to launch the IPC-aware process directly"
+    );
+  }
+}
+
 module.exports = {
   apiShellArguments,
   apiShellInvocation,
   apiShellKind,
   apiShellOptions,
+  assertApiShellSupportsIpc,
   resolveApiShell,
 };
