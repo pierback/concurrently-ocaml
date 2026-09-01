@@ -1,0 +1,57 @@
+name: Bug report
+description: Report a reproducible problem in the CLI, JavaScript API, or packaging.
+title: "Bug: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Thanks for reporting a bug. Do not include secrets or vulnerability
+        details here; use the private process in SECURITY.md instead.
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: v0.0.15 or a commit SHA
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - macOS arm64
+        - macOS x64
+        - Linux glibc arm64
+        - Linux glibc x64
+        - Linux musl arm64
+        - Linux musl x64
+        - Windows x64
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Include the command, configuration, and smallest safe example.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: checks
+    attributes:
+      label: Additional context
+      description: Include logs only after removing credentials and private data.

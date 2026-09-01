@@ -32,3 +32,8 @@ concurrently-ml
 dist/
 node_modules/
 .codex-fable5/
+
+# Local and packaged artifacts
+.DS_Store
+*.tgz
+coverage/

@@ -68,8 +68,10 @@ source checkout, the launcher prefers
 build before falling back to an optional package.
 
 GitHub Actions builds and tests each native target from source with OCaml
-5.4.1, packs the platform package, uploads it as an artifact, and publishes
-platform packages before the root package on version tags.
+5.4.1, packs the platform package, and uploads it as an artifact. Version-tag
+pushes validate the release without publishing it. Publication requires an
+explicit manual workflow dispatch against the verified tag and publishes every
+platform package before the root package.
 Darwin package jobs set `MACOSX_DEPLOYMENT_TARGET` before dependency
 installation and compilation so the runner image version does not become the
 minimum supported macOS version for the shipped Mach-O binary.

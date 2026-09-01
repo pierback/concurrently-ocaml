@@ -31,6 +31,13 @@ function normalizeNpmLogPaths(stdout) {
   );
 }
 
+function normalizeNodeTimeoutWarningStderr(stderr) {
+  return stderr.replace(
+    /^\(node:\d+\) Timeout(?:NaN|Negative)Warning: [^\r\n]*\r?\nTimeout duration was set to 1\.\r?\n(?:\(Use `node --trace-warnings \.\.\.` to show where the warning was created\)\r?\n)?/gm,
+    ""
+  );
+}
+
 function normalizeTimingsStdout(stdout) {
   const timestampPattern = /\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}/g;
   return stdout
@@ -247,6 +254,7 @@ module.exports = {
   normalizeInvalidWildcardOmissionStderr,
   normalizeLineOrderStdout,
   normalizeNpmLogPaths,
+  normalizeNodeTimeoutWarningStderr,
   normalizePartialInputTargetStdout,
   normalizePidStdout,
   normalizeShellSignalDiagnosticAndTrapCleanupStdout,

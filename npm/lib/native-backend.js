@@ -316,7 +316,6 @@ function eventWrapperCommand(
   nativeKillPolicy,
   shell
 ) {
-  const commandText = Buffer.from(command).toString("base64");
   const eventFile = Buffer.from(path).toString("base64");
   const startFile = Buffer.from(startPath).toString("base64");
   const killFile = Buffer.from(killPath).toString("base64");
@@ -325,18 +324,22 @@ function eventWrapperCommand(
     cwd === undefined ? undefined : Buffer.from(cwd).toString("base64");
   const shellPath = Buffer.from(shell).toString("base64");
   const shellKind = apiShellKind(shell);
+  const encodedShellArguments = apiShellArguments(shellKind, command).map(
+    (argument) => Buffer.from(argument).toString("base64")
+  );
+  const shellOptions = Buffer.from(
+    JSON.stringify(apiShellOptions(shellKind))
+  ).toString("base64");
   const childStdin = forwardStdin ? "inherit" : "ignore";
   const source = [
     "const cp=require('node:child_process')",
     "const fs=require('node:fs')",
     "const signalNumbers=require('node:os').constants.signals",
-    `const cmd=Buffer.from('${commandText}','base64').toString()`,
     `const file=Buffer.from('${eventFile}','base64').toString()`,
     `const startFile=Buffer.from('${startFile}','base64').toString()`,
     `const killFile=Buffer.from('${killFile}','base64').toString()`,
     `const commandEnvFile=Buffer.from('${commandEnvFile}','base64').toString()`,
     `const shellPath=Buffer.from('${shellPath}','base64').toString()`,
-    `const shellKind='${shellKind}'`,
     commandCwd === undefined
       ? "const cwd=undefined"
       : `const cwd=Buffer.from('${commandCwd}','base64').toString()`,
@@ -356,11 +359,10 @@ function eventWrapperCommand(
     "const pollKill=()=>{try{if(fs.existsSync(killFile)){const signal=JSON.parse(fs.readFileSync(killFile,'utf8'));fs.rmSync(killFile,{force:true});onSignal(signal)}}catch(_){}}",
     "for(const signal of ['SIGHUP','SIGINT','SIGTERM','SIGQUIT','SIGUSR1','SIGUSR2','SIGBREAK']){if(signalNumbers[signal]){try{process.on(signal,()=>onSignal(signal))}catch(_){}}}",
     `const detachWrappedCommand=${detachWrappedCommand ? "true" : "false"}`,
-    `const apiShellArguments=${apiShellArguments.toString()}`,
-    `const apiShellOptions=${apiShellOptions.toString()}`,
-    "const shellArgs=apiShellArguments(shellKind,cmd)",
+    `const shellArgs=${JSON.stringify(encodedShellArguments)}.map(argument=>Buffer.from(argument,'base64').toString())`,
+    `const shellOptions=JSON.parse(Buffer.from('${shellOptions}','base64').toString())`,
     "const spawnOptions={detached:detachWrappedCommand,stdio:[childStdin,'inherit','inherit'],env:{...process.env,...commandEnv}}",
-    "Object.assign(spawnOptions,apiShellOptions(shellKind))",
+    "Object.assign(spawnOptions,shellOptions)",
     "if(cwd!==undefined)spawnOptions.cwd=cwd",
     "child=cp.spawn(shellPath,shellArgs,spawnOptions)",
     "fs.writeFileSync(startFile,JSON.stringify({startMs,pid:child.pid}))",
@@ -687,4 +689,4 @@ function commandNameSeparator(names) {
   return separator;
 }
 
-module.exports = { runNativeBackend };
+module.exports = { eventWrapperCommand, runNativeBackend };

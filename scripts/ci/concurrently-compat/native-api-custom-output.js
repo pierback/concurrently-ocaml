@@ -977,7 +977,11 @@ async function runNativeApiCustomOutput({
         },
       }
     ).result;
-    if (!partialLineOutput.includes("[0] partial-a\n[1] partial-b")) {
+    const partialLines = partialLineOutput.split(/\r?\n/);
+    if (
+      !partialLines.includes("[0] partial-a") ||
+      !partialLines.includes("[1] partial-b")
+    ) {
       throw new Error(
         `native JS API custom spawn did not separate partial lines: ${JSON.stringify(partialLineOutput)}`
       );

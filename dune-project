@@ -7,9 +7,9 @@
 (source
  (github pierback/concurrently-ocaml))
 
-(authors "Franz Pieringer")
+(authors "Fabian Pieringer")
 
-(maintainers "Franz Pieringer")
+(maintainers "Fabian Pieringer")
 
 (license MIT)
 

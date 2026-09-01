@@ -2,25 +2,38 @@
 
 An OCaml 5 command runner targeting feature parity with npm `concurrently`.
 
+> **Release status:** a source checkout, commit, tag, or green build does not
+> prove that matching packages were published to npm. Verify the requested root
+> and platform package versions in the registry before installing them.
+
 See:
 
 - [Project context](CONTEXT.md)
 - [Feature parity map](docs/architecture/feature-parity-plan.md)
 - [Upstream parity authority and final gate](docs/architecture/upstream-parity.md)
 - [ADR 0001: Latest practical OCaml and Eio](docs/adr/0001-latest-practical-ocaml-and-eio.md)
+- [Release process](docs/releasing.md)
+- [Contributing](CONTRIBUTING.md)
+- [Security policy](SECURITY.md)
+
+The compatibility suite checks deterministic behavior against pinned
+`concurrently@10.0.0`. Passing it is evidence for the covered cases, not a
+claim that every possible shell, command, or integration is equivalent.
 
 ## Local Development
 
-Set up the persistent repo-local OCaml switch once:
+Development uses Node.js 24, npm, and opam. Set up the persistent repo-local
+OCaml switch and locked JavaScript dependencies once:
 
 ```sh
 npm run setup:opam
 ```
 
-That creates `_opam` with OCaml 5.4.1 by default, installs project test
-dependencies plus `ocamlformat`, and runs the build/test gate. Override the
-compiler with `OCAML_COMPILER=ocaml-base-compiler.<version>` when intentionally
-testing a different toolchain.
+That runs `npm ci`, creates `_opam` with OCaml 5.4.1 by default, installs
+project test dependencies plus `ocamlformat`, and runs the JavaScript and OCaml
+build/test gate. Override the compiler with
+`OCAML_COMPILER=ocaml-base-compiler.<version>` when intentionally testing a
+different toolchain.
 
 After setup, use the npm scripts. They run through `opam exec`, so they do not
 depend on manually exporting the switch environment:
@@ -43,11 +56,11 @@ The root npm package ships the JavaScript ESM entrypoint shape from
 During local development the launcher can also use `_build/default/bin/main.exe`
 after `npm run compile`.
 
-For drop-in npm-script usage, install this package under the public
-`concurrently` package name:
+For drop-in npm-script usage, install the latest published release under the
+public `concurrently` package name:
 
 ```sh
-npm install --save-dev concurrently@npm:@pierback/concurrently-ml
+npm install --save-dev concurrently@npm:@pierback/concurrently-ml@latest
 ```
 
 That keeps existing `concurrently`/`conc` package scripts and
@@ -75,6 +88,7 @@ concurrently(["node server.js", "npm run watch"]);
 ```
 
 The package requires Node.js 22 or newer, matching `concurrently@10.0.0`.
+Development and CI use Node.js 24.
 
 `npm run smoke:npm-install:host` packages the current host binary, installs the
 root package plus matching platform package into a clean temporary npm project,

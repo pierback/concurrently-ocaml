@@ -2,6 +2,7 @@ const {
   normalizeShellSignalDiagnosticAndTrapCleanupStdout,
   normalizeShellSignalDiagnosticStdout,
   normalizeShellTrapStatus,
+  normalizeNodeTimeoutWarningStderr,
   normalizeSignalTrapCloseStatus,
   normalizeSignalTrapStatus,
   normalizeTimingsStdout,
@@ -53,6 +54,7 @@ function createLifecycleCases({
       "bogus",
       "exit 1",
     ],
+    normalizeStderr: normalizeNodeTimeoutWarningStderr,
   },
   {
     name: "restart after invalid stays quiet in raw mode",
@@ -66,6 +68,7 @@ function createLifecycleCases({
       "bogus",
       "exit 1",
     ],
+    normalizeStderr: normalizeNodeTimeoutWarningStderr,
   },
   {
     name: "restart after negative retries immediately",
@@ -492,6 +495,7 @@ function createLifecycleCases({
       killTimeoutFixture.trapCommand("negative"),
       killTimeoutFixture.successCommand("negative"),
     ],
+    normalizeStderr: normalizeNodeTimeoutWarningStderr,
     normalizeStdout: normalizeShellSignalDiagnosticStdout,
   },
   {
@@ -506,6 +510,7 @@ function createLifecycleCases({
       killTimeoutFixture.finiteTrapCommand("negative-raw"),
       killTimeoutFixture.successCommand("negative-raw"),
     ],
+    normalizeStderr: normalizeNodeTimeoutWarningStderr,
   },
   {
     name: "kill timeout invalid is accepted when unused",

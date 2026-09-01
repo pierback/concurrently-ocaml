@@ -1669,7 +1669,7 @@ try {
         prefixColors: false,
       });
       const dashPrefixResult = dashPrefixRun.result.then(() => {
-        if (dashPrefixOutput.trim() === "0.0.14") {
+        if (dashPrefixOutput.trim() === ${JSON.stringify(rootPackage.version)}) {
           throw new Error("API prefix option was parsed as CLI version");
         }
         if (!dashPrefixOutput.includes("-v dash-prefix")) {

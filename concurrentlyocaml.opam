@@ -3,8 +3,8 @@ opam-version: "2.0"
 synopsis: "OCaml command runner compatible with npm concurrently"
 description:
   "A hard-cutover OCaml 5 command runner targeting feature parity with npm concurrently."
-maintainer: ["Franz Pieringer"]
-authors: ["Franz Pieringer"]
+maintainer: ["Fabian Pieringer"]
+authors: ["Fabian Pieringer"]
 license: "MIT"
 tags: ["cli" "process" "concurrency" "ocaml" "eio"]
 homepage: "https://github.com/pierback/concurrently-ocaml"
