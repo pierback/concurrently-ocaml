@@ -156,7 +156,7 @@ jobs:
             "${libc_args[@]}"
 
       - name: Upload npm package artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: npm-${{ matrix.target }}
           path: dist/npm/
@@ -219,7 +219,7 @@ jobs:
             '
 
       - name: Upload npm package artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: npm-${{ matrix.target }}
           path: dist/npm/
@@ -281,7 +281,7 @@ jobs:
           --arch ${{ matrix.npm_cpu }}
 
       - name: Upload npm package artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: npm-${{ matrix.target }}
           path: dist/npm/
